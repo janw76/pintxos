@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pintxos"
+version = "0.1.0"
+description = "Bite-sized, honest RSS feeds"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "jinja2",
+    "python-multipart",
+    "feedparser",
+    "trafilatura",
+    "httpx",
+    "apscheduler",
+    "anthropic",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools]
+packages = ["pintxos"]
+
+[tool.setuptools.package-data]
+pintxos = ["templates/*.html"]

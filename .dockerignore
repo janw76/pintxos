@@ -1,0 +1,7 @@
+.git
+.venv
+data
+tests
+.beads
+docs
+__pycache__

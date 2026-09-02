@@ -1,0 +1,42 @@
+"""Configuration: env vars > settings table > built-in defaults."""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+# Keys are the env var names; values are the built-in defaults (None = optional).
+DEFAULTS: dict[str, str | None] = {
+    "PINTXOS_DATA_DIR": "./data",
+    "ANTHROPIC_API_KEY": None,
+    "PINTXOS_MODEL": "claude-haiku-4-5-20251001",
+    "PINTXOS_POLL_MINUTES": "30",
+    "PINTXOS_ITEMS_PER_FEED": "50",
+    "PINTXOS_BASE_URL": None,
+}
+
+
+def get_setting(key: str, conn=None) -> str | None:
+    """Resolve a setting: env var wins, then the settings table, then the default."""
+    env = os.environ.get(key)
+    if env:
+        return env
+    if conn is not None:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        if row is not None and row["value"]:
+            return row["value"]
+    return DEFAULTS.get(key)
+
+
+# ponytail: data_dir()/db_path() are functions, not module constants, so PINTXOS_DATA_DIR
+# stays overridable after import (tests monkeypatch it per-case). Ceiling: callers must
+# call them each time instead of importing a DATA_DIR constant.
+def data_dir() -> Path:
+    """Data directory, created if missing."""
+    path = Path(get_setting("PINTXOS_DATA_DIR"))
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def db_path() -> Path:
+    return data_dir() / "pintxos.db"

@@ -4,3 +4,10 @@
 *.db
 .beads-credential-key
 .beads/proxieddb/
+
+# Pintxos
+data/
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
