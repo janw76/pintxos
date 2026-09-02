@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Sample Feed</title>
+    <link>https://example.com/</link>
+    <description>A sample feed</description>
+    <item>
+      <title>First article about a rocket launch</title>
+      <link>https://example.com/one</link>
+      <guid>https://example.com/one</guid>
+      <pubDate>Mon, 01 Sep 2025 10:00:00 +0000</pubDate>
+      <content:encoded><![CDATA[<p>ENCODED BODY: the rocket lifted off from the pad at dawn carrying twelve satellites into a polar orbit, and the booster returned to the landing zone eight minutes later without incident.</p>]]></content:encoded>
+      <description>short teaser one</description>
+    </item>
+    <item>
+      <title>Second article about a merger</title>
+      <link>https://example.com/two</link>
+      <guid>https://example.com/two</guid>
+      <pubDate>Sun, 31 Aug 2025 10:00:00 +0000</pubDate>
+      <description><![CDATA[<p>SUMMARY BODY: the two companies agreed to merge in an all-stock deal valued at four billion euros, pending approval from competition regulators in Brussels later this year.</p>]]></description>
+    </item>
+    <item>
+      <title>Third article with almost no body text at all</title>
+      <link>https://example.com/three</link>
+      <guid>https://example.com/three</guid>
+      <pubDate>Sat, 30 Aug 2025 10:00:00 +0000</pubDate>
+      <description>tiny</description>
+    </item>
+  </channel>
+</rss>
