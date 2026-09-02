@@ -1,0 +1,15 @@
+services:
+  pintxos:
+    image: ghcr.io/janw76/pintxos:latest
+    container_name: pintxos
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      # PINTXOS_MODEL: claude-haiku-4-5-20251001
+      # PINTXOS_POLL_MINUTES: 30
+      # PINTXOS_ITEMS_PER_FEED: 50
+      # PINTXOS_BASE_URL: https://pintxos.example.com
+    restart: unless-stopped

@@ -5,8 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pintxos"
 version = "0.1.0"
-description = "Bite-sized, honest RSS feeds"
+description = "Bite-sized, honest RSS feeds: rewrites clickbait titles into factual headlines and summaries via Claude, republished as clean RSS."
 requires-python = ">=3.12"
+license = { text = "MIT" }
+readme = "README.md"
 dependencies = [
     "fastapi",
     "uvicorn[standard]",
@@ -18,6 +20,15 @@ dependencies = [
     "apscheduler",
     "anthropic",
 ]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+]
+
+[project.urls]
+Homepage = "https://github.com/janw76/pintxos"
+Source = "https://github.com/janw76/pintxos"
 
 [project.optional-dependencies]
 dev = ["pytest"]
