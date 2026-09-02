@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Feeds · pintxos{% endblock %}
+{% block content %}
+<h1>Feeds</h1>
+
+<form class="add-form" method="post" action="/feeds">
+  <input type="url" name="url" placeholder="https://example.com/feed" required>
+  <button type="submit">Add</button>
+</form>
+
+<table>
+  <thead>
+    <tr>
+      <th>Feed</th>
+      <th>Output URL</th>
+      <th>Items</th>
+      <th>Last polled</th>
+      <th>Last error</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for feed in feeds %}
+    <tr>
+      <td>
+        <div>{{ feed.title or feed.url }}</div>
+        <div class="muted">{{ feed.url }}</div>
+      </td>
+      <td>
+        <span class="muted">{{ feed.output_url }}</span>
+        <button type="button" onclick="pintxosCopy(this, '{{ feed.output_url }}')">Copy</button>
+      </td>
+      <td>{{ feed.item_count }}</td>
+      <td class="muted">{{ feed.last_polled_at or "never" }}</td>
+      <td class="error">{{ feed.last_error or "" }}</td>
+      <td>
+        <form method="post" action="/feeds/{{ feed.id }}/poll">
+          <button type="submit">Poll now</button>
+        </form>
+        <form method="post" action="/feeds/{{ feed.id }}/delete" onsubmit="return confirm('Delete feed?')">
+          <button type="submit">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6" class="muted">No feeds yet — add one above.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

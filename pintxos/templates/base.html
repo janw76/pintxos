@@ -4,8 +4,38 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}pintxos{% endblock %}</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+    nav { margin-bottom: 1rem; }
+    nav a { margin-right: 1rem; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #ddd; vertical-align: top; }
+    th { color: #555; }
+    form { display: inline; }
+    input[type=url], input[type=text], input[type=number], input[type=password] {
+      padding: 0.3rem; font-size: 1rem;
+    }
+    button { padding: 0.3rem 0.7rem; font-size: 1rem; cursor: pointer; }
+    .error { color: #b00020; }
+    .flash { color: #b00020; margin-bottom: 1rem; }
+    .msg { color: #1a7a1a; margin-bottom: 1rem; }
+    .muted { color: #888; font-size: 0.9em; }
+    .add-form { margin-bottom: 1.5rem; }
+  </style>
 </head>
 <body>
+  <nav><a href="/">Feeds</a><a href="/settings">Settings</a></nav>
+  {% if request.query_params.get('err') %}<p class="flash">{{ request.query_params.get('err') }}</p>{% endif %}
+  {% if request.query_params.get('msg') %}<p class="msg">{{ request.query_params.get('msg') }}</p>{% endif %}
   {% block content %}{% endblock %}
+  <script>
+    // ponytail: one tiny inline script for the copy buttons, no bundler needed.
+    function pintxosCopy(btn, text) {
+      navigator.clipboard.writeText(text);
+      var old = btn.textContent;
+      btn.textContent = "Copied!";
+      setTimeout(function () { btn.textContent = old; }, 1200);
+    }
+  </script>
 </body>
 </html>
