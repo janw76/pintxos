@@ -21,6 +21,11 @@ def get_setting(key: str, conn=None) -> str | None:
     env = os.environ.get(key)
     if env:
         return env
+    if conn is None and key != "PINTXOS_DATA_DIR":
+        from pintxos.db import db  # lazy: db imports this module
+
+        with db() as own:
+            return get_setting(key, own)
     if conn is not None:
         row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
         if row is not None and row["value"]:

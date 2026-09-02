@@ -74,3 +74,11 @@ def test_cascade_delete_removes_items(db):
     db.execute("DELETE FROM feeds WHERE id = ?", (feed_id,))
     db.commit()
     assert db.execute("SELECT COUNT(*) AS n FROM items").fetchone()["n"] == 0
+
+
+def test_get_setting_opens_own_connection_when_none_given(db):
+    from pintxos.config import get_setting
+
+    db.execute("INSERT INTO settings (key, value) VALUES ('PINTXOS_MODEL', 'from-db')")
+    db.commit()
+    assert get_setting("PINTXOS_MODEL") == "from-db"

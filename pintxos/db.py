@@ -50,6 +50,7 @@ def connect() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
+    conn.executescript(SCHEMA)  # CREATE IF NOT EXISTS: cheap, and every caller gets a ready DB
     return conn
 
 
@@ -65,5 +66,4 @@ def db() -> Iterator[sqlite3.Connection]:
 
 
 def init_db() -> None:
-    with db() as conn:
-        conn.executescript(SCHEMA)
+    connect().close()
