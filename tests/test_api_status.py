@@ -81,6 +81,19 @@ def test_status_shape_and_idle_defaults(quiet_engine):
     assert feed["progress"] is None
     assert feed["item_count"] == 0
     assert feed["last_polled_ago"] == "never"
+    assert feed["status_label"] == ""
+    assert feed["active"] is False
+
+
+def test_status_feed_entries_include_status_label_and_active_keys(quiet_engine):
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        resp = c.get("/api/status")
+
+    body = resp.json()
+    feed = body["feeds"][0]
+    assert "status_label" in feed
+    assert "active" in feed
 
 
 def test_poll_now_redirect_location_is_root(quiet_engine):

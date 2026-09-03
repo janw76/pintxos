@@ -55,6 +55,27 @@ def ago(iso: str | None, now: datetime | None = None) -> str:
 templates.env.filters["ago"] = ago
 
 
+# States in which a feed is actively being worked on by the engine.
+ACTIVE_STATES = {"queued", "fetching", "summarizing"}
+
+
+def status_label(state: str, progress: dict | None) -> str:
+    """Render an engine feed state (+ optional progress) as a short UI label."""
+    if state == "idle":
+        return ""
+    if state == "queued":
+        return "Queued"
+    if state == "fetching":
+        return "Fetching feed…"
+    if state == "summarizing":
+        if progress is None:
+            return "Summarizing"
+        return f"Summarizing {progress['done']}/{progress['total']}"
+    if state == "error":
+        return "Error"
+    return state
+
+
 # Singleton in-process poll engine: one queue + worker thread for the whole
 # app. poll_feed already has the (feed_id, reporter) signature the engine
 # expects, so it's injected directly.
@@ -125,12 +146,22 @@ def index(request: Request) -> Response:
             "FROM feeds f ORDER BY f.id"
         ).fetchall()
         base_url = get_setting("PINTXOS_BASE_URL", conn) or str(request.base_url).rstrip("/")
+    snap = engine.snapshot()
+    engine_feeds = snap["feeds"]
     feeds = []
     for row in rows:
         feed = dict(row)
         feed["output_url"] = f"{base_url}/feeds/{feed['id']}.xml"
+        eng = engine_feeds.get(feed["id"])
+        feed["state"] = eng["state"] if eng else "idle"
+        feed["progress"] = eng["progress"] if eng else None
+        feed["last_result"] = eng["last_result"] if eng else None
+        feed["status_label"] = status_label(feed["state"], feed["progress"])
+        feed["active"] = feed["state"] in ACTIVE_STATES
         feeds.append(feed)
-    return templates.TemplateResponse(request, "index.html", {"feeds": feeds})
+    return templates.TemplateResponse(
+        request, "index.html", {"feeds": feeds, "paused_reason": snap["paused_reason"]}
+    )
 
 
 @app.post("/feeds")
@@ -251,18 +282,22 @@ def api_status() -> Response:
     for row in rows:
         feed_id = row["id"]
         eng = engine_feeds.get(feed_id)
+        state = eng["state"] if eng else "idle"
+        progress = eng["progress"] if eng else None
         feeds.append(
             {
                 "id": feed_id,
                 "title": row["title"],
                 "url": row["url"],
-                "state": eng["state"] if eng else "idle",
-                "progress": eng["progress"] if eng else None,
+                "state": state,
+                "progress": progress,
                 "last_result": eng["last_result"] if eng else None,
                 "item_count": row["item_count"],
                 "last_polled_at": row["last_polled_at"],
                 "last_polled_ago": ago(row["last_polled_at"]),
                 "last_error": row["last_error"],
+                "status_label": status_label(state, progress),
+                "active": state in ACTIVE_STATES,
             }
         )
 

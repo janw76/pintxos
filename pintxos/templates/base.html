@@ -146,6 +146,62 @@
       btn.textContent = "Copied!";
       setTimeout(function () { btn.textContent = old; }, 1200);
     }
+
+    // Drop msg/err query params from the URL so a reload doesn't resurrect
+    // the flash; the current render keeps showing it since it's already
+    // in the DOM.
+    document.addEventListener("DOMContentLoaded", function () {
+      if (location.search.indexOf("msg=") !== -1 || location.search.indexOf("err=") !== -1) {
+        history.replaceState(null, "", location.pathname);
+      }
+    });
+
+    // Poll /api/status and update feed rows in place, so state changes
+    // (queued/fetching/summarizing/idle) show up without a manual reload.
+    function pintxosLiveStatus() {
+      fetch("/api/status", { cache: "no-store" })
+        .then(function (resp) { return resp.json(); })
+        .then(function (data) {
+          data.feeds.forEach(function (feed) {
+            var row = document.querySelector('tr[data-feed-id="' + feed.id + '"]');
+            if (!row) return;
+            var items = row.querySelector('[data-field="items"]');
+            if (items) items.textContent = feed.item_count;
+            var status = row.querySelector('[data-field="status"]');
+            if (status) status.textContent = feed.status_label;
+            var lastPolled = row.querySelector('[data-field="last_polled"]');
+            if (lastPolled) {
+              lastPolled.textContent = feed.last_polled_ago;
+              lastPolled.title = feed.last_polled_at || "";
+            }
+            var lastError = row.querySelector('[data-field="last_error"]');
+            if (lastError) lastError.textContent = feed.last_error || "";
+            var pollBtn = row.querySelector('[data-field="poll-btn"]');
+            if (pollBtn) pollBtn.disabled = feed.active;
+          });
+        })
+        .catch(function () { /* network blip: ignore, try again next tick */ });
+    }
+
+    var pintxosStatusTimer = null;
+    document.addEventListener("DOMContentLoaded", function () {
+      if (!document.querySelector("tr[data-feed-id]")) return;
+      function start() {
+        if (pintxosStatusTimer) return;
+        pintxosLiveStatus();
+        pintxosStatusTimer = setInterval(pintxosLiveStatus, 3000);
+      }
+      function stop() {
+        if (!pintxosStatusTimer) return;
+        clearInterval(pintxosStatusTimer);
+        pintxosStatusTimer = null;
+      }
+      if (document.visibilityState === "visible") start();
+      document.addEventListener("visibilitychange", function () {
+        if (document.visibilityState === "visible") start();
+        else stop();
+      });
+    });
   </script>
 </body>
 </html>

@@ -8,21 +8,25 @@
   <button type="submit" class="btn-primary">Add</button>
 </form>
 
+{% if paused_reason %}<p class="flash" role="alert">Polling is paused: {{ paused_reason }}. <a href="/settings">Open Settings</a>.</p>{% endif %}
+
 <div class="table-wrap">
   <table>
     <colgroup>
-      <col style="width: 22%">
-      <col style="width: 30%">
-      <col style="width: 6%">
-      <col style="width: 10%">
-      <col style="width: 12%">
       <col style="width: 20%">
+      <col style="width: 26%">
+      <col style="width: 6%">
+      <col style="width: 12%">
+      <col style="width: 10%">
+      <col style="width: 10%">
+      <col style="width: 16%">
     </colgroup>
     <thead>
       <tr>
         <th>Feed</th>
         <th>Output URL</th>
         <th>Items</th>
+        <th>Status</th>
         <th>Last polled</th>
         <th>Last error</th>
         <th></th>
@@ -30,7 +34,7 @@
     </thead>
     <tbody>
       {% for feed in feeds %}
-      <tr>
+      <tr data-feed-id="{{ feed.id }}">
         <td>
           <div>{{ feed.title or feed.url }}</div>
           <div class="muted">{{ feed.url }}</div>
@@ -41,12 +45,13 @@
             <button type="button" class="btn-tint-accent" onclick="pintxosCopy(this, '{{ feed.output_url }}')">Copy</button>
           </div>
         </td>
-        <td>{{ feed.item_count }}</td>
-        <td class="muted nowrap" title="{{ feed.last_polled_at or '' }}">{{ feed.last_polled_at | ago }}</td>
-        <td class="error">{{ feed.last_error or "" }}</td>
+        <td data-field="items">{{ feed.item_count }}</td>
+        <td data-field="status" class="muted nowrap">{{ feed.status_label }}</td>
+        <td data-field="last_polled" class="muted nowrap" title="{{ feed.last_polled_at or '' }}">{{ feed.last_polled_at | ago }}</td>
+        <td data-field="last_error" class="error">{{ feed.last_error or "" }}</td>
         <td class="actions">
           <form method="post" action="/feeds/{{ feed.id }}/poll">
-            <button type="submit" class="btn-tint-neutral">Poll now</button>
+            <button type="submit" class="btn-tint-neutral" data-field="poll-btn" {% if feed.active %}disabled{% endif %}>Poll now</button>
           </form>
           <form method="post" action="/feeds/{{ feed.id }}/delete" onsubmit="return confirm('Delete feed?')">
             <button type="submit" class="btn-danger">Delete</button>
@@ -54,7 +59,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="6" class="empty">No feeds yet — add one above.</td></tr>
+      <tr><td colspan="7" class="empty">No feeds yet — add one above.</td></tr>
       {% endfor %}
     </tbody>
   </table>

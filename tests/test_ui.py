@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from pintxos.app import app
+from pintxos.app import app, status_label
 from pintxos.config import get_setting
 
 
@@ -163,3 +163,154 @@ def test_base_shell_has_wordmark_favicon_and_github_link():
     assert 'rel="icon"' in page
     assert "github.com/janw76/pintxos" in page
     assert "ui-sans-serif" in page
+
+
+def test_status_label_idle_is_blank():
+    assert status_label("idle", None) == ""
+
+
+def test_status_label_queued():
+    assert status_label("queued", None) == "Queued"
+
+
+def test_status_label_fetching():
+    assert status_label("fetching", None) == "Fetching feed…"
+
+
+def test_status_label_summarizing_with_progress():
+    assert status_label("summarizing", {"done": 2, "total": 5}) == "Summarizing 2/5"
+
+
+def test_status_label_summarizing_without_progress():
+    assert status_label("summarizing", None) == "Summarizing"
+
+
+def test_status_label_error():
+    assert status_label("error", None) == "Error"
+
+
+def test_status_label_unknown_state_returns_raw():
+    assert status_label("something-weird", None) == "something-weird"
+
+
+def test_index_has_status_column_and_seven_cols(quiet_engine):
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        page = c.get("/").text
+
+    assert "<th>Status</th>" in page
+    assert page.count("<col ") == 7
+    assert 'data-feed-id="1"' in page
+    assert 'data-field="items"' in page
+    assert 'data-field="status"' in page
+    assert 'data-field="last_polled"' in page
+    assert 'data-field="last_error"' in page
+    assert 'data-field="poll-btn"' in page
+
+
+def test_index_shows_live_summarizing_status_and_disables_poll_button(monkeypatch):
+    import threading
+    import time
+
+    import pintxos.app as app_module
+
+    release = threading.Event()
+
+    def _wait_until(predicate, timeout=2.0, interval=0.02):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return True
+            time.sleep(interval)
+        return predicate()
+
+    def _blocking_poll(feed_id, reporter):
+        reporter.fetching(feed_id)
+        reporter.summarizing(feed_id, 2, 5)
+        release.wait(timeout=5)
+        reporter.finished(feed_id, 0, 0)
+        return True
+
+    monkeypatch.setattr(app_module.engine, "_poll_fn", _blocking_poll)
+
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        c.post("/feeds/1/poll", follow_redirects=False)
+
+        assert _wait_until(
+            lambda: app_module.engine.snapshot()["feeds"].get(1, {}).get("state")
+            == "summarizing"
+        )
+
+        page = c.get("/").text
+        assert "Summarizing 2/5" in page
+        assert "disabled" in page
+
+        release.set()
+
+        assert _wait_until(
+            lambda: app_module.engine.snapshot()["feeds"].get(1, {}).get("state") == "idle"
+        )
+
+        page = c.get("/").text
+
+    # After finishing, the status cell for feed 1 is empty and the button enabled.
+    import re
+
+    row_match = re.search(r'<tr data-feed-id="1">.*?</tr>', page, re.DOTALL)
+    assert row_match is not None
+    row_html = row_match.group(0)
+    status_match = re.search(r'data-field="status"[^>]*>(.*?)</td>', row_html, re.DOTALL)
+    assert status_match is not None
+    assert status_match.group(1).strip() == ""
+    assert "disabled" not in row_html
+
+
+def test_index_paused_banner_shown_when_engine_paused(monkeypatch):
+    import threading
+    import time
+
+    import pintxos.app as app_module
+
+    release = threading.Event()
+
+    def _wait_until(predicate, timeout=2.0, interval=0.02):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return True
+            time.sleep(interval)
+        return predicate()
+
+    def _api_key_missing_poll(feed_id, reporter):
+        reporter.fetching(feed_id)
+        release.wait(timeout=5)
+        reporter.api_key_missing(feed_id)
+        return False
+
+    monkeypatch.setattr(app_module.engine, "_poll_fn", _api_key_missing_poll)
+
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        c.post("/feeds/1/poll", follow_redirects=False)
+
+        assert _wait_until(
+            lambda: app_module.engine.snapshot()["feeds"].get(1, {}).get("state") == "fetching"
+        )
+        release.set()
+
+        assert _wait_until(lambda: app_module.engine.snapshot()["paused_reason"] is not None)
+
+        page = c.get("/").text
+
+    assert "Polling is paused" in page
+    assert 'href="/settings"' in page
+
+
+def test_base_script_has_live_status_wiring():
+    with TestClient(app) as c:
+        page = c.get("/").text
+
+    assert "replaceState" in page
+    assert "/api/status" in page
+    assert "visibilitychange" in page
