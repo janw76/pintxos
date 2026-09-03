@@ -1,21 +1,30 @@
-# Pintxøs
+# Pintxøs – Bite-sized, honest RSS feeds.
 
-Bite-sized, honest RSS feeds. Pintxøs re-publishes any RSS feed with clickbait
-titles rewritten into plain facts, plus a short factual summary — so you can
-tell what happened without opening the article.
+Pintxøs grabs an RSS feed and re-publishes it with neutral, plain-facts headline plus a short factual ≤100 words summary. No more annoying clickbait titles. 
 
 ## What / why
 
-RSS titles are increasingly written to be clicked, not read. A real example
-from this tool:
+Article titles around the web are increasingly written just to be clicked, not read. Typically egregious examples:
 
-- Screenrant's teaser title: *"Netflix's Renewed Sci-Fi Thriller With Perfect
-  Rotten Tomatoes Score Officially Hits A Filming Milestone"*
+- "Popular Open-World Franchise Quietly Confirms Huge Upgrade After Years of Waiting". Which tool? What is the upgrade?
+- "Major Premier League Star Subject to ‘Unbelievable’ Bid as Huge Transfer Formally Agreed". Who? Which teams? 
+- "Netflix's Renewed Sci-Fi Thriller With Perfect Rotten Tomatoes Score Officially Hits A Filming Milestone". Which show? What milestone? 
+
+Argh! 🤯
+
+Pintxøs takes the original RSS feed, ingests the title and contents, and spits out a new RSS feed with a plain useful title, a max. 100 word summary, and a link to the original post. 
+
+Example:
+
+- Original headline: "Netflix's Renewed Sci-Fi Thriller With Perfect Rotten Tomatoes Score Officially Hits A Filming Milestone"
 - Pintxøs' rewritten headline: *"Netflix's Supacell completes season 2
   filming"*
 
-Same story, no guessing games. Point Pintxøs at a feed once, and every new
-item gets the same treatment automatically.
+Same story, no guessing games. Sanity restored.
+
+Point Pintxøs at a feed once, and every new item gets the same treatment automatically.
+
+![Screenshot of Pintxøs](docs/pintxøs_screernshot.jpg)
 
 ## How it works
 
@@ -59,7 +68,7 @@ docker compose up -d
 ```
 
 Open `http://localhost:8000`, add a feed URL, and copy the generated output
-feed URL into your RSS reader.
+feed URL into your RSS reader of choice. My favorite is [NetNewsWire](https://netnewswire.com).
 
 ## Configuration
 
@@ -82,8 +91,8 @@ to the database. `PINTXOS_BASE_URL` and `PINTXOS_DATA_DIR` are environment-only.
 delete, or repoll feeds, and anyone who can reach an output feed URL can read
 it — this is by design, so RSS readers can fetch feeds without credentials.
 Only run Pintxøs on `localhost`, over Tailscale/a VPN, or behind a reverse
-proxy that handles authentication for you. Do not expose it directly to the
-public internet.
+proxy that handles authentication for you. **Do not expose it directly to the
+public internet**.
 
 ## API key
 
@@ -96,6 +105,8 @@ is not set, the Settings page lets you store a key in the database instead.
 Pintxøs uses Claude Haiku and makes exactly one API call per new article,
 never more: items are summarized once and stored, and are never
 re-summarized on subsequent polls.
+
+Even though Haiku is the cheapest model Anthropic offers today and Pintxøs avoids repolling and processing, I still recommend watching cost on [Claude Console](https://platform.claude.com/). Cost will obviously scale with the number feeds you poll and the amount of articles published per feed.
 
 ## Usage
 
@@ -112,13 +123,16 @@ python -m venv .venv && .venv/bin/pip install -e .[dev]
 docker build -t pintxos .
 ```
 
-## Prior art
+## Other tools
 
-See [docs/prior-art.md](docs/prior-art.md) for a full survey. The closest
-existing match is [RSSbrew](https://github.com/yinan-c/RSSbrew) (Docker,
-web UI, persisted store, real republished feed), but it never fetches the
-original article page and prepends a summary rather than rewriting the
-headline — which is why Pintxøs was built from scratch rather than forked.
+See also  [docs/prior-art.md](docs/prior-art.md) for a full survey. Many of these do amazing things but I wanted something simple that does 1-2 things I want and need very well, nothing else. 
+
+- The closest existing match seems to be [RSSbrew](https://github.com/yinan-c/RSSbrew) (Docker, web UI, persisted store, real republished feed), but it never fetches the original article page and prepends a summary rather than rewriting the
+headline.
+- Radar RSS: Real-time intelligent dynamic RSS news aggregator with Google Gemini AI curation, Windows desktop application, and native Android app support.
+- ...
+
+
 
 ## License
 
