@@ -68,6 +68,8 @@ docker compose up -d
 Open `http://localhost:8000`, add a feed URL, and copy the generated output
 feed URL into your RSS reader of choice. My favorite is [NetNewsWire](https://netnewswire.com).
 
+If you run [Tailscale](https://tailscale.com), I would recommend to expose Pintxøs [as a service](https://tailscale.com/docs/features/tailscale-services), which will give you a proper URL with https you can access easily from any RSS client in your Tailnet.
+
 ## Configuration
 
 Model, poll interval, items per feed and the API key can be set via environment
