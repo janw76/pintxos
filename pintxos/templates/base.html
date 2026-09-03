@@ -135,8 +135,7 @@
       <a href="https://github.com/janw76/pintxos" rel="noopener">GitHub</a>
     </nav>
   </header>
-  {% if request.query_params.get('err') %}<p class="flash" role="alert">{{ request.query_params.get('err') }}</p>{% endif %}
-  {% if request.query_params.get('msg') %}<p class="msg" role="status">{{ request.query_params.get('msg') }}</p>{% endif %}
+  {% if flash %}<p class="{{ 'flash' if flash.kind == 'err' else 'msg' }}" role="{{ 'alert' if flash.kind == 'err' else 'status' }}">{{ flash.text }}</p>{% endif %}
   {% block content %}{% endblock %}
   <script>
     // ponytail: one tiny inline script for the copy buttons, no bundler needed.
@@ -146,15 +145,6 @@
       btn.textContent = "Copied!";
       setTimeout(function () { btn.textContent = old; }, 1200);
     }
-
-    // Drop msg/err query params from the URL so a reload doesn't resurrect
-    // the flash; the current render keeps showing it since it's already
-    // in the DOM.
-    document.addEventListener("DOMContentLoaded", function () {
-      if (location.search.indexOf("msg=") !== -1 || location.search.indexOf("err=") !== -1) {
-        history.replaceState(null, "", location.pathname);
-      }
-    });
 
     // Poll /api/status and update feed rows in place, so state changes
     // (queued/fetching/summarizing/idle) show up without a manual reload.

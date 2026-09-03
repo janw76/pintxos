@@ -24,7 +24,8 @@ def test_add_feed_invalid_url_rejected(quiet_engine):
     with TestClient(app) as c:
         resp = c.post("/feeds", data={"url": "ftp://nope"}, follow_redirects=False)
         assert resp.status_code == 303
-        assert "err=" in resp.headers["location"]
+        assert "?" not in resp.headers["location"]
+        assert "pintxos_flash" in resp.headers["set-cookie"]
 
 
 def test_add_feed_duplicate_rejected(quiet_engine):
@@ -34,7 +35,8 @@ def test_add_feed_duplicate_rejected(quiet_engine):
             "/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False
         )
         assert resp.status_code == 303
-        assert "err=" in resp.headers["location"]
+        assert "?" not in resp.headers["location"]
+        assert "pintxos_flash" in resp.headers["set-cookie"]
 
         page = c.get("/").text
         assert page.count("/feeds/1/poll") == 1  # only one feed row, not two
@@ -89,7 +91,8 @@ def test_settings_post_invalid_interval_rejected():
             follow_redirects=False,
         )
         assert resp.status_code == 303
-        assert "err=" in resp.headers["location"]
+        assert "?" not in resp.headers["location"]
+        assert "pintxos_flash" in resp.headers["set-cookie"]
 
     # unchanged from default
     assert get_setting("PINTXOS_POLL_MINUTES") == "30"
@@ -311,9 +314,97 @@ def test_base_script_has_live_status_wiring():
     with TestClient(app) as c:
         page = c.get("/").text
 
-    assert "replaceState" in page
     assert "/api/status" in page
     assert "visibilitychange" in page
+
+
+def test_flash_error_shown_once_then_gone(quiet_engine):
+    with TestClient(app) as c:
+        resp = c.post("/feeds", data={"url": "ftp://nope"}, follow_redirects=False)
+        assert resp.status_code == 303
+        # The redirect response deletes the cookie it just set (immediate
+        # expiry) so the flash is consumed by the very next GET.
+        set_cookie_headers = resp.headers.get_list("set-cookie")
+        assert any("pintxos_flash" in h for h in set_cookie_headers)
+
+        page = c.get("/").text
+        assert "URL must start with http:// or https://" in page
+
+        page2 = c.get("/").text
+        assert "URL must start with http:// or https://" not in page2
+
+
+def test_flash_get_response_deletes_cookie():
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "ftp://nope"}, follow_redirects=False)
+        resp = c.get("/")
+        set_cookie_headers = resp.headers.get_list("set-cookie")
+        flash_deletions = [h for h in set_cookie_headers if "pintxos_flash" in h]
+        assert flash_deletions
+        deletion = flash_deletions[0]
+        assert "max-age=0" in deletion.lower() or "1970" in deletion
+
+
+def test_settings_invalid_number_flash_shown_once(quiet_engine):
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "m",
+                "poll_minutes": "abc",
+                "items_per_feed": "10",
+                "api_key": "",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "?" not in resp.headers["location"]
+
+        page = c.get("/settings").text
+        assert 'class="flash"' in page
+        assert "Poll interval and items per feed must be numbers" in page
+
+        page2 = c.get("/settings").text
+        assert 'class="flash"' not in page2
+        assert "Poll interval and items per feed must be numbers" not in page2
+
+
+def test_settings_saved_flash_shown_once(quiet_engine):
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "claude-haiku-4-5-20251001",
+                "poll_minutes": "15",
+                "items_per_feed": "10",
+                "api_key": "",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        page = c.get("/settings").text
+        assert 'class="msg"' in page
+        assert "Saved" in page
+
+        page2 = c.get("/settings").text
+        assert 'class="msg"' not in page2
+        assert "Saved" not in page2
+
+
+def test_stale_msg_query_param_is_ignored():
+    with TestClient(app) as c:
+        page = c.get("/?msg=Polling%E2%80%A6").text
+    assert '<p class="msg"' not in page
+    assert "Polling…" not in page
+
+
+def test_bogus_flash_cookie_ignored(quiet_engine):
+    with TestClient(app) as c:
+        c.cookies.set("pintxos_flash", "%%%not-json")
+        resp = c.get("/")
+    assert resp.status_code == 200
+    assert "%%%not-json" not in resp.text
 
 
 def test_health_reports_engine_summary_when_idle(quiet_engine):

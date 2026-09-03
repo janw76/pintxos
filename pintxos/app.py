@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from fastapi import FastAPI, Form, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -139,12 +140,43 @@ def feed_xml(feed_id: int) -> Response:
 
 
 def _redirect(path: str, *, msg: str | None = None, err: str | None = None) -> RedirectResponse:
-    # ponytail: flash messages via query params, no session/cookie machinery.
-    if err:
-        path = f"{path}?err={quote(err)}"
-    elif msg:
-        path = f"{path}?msg={quote(msg)}"
-    return RedirectResponse(url=path, status_code=303)
+    # ponytail: flash messages via a short-lived one-shot cookie, not query
+    # params, so a stale/bookmarked/history URL can't replay them.
+    response = RedirectResponse(url=path, status_code=303)
+    if err or msg:
+        value = json.dumps({"kind": "err" if err else "msg", "text": err or msg})
+        response.set_cookie(
+            "pintxos_flash",
+            quote(value),
+            max_age=10,
+            path="/",
+            httponly=True,
+            samesite="lax",
+        )
+    return response
+
+
+def pop_flash(request: Request) -> dict | None:
+    """Read and validate the one-shot flash cookie, if present.
+
+    Returns None on any missing/malformed/invalid-shape cookie.
+    """
+    raw = request.cookies.get("pintxos_flash")
+    if not raw:
+        return None
+    try:
+        data = json.loads(unquote(raw))
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    kind = data.get("kind")
+    text = data.get("text")
+    if kind not in ("msg", "err"):
+        return None
+    if not isinstance(text, str) or not text or len(text) > 500:
+        return None
+    return {"kind": kind, "text": text}
 
 
 @app.get("/")
@@ -169,9 +201,14 @@ def index(request: Request) -> Response:
         feed["status_label"] = status_label(feed["state"], feed["progress"])
         feed["active"] = feed["state"] in ACTIVE_STATES
         feeds.append(feed)
-    return templates.TemplateResponse(
-        request, "index.html", {"feeds": feeds, "paused_reason": snap["paused_reason"]}
+    flash = pop_flash(request)
+    response = templates.TemplateResponse(
+        request,
+        "index.html",
+        {"feeds": feeds, "paused_reason": snap["paused_reason"], "flash": flash},
     )
+    response.delete_cookie("pintxos_flash", path="/")
+    return response
 
 
 @app.post("/feeds")
@@ -213,7 +250,8 @@ def settings_page(request: Request) -> Response:
         row = conn.execute("SELECT value FROM settings WHERE key = ?", ("ANTHROPIC_API_KEY",)).fetchone()
     env_key_set = bool(os.environ.get("ANTHROPIC_API_KEY"))
     key_last4 = row["value"][-4:] if row and row["value"] else None
-    return templates.TemplateResponse(
+    flash = pop_flash(request)
+    response = templates.TemplateResponse(
         request,
         "settings.html",
         {
@@ -222,8 +260,11 @@ def settings_page(request: Request) -> Response:
             "items_per_feed": items_per_feed,
             "env_key_set": env_key_set,
             "key_last4": key_last4,
+            "flash": flash,
         },
     )
+    response.delete_cookie("pintxos_flash", path="/")
+    return response
 
 
 @app.post("/settings")
