@@ -3,32 +3,28 @@
 {% block content %}
 <h1>Settings</h1>
 <form method="post" action="/settings">
-  <table>
-    <tr>
-      <th><label for="model">Model</label></th>
-      <td><input type="text" id="model" name="model" value="{{ model }}"></td>
-    </tr>
-    <tr>
-      <th><label for="poll_minutes">Poll interval (minutes)</label></th>
-      <td><input type="number" id="poll_minutes" name="poll_minutes" min="1" max="1440" value="{{ poll_minutes }}"></td>
-    </tr>
-    <tr>
-      <th><label for="items_per_feed">Items per feed</label></th>
-      <td><input type="number" id="items_per_feed" name="items_per_feed" min="1" max="500" value="{{ items_per_feed }}"></td>
-    </tr>
-    <tr>
-      <th><label for="api_key">Anthropic API key</label></th>
-      <td>
-        {% if env_key_set %}
-          <input type="password" id="api_key" name="api_key" value="" disabled>
-          <div class="muted">Set via ANTHROPIC_API_KEY environment variable (recommended)</div>
-        {% else %}
-          <input type="password" id="api_key" name="api_key" value="" placeholder="{% if key_last4 %}unchanged{% else %}sk-...{% endif %}">
-          {% if key_last4 %}<div class="muted">Set (••••{{ key_last4 }})</div>{% endif %}
-        {% endif %}
-      </td>
-    </tr>
-  </table>
-  <button type="submit">Save</button>
+  <div class="field">
+    <label for="model">Model</label>
+    <input type="text" id="model" name="model" value="{{ model }}">
+  </div>
+  <div class="field field-narrow">
+    <label for="poll_minutes">Poll interval (minutes)</label>
+    <input type="number" id="poll_minutes" name="poll_minutes" min="1" max="1440" value="{{ poll_minutes }}">
+  </div>
+  <div class="field field-narrow">
+    <label for="items_per_feed">Items per feed</label>
+    <input type="number" id="items_per_feed" name="items_per_feed" min="1" max="500" value="{{ items_per_feed }}">
+  </div>
+  <div class="field">
+    <label for="api_key">Anthropic API key</label>
+    {% if env_key_set %}
+      <input type="password" id="api_key" name="api_key" value="" disabled>
+      <div class="muted">Set via ANTHROPIC_API_KEY environment variable (recommended)</div>
+    {% else %}
+      <input type="password" id="api_key" name="api_key" value="" placeholder="{% if key_last4 %}unchanged{% else %}sk-...{% endif %}">
+      {% if key_last4 %}<div class="muted">Set (••••{{ key_last4 }})</div>{% endif %}
+    {% endif %}
+  </div>
+  <button type="submit" class="btn-primary">Save</button>
 </form>
 {% endblock %}

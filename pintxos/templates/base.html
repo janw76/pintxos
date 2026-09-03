@@ -14,34 +14,107 @@
       --accent: #4c6ef5;
       --danger: #b00020;
       --success: #1a7a1a;
+      --surface: #f7f8fa;
     }
+    *, *::before, *::after { box-sizing: border-box; }
     body {
       font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
       background: var(--bg);
       color: var(--text);
+      line-height: 1.5;
       max-width: 900px;
       margin: 2rem auto;
       padding: 0 1rem;
     }
+    h1 { font-size: 1.5rem; font-weight: 600; letter-spacing: -0.015em; margin: 0 0 1.25rem; }
+
     header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1.5rem; }
     header .wordmark { font-size: 1.25rem; font-weight: 600; letter-spacing: -0.015em; color: var(--text); text-decoration: none; }
     header nav { display: flex; align-items: center; gap: 1rem; }
     header nav a { color: var(--text-muted); text-decoration: none; }
     header nav a:hover { color: var(--text); }
     header nav a[aria-current="page"] { color: var(--accent); font-weight: 600; }
+
+    .table-wrap { overflow-x: auto; }
     table { border-collapse: collapse; width: 100%; }
-    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #ddd; vertical-align: top; }
-    th { color: #555; }
+    th, td { text-align: left; padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th:first-child, td:first-child { padding-left: 0; }
+    th:last-child, td:last-child { padding-right: 0; }
+    thead th { font-size: 0.8125rem; font-weight: 600; color: var(--text-muted); }
+    tbody tr:hover { background: var(--surface); }
+    tbody tr:last-child td { border-bottom: none; }
+    td.nowrap { white-space: nowrap; }
+    td.actions { text-align: right; white-space: nowrap; }
+    td.actions form + form { margin-left: 0.5rem; }
+    .empty { padding: 2rem 0; color: var(--text-muted); }
+
     form { display: inline; }
+    .add-form { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; }
+    .add-form input { flex: 1; min-width: 0; }
+
     input[type=url], input[type=text], input[type=number], input[type=password] {
-      padding: 0.3rem; font-size: 1rem;
+      font: inherit;
+      font-size: 0.9375rem;
+      color: var(--text);
+      background: #ffffff;
+      padding: 0.4rem 0.6rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
     }
-    button { padding: 0.3rem 0.7rem; font-size: 1rem; cursor: pointer; }
-    .error { color: #b00020; }
-    .flash { color: #b00020; margin-bottom: 1rem; }
-    .msg { color: #1a7a1a; margin-bottom: 1rem; }
-    .muted { color: #888; font-size: 0.9em; }
-    .add-form { margin-bottom: 1.5rem; }
+    input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(76, 110, 245, 0.15);
+    }
+    input:disabled { background: #f4f5f7; color: var(--text-muted); }
+    ::placeholder { color: #9aa1ab; }
+
+    button {
+      font: inherit;
+      font-size: 0.875rem;
+      color: var(--text);
+      background: #ffffff;
+      padding: 0.35rem 0.7rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    button:hover { border-color: #cdd2d9; background: var(--surface); }
+    button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .btn-primary { color: #ffffff; background: var(--accent); border-color: var(--accent); }
+    .btn-primary:hover { background: #3f5fd8; border-color: #3f5fd8; }
+    .btn-danger { color: var(--danger); }
+    .btn-danger:hover { color: var(--danger); background: #fdf3f4; border-color: var(--danger); }
+
+    .url-cell { display: flex; align-items: center; gap: 0.5rem; }
+    .output-url {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.8125rem;
+      color: var(--text);
+      background: var(--surface);
+      padding: 0.15rem 0.4rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      user-select: all;
+    }
+
+    .flash, .msg {
+      font-size: 0.9375rem;
+      padding: 0.625rem 0.875rem;
+      border: 1px solid;
+      border-radius: 8px;
+      margin-bottom: 1.25rem;
+    }
+    .flash { color: var(--danger); background: #fdf3f4; border-color: #f3d4d8; }
+    .msg { color: var(--success); background: #f2f9f2; border-color: #cfe6cf; }
+    .error { color: var(--danger); }
+    .muted { color: var(--text-muted); font-size: 0.875rem; }
+
+    .field { max-width: 26rem; margin-bottom: 1.25rem; }
+    .field label { display: block; font-weight: 500; margin-bottom: 0.3rem; }
+    .field input { width: 100%; }
+    .field .muted { margin-top: 0.35rem; }
+    .field-narrow input { max-width: 8rem; }
   </style>
 </head>
 <body>
@@ -53,8 +126,8 @@
       <a href="https://github.com/janw76/pintxos" rel="noopener">GitHub</a>
     </nav>
   </header>
-  {% if request.query_params.get('err') %}<p class="flash">{{ request.query_params.get('err') }}</p>{% endif %}
-  {% if request.query_params.get('msg') %}<p class="msg">{{ request.query_params.get('msg') }}</p>{% endif %}
+  {% if request.query_params.get('err') %}<p class="flash" role="alert">{{ request.query_params.get('err') }}</p>{% endif %}
+  {% if request.query_params.get('msg') %}<p class="msg" role="status">{{ request.query_params.get('msg') }}</p>{% endif %}
   {% block content %}{% endblock %}
   <script>
     // ponytail: one tiny inline script for the copy buttons, no bundler needed.
