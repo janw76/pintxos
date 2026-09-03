@@ -38,7 +38,7 @@
         <td>
           <div class="url-cell">
             <span class="output-url">{{ feed.output_url }}</span>
-            <button type="button" onclick="pintxosCopy(this, '{{ feed.output_url }}')">Copy</button>
+            <button type="button" class="btn-tint-accent" onclick="pintxosCopy(this, '{{ feed.output_url }}')">Copy</button>
           </div>
         </td>
         <td>{{ feed.item_count }}</td>
@@ -46,7 +46,7 @@
         <td class="error">{{ feed.last_error or "" }}</td>
         <td class="actions">
           <form method="post" action="/feeds/{{ feed.id }}/poll">
-            <button type="submit">Poll now</button>
+            <button type="submit" class="btn-tint-neutral">Poll now</button>
           </form>
           <form method="post" action="/feeds/{{ feed.id }}/delete" onsubmit="return confirm('Delete feed?')">
             <button type="submit" class="btn-danger">Delete</button>
