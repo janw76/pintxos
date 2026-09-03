@@ -11,6 +11,7 @@ RUN useradd --uid 1000 --create-home pintxos \
 
 USER pintxos
 ENV PINTXOS_DATA_DIR=/data
+ENV PINTXOS_HOST=0.0.0.0
 VOLUME /data
 EXPOSE 8000
 CMD ["python", "-m", "pintxos"]
