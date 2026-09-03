@@ -24,7 +24,7 @@ Same story, no guessing games. Sanity restored.
 
 Point Pintxøs at a feed once, and every new item gets the same treatment automatically.
 
-![Screenshot of Pintxøs](docs/pintxøs_screernshot.jpg)
+![Screenshot of Pintxøs](docs/pintxøs_screernshot.webp)
 
 ## How it works
 
