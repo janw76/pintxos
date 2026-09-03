@@ -7,13 +7,25 @@ import logging
 import os
 import sys
 
+import dotenv
 import uvicorn
 
 from pintxos.config import DEFAULTS
 
 
 def main(argv: list[str] | None = None) -> None:
+    # Load .env from the current working directory (not the package directory) before
+    # anything else, so a locally-run `pintxos` picks up the same settings docker
+    # compose would via its own .env handling. Real environment variables always win.
+    dotenv_path = dotenv.find_dotenv(usecwd=True)
+    loaded = bool(dotenv_path) and dotenv.load_dotenv(dotenv_path=dotenv_path, override=False)
+
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logger = logging.getLogger(__name__)
+    if loaded:
+        logger.info("Loaded .env from %s", os.path.abspath(dotenv_path))
+    else:
+        logger.info("No .env file found in %s; using environment only", os.getcwd())
 
     parser = argparse.ArgumentParser(prog="pintxos", description="Run the Pintxos server.")
     parser.add_argument("--host", default=None, help="Host/interface to bind (default: env PINTXOS_HOST or 127.0.0.1)")

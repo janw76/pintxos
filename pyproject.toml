@@ -19,6 +19,7 @@ dependencies = [
     "httpx",
     "apscheduler",
     "anthropic",
+    "python-dotenv",
 ]
 classifiers = [
     "License :: OSI Approved :: MIT License",
