@@ -146,6 +146,22 @@ def test_settings_env_key_set_shows_env_message_and_ignores_submission(monkeypat
     assert row is None
 
 
+def test_feed_table_uses_fixed_layout_and_wraps_long_urls(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_feed", lambda feed_id: True)
+    long_url = "https://example.com/" + "a" * 100 + "/feed.xml"
+    with TestClient(app) as c:
+        resp = c.post("/feeds", data={"url": long_url}, follow_redirects=False)
+        assert resp.status_code == 303
+
+        resp = c.get("/")
+        assert resp.status_code == 200
+        page = resp.text
+
+    assert "table-layout: fixed" in page
+    assert "<colgroup>" in page
+    assert long_url in page
+
+
 def test_base_shell_has_wordmark_favicon_and_github_link():
     with TestClient(app) as c:
         page = c.get("/").text
