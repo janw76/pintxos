@@ -24,8 +24,46 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: pytest -q
 
-  image:
+  native:
+    runs-on: ubuntu-latest
     needs: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install build tool
+        run: pip install build
+      - name: Build wheel
+        run: python -m build --wheel
+      - name: Install wheel into venv
+        run: python -m venv /tmp/v && /tmp/v/bin/pip install dist/*.whl
+      - name: Check console script help
+        run: /tmp/v/bin/pintxos --help
+      - name: Smoke test server startup
+        run: |
+          export PINTXOS_HOST=127.0.0.1 PINTXOS_PORT=8123 PINTXOS_DATA_DIR=/tmp/pintxos-data
+          export PINTXOS_NO_SCHEDULER=1
+          cd /tmp
+          /tmp/v/bin/pintxos > /tmp/pintxos-server.log 2>&1 &
+          pid=$!
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8123/health > /dev/null; then ok=1; break; fi
+            sleep 1
+          done
+          kill "$pid" || true
+          wait "$pid" 2>/dev/null || true
+          if [ "$ok" != "1" ]; then
+            echo "Server never became healthy; log follows:"
+            cat /tmp/pintxos-server.log
+            exit 1
+          fi
+
+  image:
+    needs: [test, native]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
