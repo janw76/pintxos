@@ -1,6 +1,6 @@
 # Prior Art: LLM-Summarized RSS Republishers
 
-Pintxos' spec — read any RSS feed, fetch each article's original URL, extract
+Pintxos' goal — read any RSS feed, fetch each article's original URL, extract
 the body, send it to an LLM to produce a factual headline plus a short
 summary, persist it once, and republish as a clean new RSS feed, all behind a
 minimal self-hosted web UI with configurable model/API key — turns out to be
@@ -64,7 +64,7 @@ reader-side plugins, not standalone tools; they require FreshRSS as host,
 operate as one-click/on-demand summarizers inside the existing UI rather
 than an automated once-only pipeline, and produce no separate output feed.
 `freshrss-ai-assistant` is notable for explicit Claude support and headline
-retitling, both close to spec, but it's low-activity (single commit cluster,
+retitling, both close to what pintxos does, but it's low-activity (single commit cluster,
 last pushed 2025-03) and entirely dependent on a FreshRSS install.
 
 **condenseit** — a genuinely automated self-hosted pipeline with real
@@ -109,22 +109,3 @@ tool.
   release in December 2023; RSS 2.0 output is a small, stable, well-known
   format, and a ~50-line hand-rolled generator avoids taking on a
   low-activity dependency for something this simple.
-
-## Recommendation
-
-**Build.** No candidate covers more than roughly half of the spec.
-RSSbrew is the strongest existing project (Docker, web UI, persisted store,
-real republished feed) but it is architecturally a filter/aggregation tool
-that decorates existing feed content with a prepended summary — it does not
-fetch original articles, does not rewrite headlines, and has no native
-Anthropic integration. Retrofitting article-fetch + headline-rewrite +
-Claude support onto RSSbrew's Django/SQLite stack would touch nearly every
-part of its pipeline (its filter engine, digest engine, and admin UI are
-also unwanted surface area for pintxos' minimal-tool goal), so forking it
-buys little over a clean build while inheriting AGPL-3.0 and a larger,
-differently-shaped codebase. The planned stack (feedparser + trafilatura +
-FastAPI + APScheduler + SQLite + anthropic SDK, single container) remains
-the right call; RSS-GPT and RSSbrew are worth keeping open as references for
-summary-prompt phrasing and feed-pipeline UX, and RSS-Bridge is worth a look
-for its plugin/web-UI patterns if pintxos ever grows a "make a feed from a
-non-feed site" feature.
