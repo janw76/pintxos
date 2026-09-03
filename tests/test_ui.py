@@ -314,3 +314,40 @@ def test_base_script_has_live_status_wiring():
     assert "replaceState" in page
     assert "/api/status" in page
     assert "visibilitychange" in page
+
+
+def test_health_reports_engine_summary_when_idle(quiet_engine):
+    import time
+
+    import pintxos.app as app_module
+
+    def _wait_until(predicate, timeout=2.0, interval=0.02):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return True
+            time.sleep(interval)
+        return predicate()
+
+    with TestClient(app) as c:
+        # The engine clears paused_reason when it dequeues the next feed, so
+        # running one poll here wipes any pause left over from another test
+        # sharing the process-wide engine singleton (see pintxos-ruy).
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        c.post("/feeds/1/poll", follow_redirects=False)
+        assert _wait_until(
+            lambda: app_module.engine.snapshot()["feeds"].get(1, {}).get("state") == "idle"
+        )
+
+        resp = c.get("/health")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body.keys()) == {"ok", "feeds", "engine"}
+
+    engine_summary = body["engine"]
+    assert set(engine_summary.keys()) == {"running", "current", "queued", "paused_reason"}
+    assert engine_summary["running"] is False
+    assert engine_summary["current"] is None
+    assert engine_summary["queued"] == 0
+    assert engine_summary["paused_reason"] is None

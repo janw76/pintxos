@@ -111,7 +111,17 @@ app = FastAPI(title="Pintxøs", lifespan=lifespan)
 def health() -> dict:
     with db() as conn:
         feeds = conn.execute("SELECT COUNT(*) AS n FROM feeds").fetchone()["n"]
-    return {"ok": True, "feeds": feeds}
+    snap = engine.snapshot()
+    return {
+        "ok": True,
+        "feeds": feeds,
+        "engine": {
+            "running": snap["running"],
+            "current": snap["current"],
+            "queued": len(snap["queue"]),
+            "paused_reason": snap["paused_reason"],
+        },
+    }
 
 
 @app.get("/feeds/{feed_id}.xml")

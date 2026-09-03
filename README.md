@@ -26,7 +26,8 @@ Same story, no guessing games. Sanity restored. Point Pintxøs at a feed once, a
 
 ## How it works
 
-1. Poll each subscribed feed on a schedule.
+1. Poll each subscribed feed on a schedule, one feed at a time; the Feeds
+   page shows which feed is being processed.
 2. For each new item, fetch the article's own URL and extract the body text
    with [trafilatura](https://github.com/adbar/trafilatura).
 3. If the page can't be fetched or extraction comes back too thin, fall back
@@ -112,6 +113,13 @@ Even though Haiku is the cheapest model Anthropic offers today and Pintxøs avoi
 
 1. Open the web UI and add a feed URL.
 2. Wait for the next poll (or click "poll now").
+
+   The Feeds page shows a live per-feed status (Queued, Fetching feed,
+   Summarizing n/N, Error) that updates without reloading. "Poll now" is
+   idempotent, so clicking it twice does not poll twice, and a feed already
+   being polled is never polled concurrently. `GET /api/status` returns the
+   same information as JSON, for scripts or monitoring.
+
 3. Copy the feed's output URL — pattern `/feeds/<id>.xml` — into your RSS
    reader.
 
