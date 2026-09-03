@@ -12,3 +12,11 @@ __pycache__/
 *.pyc
 *.egg-info/
 .env
+
+# agent/issue-tracker tooling, local only
+.beads/
+.claude/
+.agents/
+.codex/
+AGENTS.md
+CLAUDE.md
