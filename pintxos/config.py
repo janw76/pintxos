@@ -16,6 +16,10 @@ DEFAULTS: dict[str, str | None] = {
     "PINTXOS_FILTER_ADS": "0",
     "PINTXOS_AD_TITLE_PATTERNS": "",
     "PINTXOS_AD_KEEP_PATTERNS": "",
+    # These two are environment-only (like PINTXOS_DATA_DIR): read directly by
+    # pintxos/cli.py before the app/DB is touched, never via get_setting().
+    "PINTXOS_HOST": "127.0.0.1",
+    "PINTXOS_PORT": "8000",
 }
 
 
