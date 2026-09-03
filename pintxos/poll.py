@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
-import threading
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 import feedparser
@@ -14,6 +14,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 from pintxos.config import get_setting
 from pintxos.db import db, now
+from pintxos.engine import NullReporter, Reporter
 from pintxos.summarize import MissingApiKey, SummarizeError, summarize
 
 log = logging.getLogger("pintxos")
@@ -22,10 +23,9 @@ USER_AGENT = "pintxos/0.1 (+https://github.com/janw76/pintxos)"
 MIN_ARTICLE_CHARS = 200
 MIN_FALLBACK_CHARS = 50
 
-# ponytail: one shared client, one lock, one scheduler at module level. Fine for a
+# ponytail: one shared client and one scheduler at module level. Fine for a
 # single-process app; ceiling is multi-worker deployments (each worker would poll).
 _client = httpx.Client(headers={"User-Agent": USER_AGENT}, timeout=20, follow_redirects=True)
-_lock = threading.Lock()
 scheduler = BackgroundScheduler()
 
 
@@ -91,8 +91,17 @@ def _set_error(feed_id: int, message: str, polled: bool = True) -> None:
             )
 
 
-def poll_feed(feed_id: int) -> bool:
-    """Poll one feed. Returns False if the whole run should stop (no API key)."""
+def poll_feed(feed_id: int, reporter: Reporter | None = None) -> bool:
+    """Poll one feed. Returns False if the whole run should stop (no API key).
+
+    Reports progress through `reporter` (see pintxos.engine.Reporter), respecting
+    the engine's transition table: fetching is reported before the feed GET;
+    summarizing (if there are any new entries) after each new entry is processed;
+    finished or failed exactly once at the end. If the feed row is missing
+    (deleted), nothing is reported at all -- the engine auto-finishes a feed that
+    never left the "fetching" state.
+    """
+    reporter = reporter or NullReporter()
     # Every DB connection below is short-lived: never hold a write transaction across a
     # network fetch or an Anthropic call, or the web UI blocks on "database is locked".
     with db() as conn:
@@ -101,6 +110,8 @@ def poll_feed(feed_id: int) -> bool:
             return True
         url, feed_title = feed["url"], feed["title"]
         limit = int(get_setting("PINTXOS_ITEMS_PER_FEED", conn))
+
+    reporter.fetching(feed_id)
 
     try:
         resp = _get(url)
@@ -112,6 +123,7 @@ def poll_feed(feed_id: int) -> bool:
     except Exception as e:
         log.warning("feed fetch failed %s: %s", url, e)
         _set_error(feed_id, str(e))
+        reporter.failed(feed_id, str(e))
         return True
 
     with db() as conn:
@@ -124,11 +136,21 @@ def poll_feed(feed_id: int) -> bool:
         }
 
     entries = sorted(parsed.entries, key=_entry_sort_key)[:limit]
+    new_entries = []
     for entry in entries:
         guid = entry.get("id") or entry.get("link")
+        if guid and guid not in seen:
+            new_entries.append(entry)
+    total = len(new_entries)
+    done = 0
+    inserted = 0
+    skipped = 0
+    if total > 0:
+        reporter.summarizing(feed_id, done, total)
+
+    for entry in new_entries:
+        guid = entry.get("id") or entry.get("link")
         link = entry.get("link") or guid
-        if not guid or guid in seen:
-            continue
 
         original_title = entry.get("title", "")
         text = fetch_article(link) if link else None
@@ -145,9 +167,13 @@ def poll_feed(feed_id: int) -> bool:
         except MissingApiKey:
             log.error("ANTHROPIC_API_KEY not set, stopping poll")
             _set_error(feed_id, "ANTHROPIC_API_KEY not set", polled=False)
+            reporter.api_key_missing(feed_id)
             return False
         except SummarizeError as e:
             log.warning("summarize failed for %s: %s", link, e)
+            skipped += 1
+            done += 1
+            reporter.summarizing(feed_id, done, total)
             continue  # not inserted: the next poll retries it
 
         with db() as conn:  # commit per item: a crash keeps what we already paid for
@@ -160,6 +186,9 @@ def poll_feed(feed_id: int) -> bool:
                     headline, summary, fallback, now(),
                 ),
             )
+        inserted += 1
+        done += 1
+        reporter.summarizing(feed_id, done, total)
 
     with db() as conn:
         conn.execute(
@@ -171,33 +200,41 @@ def poll_feed(feed_id: int) -> bool:
             "UPDATE feeds SET last_polled_at = ?, last_error = NULL WHERE id = ?",
             (now(), feed_id),
         )
+    reporter.finished(feed_id, inserted=inserted, skipped=skipped)
     return True
 
 
-def poll_all() -> None:
-    """Poll every feed, sequentially."""
-    # ponytail: sequential and global; switch to per-feed threads if >20 feeds.
-    if not _lock.acquire(blocking=False):
-        log.info("poll already running")
-        return
-    try:
-        with db() as conn:
-            feed_ids = [row["id"] for row in conn.execute("SELECT id FROM feeds ORDER BY id")]
-        for feed_id in feed_ids:
-            try:
-                if not poll_feed(feed_id):
-                    break
-            except Exception:
-                log.exception("poll_feed %s blew up", feed_id)
-    finally:
-        _lock.release()
+def _poll_all_compat() -> None:
+    """Poll every feed, sequentially, with no progress reporting.
+
+    Temporary until app.py wires the engine in pintxos-akx.3: this is the
+    default `job` for start_scheduler() when app.py calls it with no
+    arguments, replicating the old poll_all() behaviour (sequential, no
+    lock -- APScheduler's default executor already prevents overlapping
+    runs of the same job).
+    """
+    with db() as conn:
+        feed_ids = [row["id"] for row in conn.execute("SELECT id FROM feeds ORDER BY id")]
+    for feed_id in feed_ids:
+        try:
+            if not poll_feed(feed_id):
+                break
+        except Exception:
+            log.exception("poll_feed %s blew up", feed_id)
 
 
-def start_scheduler() -> None:
-    """Start the background poller: every N minutes, plus one run 10s from now."""
+def start_scheduler(job: Callable[[], None] | None = None) -> None:
+    """Start the background poller: every N minutes, plus one run 10s from now.
+
+    `job` is the callable to schedule; defaults to `_poll_all_compat` (a
+    temporary shim -- see its docstring) when app.py calls start_scheduler()
+    with no arguments. The job id stays "poll_all" so reschedule() keeps
+    working regardless of which callable is scheduled.
+    """
+    job = job or _poll_all_compat
     minutes = int(get_setting("PINTXOS_POLL_MINUTES"))
     scheduler.add_job(
-        poll_all,
+        job,
         "interval",
         minutes=minutes,
         id="poll_all",
