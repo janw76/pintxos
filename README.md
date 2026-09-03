@@ -1,6 +1,6 @@
-# pintxos
+# Pintxøs
 
-Bite-sized, honest RSS feeds. Pintxos re-publishes any RSS feed with clickbait
+Bite-sized, honest RSS feeds. Pintxøs re-publishes any RSS feed with clickbait
 titles rewritten into plain facts, plus a short factual summary — so you can
 tell what happened without opening the article.
 
@@ -11,10 +11,10 @@ from this tool:
 
 - Screenrant's teaser title: *"Netflix's Renewed Sci-Fi Thriller With Perfect
   Rotten Tomatoes Score Officially Hits A Filming Milestone"*
-- Pintxos' rewritten headline: *"Netflix's Supacell completes season 2
+- Pintxøs' rewritten headline: *"Netflix's Supacell completes season 2
   filming"*
 
-Same story, no guessing games. Point pintxos at a feed once, and every new
+Same story, no guessing games. Point Pintxøs at a feed once, and every new
 item gets the same treatment automatically.
 
 ## How it works
@@ -78,10 +78,10 @@ to the database. `PINTXOS_BASE_URL` and `PINTXOS_DATA_DIR` are environment-only.
 
 ## Security warning
 
-**Pintxos has no authentication.** Anyone who can reach the web UI can add,
+**Pintxøs has no authentication.** Anyone who can reach the web UI can add,
 delete, or repoll feeds, and anyone who can reach an output feed URL can read
 it — this is by design, so RSS readers can fetch feeds without credentials.
-Only run pintxos on `localhost`, over Tailscale/a VPN, or behind a reverse
+Only run Pintxøs on `localhost`, over Tailscale/a VPN, or behind a reverse
 proxy that handles authentication for you. Do not expose it directly to the
 public internet.
 
@@ -93,7 +93,7 @@ is not set, the Settings page lets you store a key in the database instead.
 
 ## Cost
 
-Pintxos uses Claude Haiku and makes exactly one API call per new article,
+Pintxøs uses Claude Haiku and makes exactly one API call per new article,
 never more: items are summarized once and stored, and are never
 re-summarized on subsequent polls.
 
@@ -118,7 +118,7 @@ See [docs/prior-art.md](docs/prior-art.md) for a full survey. The closest
 existing match is [RSSbrew](https://github.com/yinan-c/RSSbrew) (Docker,
 web UI, persisted store, real republished feed), but it never fetches the
 original article page and prepends a summary rather than rewriting the
-headline — which is why pintxos was built from scratch rather than forked.
+headline — which is why Pintxøs was built from scratch rather than forked.
 
 ## License
 

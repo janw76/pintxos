@@ -15,9 +15,9 @@ def render_rss(
     """Render a feed and its items as RSS 2.0 XML bytes."""
     rss = ET.Element("rss", {"version": "2.0"})
     channel = ET.SubElement(rss, "channel")
-    ET.SubElement(channel, "title").text = f"{feed['title'] or feed['url']} · pintxos"
+    ET.SubElement(channel, "title").text = f"{feed['title'] or feed['url']} · Pintxøs"
     ET.SubElement(channel, "link").text = feed["url"]
-    ET.SubElement(channel, "description").text = "Factual summaries by pintxos"
+    ET.SubElement(channel, "description").text = "Factual summaries by Pintxøs"
 
     for item in items:
         entry = ET.SubElement(channel, "item")

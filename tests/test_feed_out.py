@@ -84,3 +84,15 @@ def test_feed_xml_404_for_missing_feed():
     with TestClient(app) as c:
         resp = c.get("/feeds/999.xml")
     assert resp.status_code == 404
+
+
+def test_feed_xml_contains_pintxos_wordmark_utf8():
+    _seed()
+    with TestClient(app) as c:
+        resp = c.get("/feeds/1.xml")
+
+    assert resp.status_code == 200
+    assert "charset=utf-8" in resp.headers["content-type"]
+
+    xml = resp.content.decode("utf-8")
+    assert "Pintxøs" in xml
