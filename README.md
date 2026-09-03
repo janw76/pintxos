@@ -16,7 +16,7 @@ Pintxøs takes the original RSS feed, ingests the title and contents, and spits 
 
 Example:
 
-- Original headline: "Netflix's Renewed Sci-Fi Thriller With Perfect Rotten Tomatoes Score Officially Hits A Filming Milestone"
+- Original headline: "*Netflix's Renewed Sci-Fi Thriller With Perfect Rotten Tomatoes Score Officially Hits A Filming Milestone*"
 - Pintxøs' rewritten headline: *"Netflix's Supacell completes season 2
   filming"*
 
