@@ -34,7 +34,7 @@
           </div>
         </td>
         <td>{{ feed.item_count }}</td>
-        <td class="muted nowrap">{{ feed.last_polled_at or "never" }}</td>
+        <td class="muted nowrap" title="{{ feed.last_polled_at or '' }}">{{ feed.last_polled_at | ago }}</td>
         <td class="error">{{ feed.last_error or "" }}</td>
         <td class="actions">
           <form method="post" action="/feeds/{{ feed.id }}/poll">

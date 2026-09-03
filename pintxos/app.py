@@ -6,6 +6,7 @@ import os
 import sqlite3
 import threading
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote
 
@@ -20,6 +21,38 @@ from pintxos.poll import poll_feed, reschedule, scheduler, start_scheduler
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+
+def ago(iso: str | None, now: datetime | None = None) -> str:
+    """Render an ISO8601 UTC timestamp as a compact relative time.
+
+    None/empty -> "never"; parse failure -> the raw string unchanged.
+    """
+    if not iso:
+        return "never"
+    try:
+        parsed = datetime.fromisoformat(iso)
+    except ValueError:
+        return iso
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    reference = now if now is not None else datetime.now(UTC)
+    delta = reference - parsed
+    total_seconds = max(0, int(delta.total_seconds()))
+    if total_seconds < 60:
+        return f"{total_seconds}s"
+    if total_seconds < 3600:
+        minutes, seconds = divmod(total_seconds, 60)
+        return f"{minutes}m{seconds}s" if seconds else f"{minutes}m"
+    if total_seconds < 86400:
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes = remainder // 60
+        return f"{hours}h{minutes}m" if minutes else f"{hours}h"
+    days = total_seconds // 86400
+    return f"{days}d"
+
+
+templates.env.filters["ago"] = ago
 
 
 @asynccontextmanager
