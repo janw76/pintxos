@@ -1,18 +1,18 @@
 # Pintxøs – Bite-sized, honest RSS feeds.
 
-Pintxøs grabs an RSS feed and re-publishes it with neutral, plain-facts headline plus a short factual ≤100 words summary. No more annoying clickbait titles. 
+Pintxøs grabs an RSS feed and re-publishes its articles with neutral, plain-facts headlines plus a short factual ≤100 words summary. No more annoying clickbait titles and summaries.
 
 ## What / why
 
-Article titles around the web are increasingly written just to be clicked, not read. Typically egregious examples:
+Article titles around the web are increasingly written just to be clicked, not read. Some egregious examples:
 
-- "Popular Open-World Franchise Quietly Confirms Huge Upgrade After Years of Waiting". Which tool? What is the upgrade?
-- "Major Premier League Star Subject to ‘Unbelievable’ Bid as Huge Transfer Formally Agreed". Who? Which teams? 
-- "Netflix's Renewed Sci-Fi Thriller With Perfect Rotten Tomatoes Score Officially Hits A Filming Milestone". Which show? What milestone? 
+- "*Popular Open-World Franchise Quietly Confirms Huge Upgrade After Years of Waiting*". Which tool? What is the upgrade?
+- "*Major Premier League Star Subject to ‘Unbelievable’ Bid as Huge Transfer Formally Agreed*". Who? Which teams? 
+- "*Netflix's Renewed Sci-Fi Thriller With Perfect Rotten Tomatoes Score Officially Hits A Filming Milestone*". Which show? What milestone? 
 
 Argh! 🤯
 
-Pintxøs takes the original RSS feed, ingests the title and contents, and spits out a new RSS feed with a plain useful title, a max. 100 word summary, and a link to the original post. 
+Pintxøs takes the original RSS feed, ingests the title and contents, and spits out a new RSS feed with a plain, useful title, a max. 100 word summary, and a link to the original post. 
 
 Example:
 
@@ -20,9 +20,7 @@ Example:
 - Pintxøs' rewritten headline: *"Netflix's Supacell completes season 2
   filming"*
 
-Same story, no guessing games. Sanity restored.
-
-Point Pintxøs at a feed once, and every new item gets the same treatment automatically.
+Same story, no guessing games. Sanity restored. Point Pintxøs at a feed once, and every new item gets the same treatment automatically.
 
 ![Screenshot of Pintxøs](docs/pintxøs_screernshot.webp)
 
