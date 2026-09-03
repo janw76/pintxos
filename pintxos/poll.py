@@ -204,34 +204,13 @@ def poll_feed(feed_id: int, reporter: Reporter | None = None) -> bool:
     return True
 
 
-def _poll_all_compat() -> None:
-    """Poll every feed, sequentially, with no progress reporting.
-
-    Temporary until app.py wires the engine in pintxos-akx.3: this is the
-    default `job` for start_scheduler() when app.py calls it with no
-    arguments, replicating the old poll_all() behaviour (sequential, no
-    lock -- APScheduler's default executor already prevents overlapping
-    runs of the same job).
-    """
-    with db() as conn:
-        feed_ids = [row["id"] for row in conn.execute("SELECT id FROM feeds ORDER BY id")]
-    for feed_id in feed_ids:
-        try:
-            if not poll_feed(feed_id):
-                break
-        except Exception:
-            log.exception("poll_feed %s blew up", feed_id)
-
-
-def start_scheduler(job: Callable[[], None] | None = None) -> None:
+def start_scheduler(job: Callable[[], None]) -> None:
     """Start the background poller: every N minutes, plus one run 10s from now.
 
-    `job` is the callable to schedule; defaults to `_poll_all_compat` (a
-    temporary shim -- see its docstring) when app.py calls start_scheduler()
-    with no arguments. The job id stays "poll_all" so reschedule() keeps
-    working regardless of which callable is scheduled.
+    `job` is the callable to schedule (app.py passes a function that enqueues
+    every feed on the engine). The job id stays "poll_all" so reschedule()
+    keeps working regardless of which callable is scheduled.
     """
-    job = job or _poll_all_compat
     minutes = int(get_setting("PINTXOS_POLL_MINUTES"))
     scheduler.add_job(
         job,

@@ -4,18 +4,18 @@ from __future__ import annotations
 
 import os
 import sqlite3
-import threading
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import FastAPI, Form, HTTPException, Request, Response
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from pintxos.config import get_setting
 from pintxos.db import db, init_db, now
+from pintxos.engine import PollEngine
 from pintxos.feed_out import render_rss
 from pintxos.poll import poll_feed, reschedule, scheduler, start_scheduler
 
@@ -55,13 +55,30 @@ def ago(iso: str | None, now: datetime | None = None) -> str:
 templates.env.filters["ago"] = ago
 
 
+# Singleton in-process poll engine: one queue + worker thread for the whole
+# app. poll_feed already has the (feed_id, reporter) signature the engine
+# expects, so it's injected directly.
+engine = PollEngine(poll_fn=poll_feed)
+
+
+def enqueue_all_feeds() -> int:
+    """Enqueue every feed on the engine; returns the count actually queued."""
+    with db() as conn:
+        feed_ids = [row["id"] for row in conn.execute("SELECT id FROM feeds ORDER BY id")]
+    return engine.enqueue_all(feed_ids)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    # ponytail: env flag so TestClient/CI don't spawn a real poller thread.
+    # The worker thread is cheap when idle, and tests need it running to
+    # exercise the queue, so always start it (unlike the APScheduler below).
+    engine.start()
+    # ponytail: env flag so TestClient/CI don't spawn a real scheduler thread.
     if os.environ.get("PINTXOS_NO_SCHEDULER") != "1":
-        start_scheduler()
+        start_scheduler(enqueue_all_feeds)
     yield
+    engine.stop()
     if scheduler.running:
         scheduler.shutdown(wait=False)
 
@@ -128,7 +145,7 @@ def add_feed(url: str = Form(...)) -> Response:
         except sqlite3.IntegrityError:
             return _redirect("/", err="Already subscribed")
         new_id = cur.lastrowid
-    threading.Thread(target=poll_feed, args=(new_id,), daemon=True).start()
+    engine.enqueue(new_id)
     return _redirect("/")
 
 
@@ -136,13 +153,14 @@ def add_feed(url: str = Form(...)) -> Response:
 def delete_feed(feed_id: int) -> Response:
     with db() as conn:
         conn.execute("DELETE FROM feeds WHERE id = ?", (feed_id,))
+    engine.forget(feed_id)
     return _redirect("/")
 
 
 @app.post("/feeds/{feed_id}/poll")
 def poll_feed_now(feed_id: int) -> Response:
-    threading.Thread(target=poll_feed, args=(feed_id,), daemon=True).start()
-    return _redirect("/", msg="Polling…")
+    engine.enqueue(feed_id)
+    return _redirect("/")
 
 
 @app.get("/settings")
@@ -206,4 +224,64 @@ def save_settings(
     if os.environ.get("PINTXOS_NO_SCHEDULER") != "1":
         reschedule(poll_minutes_i)
 
+    # Self-heal: if the engine paused itself for a missing API key and one is
+    # now available (env var, or just submitted and stored above), re-enqueue
+    # every feed so the pause clears on its own instead of waiting for the
+    # next scheduled run.
+    api_key_now_available = bool(os.environ.get("ANTHROPIC_API_KEY")) or bool(api_key)
+    if engine.snapshot()["paused_reason"] and api_key_now_available:
+        enqueue_all_feeds()
+
     return _redirect("/settings", msg="Saved")
+
+
+@app.get("/api/status")
+def api_status() -> Response:
+    snap = engine.snapshot()
+    engine_feeds = snap["feeds"]
+
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT f.*, "
+            "(SELECT COUNT(*) FROM items WHERE items.feed_id = f.id) AS item_count "
+            "FROM feeds f ORDER BY f.id"
+        ).fetchall()
+
+    feeds = []
+    for row in rows:
+        feed_id = row["id"]
+        eng = engine_feeds.get(feed_id)
+        feeds.append(
+            {
+                "id": feed_id,
+                "title": row["title"],
+                "url": row["url"],
+                "state": eng["state"] if eng else "idle",
+                "progress": eng["progress"] if eng else None,
+                "last_result": eng["last_result"] if eng else None,
+                "item_count": row["item_count"],
+                "last_polled_at": row["last_polled_at"],
+                "last_polled_ago": ago(row["last_polled_at"]),
+                "last_error": row["last_error"],
+            }
+        )
+
+    next_run_at = None
+    if scheduler.running:
+        job = scheduler.get_job("poll_all")
+        if job is not None and job.next_run_time is not None:
+            next_run_at = job.next_run_time.isoformat()
+
+    payload = {
+        "engine": {
+            "running": snap["running"],
+            "current": snap["current"],
+            "queue": snap["queue"],
+            "paused_reason": snap["paused_reason"],
+            "last_run_started_at": snap["last_run_started_at"],
+            "last_run_finished_at": snap["last_run_finished_at"],
+            "next_run_at": next_run_at,
+        },
+        "feeds": feeds,
+    }
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store"})

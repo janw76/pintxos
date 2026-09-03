@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-import pintxos.app as app_module
 from pintxos.app import app
 from pintxos.config import get_setting
 
 
-def test_add_feed_appears_in_list(monkeypatch):
-    monkeypatch.setattr(app_module, "poll_feed", lambda feed_id: True)
+def test_add_feed_appears_in_list(quiet_engine):
     with TestClient(app) as c:
         resp = c.post(
             "/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False
@@ -22,16 +20,14 @@ def test_add_feed_appears_in_list(monkeypatch):
         assert "/feeds/1.xml" in page
 
 
-def test_add_feed_invalid_url_rejected(monkeypatch):
-    monkeypatch.setattr(app_module, "poll_feed", lambda feed_id: True)
+def test_add_feed_invalid_url_rejected(quiet_engine):
     with TestClient(app) as c:
         resp = c.post("/feeds", data={"url": "ftp://nope"}, follow_redirects=False)
         assert resp.status_code == 303
         assert "err=" in resp.headers["location"]
 
 
-def test_add_feed_duplicate_rejected(monkeypatch):
-    monkeypatch.setattr(app_module, "poll_feed", lambda feed_id: True)
+def test_add_feed_duplicate_rejected(quiet_engine):
     with TestClient(app) as c:
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
         resp = c.post(
@@ -44,8 +40,7 @@ def test_add_feed_duplicate_rejected(monkeypatch):
         assert page.count("/feeds/1/poll") == 1  # only one feed row, not two
 
 
-def test_delete_feed_removes_it(monkeypatch):
-    monkeypatch.setattr(app_module, "poll_feed", lambda feed_id: True)
+def test_delete_feed_removes_it(quiet_engine):
     with TestClient(app) as c:
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
         resp = c.post("/feeds/1/delete", follow_redirects=False)
@@ -55,13 +50,12 @@ def test_delete_feed_removes_it(monkeypatch):
         assert "/feeds/1.xml" not in page
 
 
-def test_poll_now_returns_303(monkeypatch):
-    monkeypatch.setattr(app_module, "poll_feed", lambda feed_id: True)
+def test_poll_now_returns_303(quiet_engine):
     with TestClient(app) as c:
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
         resp = c.post("/feeds/1/poll", follow_redirects=False)
         assert resp.status_code == 303
-        assert resp.headers["location"].startswith("/?msg=")
+        assert resp.headers["location"] == "/"
 
 
 def test_settings_post_persists():
@@ -146,8 +140,7 @@ def test_settings_env_key_set_shows_env_message_and_ignores_submission(monkeypat
     assert row is None
 
 
-def test_feed_table_uses_fixed_layout_and_wraps_long_urls(monkeypatch):
-    monkeypatch.setattr(app_module, "poll_feed", lambda feed_id: True)
+def test_feed_table_uses_fixed_layout_and_wraps_long_urls(quiet_engine):
     long_url = "https://example.com/" + "a" * 100 + "/feed.xml"
     with TestClient(app) as c:
         resp = c.post("/feeds", data={"url": long_url}, follow_redirects=False)
