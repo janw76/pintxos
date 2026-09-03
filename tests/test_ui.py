@@ -144,3 +144,13 @@ def test_settings_env_key_set_shows_env_message_and_ignores_submission(monkeypat
             "SELECT value FROM settings WHERE key = ?", ("ANTHROPIC_API_KEY",)
         ).fetchone()
     assert row is None
+
+
+def test_base_shell_has_wordmark_favicon_and_github_link():
+    with TestClient(app) as c:
+        page = c.get("/").text
+
+    assert "Pintxøs" in page
+    assert 'rel="icon"' in page
+    assert "github.com/janw76/pintxos" in page
+    assert "ui-sans-serif" in page

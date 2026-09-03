@@ -3,11 +3,32 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}pintxos{% endblock %}</title>
+  <title>{% block title %}Pintxøs{% endblock %}</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='7'%20fill='%234c6ef5'/%3E%3Ctext%20x='16'%20y='23'%20text-anchor='middle'%20font-family='ui-sans-serif,%20system-ui,%20sans-serif'%20font-size='22'%20font-weight='700'%20fill='%23ffffff'%3E%C3%B8%3C/text%3E%3C/svg%3E">
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
-    nav { margin-bottom: 1rem; }
-    nav a { margin-right: 1rem; }
+    :root {
+      --bg: #ffffff;
+      --text: #1a1c1e;
+      --text-muted: #6b7280;
+      --border: #e4e7eb;
+      --accent: #4c6ef5;
+      --danger: #b00020;
+      --success: #1a7a1a;
+    }
+    body {
+      font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+      background: var(--bg);
+      color: var(--text);
+      max-width: 900px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+    }
+    header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1.5rem; }
+    header .wordmark { font-size: 1.25rem; font-weight: 600; letter-spacing: -0.015em; color: var(--text); text-decoration: none; }
+    header nav { display: flex; align-items: center; gap: 1rem; }
+    header nav a { color: var(--text-muted); text-decoration: none; }
+    header nav a:hover { color: var(--text); }
+    header nav a[aria-current="page"] { color: var(--accent); font-weight: 600; }
     table { border-collapse: collapse; width: 100%; }
     th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #ddd; vertical-align: top; }
     th { color: #555; }
@@ -24,7 +45,14 @@
   </style>
 </head>
 <body>
-  <nav><a href="/">Feeds</a><a href="/settings">Settings</a></nav>
+  <header>
+    <a href="/" class="wordmark">Pintxøs</a>
+    <nav>
+      <a href="/"{% if request.url.path == '/' %} aria-current="page"{% endif %}>Feeds</a>
+      <a href="/settings"{% if request.url.path == '/settings' %} aria-current="page"{% endif %}>Settings</a>
+      <a href="https://github.com/janw76/pintxos" rel="noopener">GitHub</a>
+    </nav>
+  </header>
   {% if request.query_params.get('err') %}<p class="flash">{{ request.query_params.get('err') }}</p>{% endif %}
   {% if request.query_params.get('msg') %}<p class="msg">{{ request.query_params.get('msg') }}</p>{% endif %}
   {% block content %}{% endblock %}
