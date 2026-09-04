@@ -46,7 +46,7 @@
         </td>
         <td class="nowrap">
           <div>{{ feed.item_count }}</div>
-          <div class="muted">{% if feed.ads_filtered %}{{ feed.ads_filtered }} ads skipped{% endif %}</div>
+          <div class="muted">{% if feed.ads_filtered %}{{ feed.ads_filtered }} ad{{ "" if feed.ads_filtered == 1 else "s" }} skipped{% endif %}</div>
         </td>
         <td class="muted nowrap" title="{{ feed.last_polled_at or '' }}">{{ feed.last_polled_at | ago }}</td>
         <td class="muted nowrap">{{ status.get(feed.id, "") }}</td>

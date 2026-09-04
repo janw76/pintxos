@@ -351,7 +351,7 @@ def test_index_ads_skipped_cell_is_empty_without_a_count(monkeypatch):
         page = c.get("/").text
 
     assert "<td class=\"nowrap\">" in page  # the items cell rendered
-    assert "ads skipped" not in page
+    assert "skipped" not in page
 
 
 def test_index_shows_ads_skipped_count(monkeypatch):
@@ -365,7 +365,7 @@ def test_index_shows_ads_skipped_count(monkeypatch):
             )
         page = c.get("/").text
 
-    assert "1 ads skipped" in page
+    assert "1 ad skipped" in page
 
 
 def test_empty_env_var_does_not_pin_filter_setting(monkeypatch):
@@ -382,3 +382,12 @@ def test_empty_env_var_does_not_pin_filter_setting(monkeypatch):
             follow_redirects=False,
         )
     assert get_setting("PINTXOS_FILTER_ADS") == "1"
+
+
+def test_index_pluralizes_ads_skipped(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        with db() as conn:
+            conn.execute("UPDATE feeds SET ads_filtered = 2 WHERE id = 1")
+        assert "2 ads skipped" in c.get("/").text
