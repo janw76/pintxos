@@ -28,7 +28,7 @@
       padding: 0 1rem;
     }
     h1 { font-size: 1.25rem; font-weight: 600; letter-spacing: -0.015em; margin: 0 0 1.25rem; }
-    h2 { font-size: 1rem; font-weight: 600; margin: 1.5rem 0 .75rem; color: var(--text); }
+    h2 { font-size: 1rem; font-weight: 600; margin: 1.5rem 0 .75rem; padding-bottom: .35rem; border-bottom: 1px solid var(--border); color: var(--text); }
     form h2:first-of-type { margin-top: 0; }
     h3 { font-size: .9375rem; font-weight: 600; margin: 1rem 0 .5rem; color: var(--text); }
 
@@ -100,10 +100,10 @@
     .btn-danger { color: var(--danger); background: #fdf3f4; border-color: #f3c9ce; }
     .btn-danger:hover { color: var(--danger); background: #fbe4e7; border-color: var(--danger); }
 
-    .url-cell { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+    .url-cell { display: flex; align-items: flex-start; gap: 0.5rem; flex-wrap: wrap; }
     .output-url {
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 0.8125rem;
+      font-size: 0.75rem;
       color: var(--text);
       background: var(--surface);
       padding: 0.15rem 0.4rem;
@@ -125,6 +125,7 @@
     .msg { color: var(--success); background: #f2f9f2; border-color: #cfe6cf; }
     .error { color: var(--danger); }
     .muted { color: var(--text-muted); font-size: 0.875rem; overflow-wrap: anywhere; }
+    .url { font-size: 0.75rem; }
 
     .field { max-width: 26rem; margin-bottom: 1.25rem; }
     .field label { display: block; font-weight: 500; margin-bottom: 0.3rem; }
