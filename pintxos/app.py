@@ -61,7 +61,8 @@ templates.env.filters["ago"] = ago
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    # ponytail: env flag so TestClient/CI don't spawn a real poller thread.
+    # ponytail: env flag so TestClient/CI never spawn a poller thread. It also stalls manual
+    # polls (poll_one queues on the same scheduler); tests rely on that, so do not "fix" it.
     if os.environ.get("PINTXOS_NO_SCHEDULER") != "1":
         start_scheduler()
     yield
