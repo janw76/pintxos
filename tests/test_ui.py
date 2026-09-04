@@ -340,3 +340,14 @@ def test_settings_filter_ads_env_pinned_disables_control_and_ignores_submission(
             "SELECT value FROM settings WHERE key = ?", ("PINTXOS_FILTER_ADS",)
         ).fetchone()
     assert row is None
+
+
+def test_index_ads_skipped_cell_is_empty_without_a_count(monkeypatch):
+    """The count isn't stored yet, so `feed.ads_filtered` is undefined - and falsy."""
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        page = c.get("/").text
+
+    assert "<td class=\"nowrap\">" in page  # the items cell rendered
+    assert "ads skipped" not in page

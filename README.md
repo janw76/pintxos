@@ -27,15 +27,19 @@ Same story, no guessing games. Sanity restored. Point Pintxøs at a feed once, a
 ## How it works
 
 1. Poll each subscribed feed on a schedule.
-2. For each new item, fetch the article's own URL and extract the body text
+2. Skip entries that look like ads or coupon posts — by feed category, title,
+   or URL — before doing anything else, so they cost nothing and never reach
+   the output feed. The Feeds page shows how many were skipped on the last
+   poll; see `PINTXOS_FILTER_ADS` to turn this off.
+3. For each new item, fetch the article's own URL and extract the body text
    with [trafilatura](https://github.com/adbar/trafilatura).
-3. If the page can't be fetched or extraction comes back too thin, fall back
+4. If the page can't be fetched or extraction comes back too thin, fall back
    to the feed entry's own content (or, as a last resort, its title) — a
    `fallback` flag is kept on the item so you know which path was used.
-4. Send the text to Claude to produce a factual headline and a short summary.
+5. Send the text to Claude to produce a factual headline and a short summary.
    This happens **once per item**, ever — the result is stored, and items are
    never re-summarized.
-5. Serve the result back out as a clean RSS 2.0 feed, one output feed per
+6. Serve the result back out as a clean RSS 2.0 feed, one output feed per
    subscribed input feed.
 
 ## Quickstart
