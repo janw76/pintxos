@@ -27,10 +27,11 @@ Same story, no guessing games. Sanity restored. Point Pintxøs at a feed once, a
 ## How it works
 
 1. Poll each subscribed feed on a schedule.
-2. Skip entries that look like ads or coupon posts — by feed category, title,
-   or URL — before doing anything else, so they cost nothing and never reach
-   the output feed. The Feeds page shows how many were skipped on the last
-   poll; see `PINTXOS_FILTER_ADS` to turn this off.
+2. Optionally skip entries that look like ads or coupon posts — by feed
+   category, title, or URL — before doing anything else, so they cost
+   nothing and never reach the output feed. Off by default; see
+   `PINTXOS_FILTER_ADS` to turn this on. When enabled, the Feeds page shows
+   how many were skipped on the last poll.
 3. For each new item, fetch the article's own URL and extract the body text
    with [trafilatura](https://github.com/adbar/trafilatura).
 4. If the page can't be fetched or extraction comes back too thin, fall back
@@ -86,7 +87,7 @@ to the database. `PINTXOS_BASE_URL` and `PINTXOS_DATA_DIR` are environment-only.
 | `PINTXOS_MODEL` | `claude-haiku-4-5-20251001` | Claude model used to summarize. |
 | `PINTXOS_POLL_MINUTES` | `30` | How often feeds are polled, in minutes. |
 | `PINTXOS_ITEMS_PER_FEED` | `50` | Items kept per output feed (older ones pruned). |
-| `PINTXOS_FILTER_ADS` | `1` | Skip ad/coupon entries before fetch/summarize. Set to `0` to keep ad/coupon entries. |
+| `PINTXOS_FILTER_ADS` | `0` | Skip ad/coupon entries before fetch/summarize. Set to `1` to turn this on. |
 | `PINTXOS_AD_TITLE_PATTERNS` | *(empty)* | Extra title regexes, one per line, matched case-insensitively, in addition to the built-in ad rules. |
 | `PINTXOS_BASE_URL` | *(none, inferred from the request)* | Base URL used to build output feed links, e.g. `https://pintxos.example.com`. |
 | `PINTXOS_DATA_DIR` | `./data` | Directory for the SQLite database. |

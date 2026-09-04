@@ -331,6 +331,7 @@ def test_ui_can_write_while_polling(feed_id, calls, monkeypatch):
 
 def test_ad_entry_filtered_before_summarize(feed_id, calls_with_ad, monkeypatch):
     """The coupon entry never reaches fetch/summarize and is never stored."""
+    monkeypatch.setenv("PINTXOS_FILTER_ADS", "1")
     seen_status = []
     fake_summarize = poll.summarize
 
@@ -357,6 +358,7 @@ def test_filter_ads_disabled_summarizes_everything(feed_id, calls_with_ad, monke
 def test_invalid_extra_ad_pattern_logs_warning_and_keeps_builtin_rules(
     feed_id, calls_with_ad, monkeypatch, caplog
 ):
+    monkeypatch.setenv("PINTXOS_FILTER_ADS", "1")
     monkeypatch.setenv("PINTXOS_AD_TITLE_PATTERNS", "(")
     with caplog.at_level("WARNING"):
         poll.poll_feed(feed_id)
@@ -365,7 +367,10 @@ def test_invalid_extra_ad_pattern_logs_warning_and_keeps_builtin_rules(
     assert "https://example.com/coupons" not in [row["link"] for row in items()]
 
 
-def test_second_poll_re_evaluates_ad_and_does_not_store_it(feed_id, calls_with_ad, caplog):
+def test_second_poll_re_evaluates_ad_and_does_not_store_it(
+    feed_id, calls_with_ad, caplog, monkeypatch
+):
+    monkeypatch.setenv("PINTXOS_FILTER_ADS", "1")
     poll.poll_feed(feed_id)
     calls_with_ad.clear()
     with caplog.at_level("INFO"):
@@ -376,6 +381,7 @@ def test_second_poll_re_evaluates_ad_and_does_not_store_it(feed_id, calls_with_a
 
 
 def test_extra_pattern_filters_entry_not_caught_by_builtin_rules(feed_id, monkeypatch):
+    monkeypatch.setenv("PINTXOS_FILTER_ADS", "1")
     xml = SAMPLE_WITH_AD.decode().replace(
         "Groupon Promo Codes: 60% Off in September 2026",
         "Best Labor Day Deals 2026",
@@ -415,7 +421,10 @@ def _seed_item(feed_id, guid, link, title):
         )
 
 
-def test_purge_stored_ads_removes_pre_filter_coupon_rows_on_poll(feed_id, calls, caplog):
+def test_purge_stored_ads_removes_pre_filter_coupon_rows_on_poll(
+    feed_id, calls, caplog, monkeypatch
+):
+    monkeypatch.setenv("PINTXOS_FILTER_ADS", "1")
     _seed_item(
         feed_id, "old-ad-1", "https://example.com/deals/acme-promo-code/",
         "Acme Promo Codes: 40% Off",
@@ -437,7 +446,8 @@ def test_purge_stored_ads_removes_pre_filter_coupon_rows_on_poll(feed_id, calls,
     assert "purged 2 stored ad items" in caplog.text
 
 
-def test_purge_stored_ads_is_idempotent(feed_id, calls):
+def test_purge_stored_ads_is_idempotent(feed_id, calls, monkeypatch):
+    monkeypatch.setenv("PINTXOS_FILTER_ADS", "1")
     _seed_item(
         feed_id, "old-ad-1", "https://example.com/deals/acme-promo-code/",
         "Acme Promo Codes: 40% Off",
@@ -466,3 +476,19 @@ def test_purge_stored_ads_skipped_when_filter_disabled(feed_id, calls, monkeypat
 
 def test_purge_stored_ads_on_feed_with_no_items_returns_zero(feed_id):
     assert poll.purge_stored_ads(feed_id) == 0
+
+
+def test_ads_filtered_column_set_when_filter_enabled(feed_id, calls_with_ad, monkeypatch):
+    monkeypatch.setenv("PINTXOS_FILTER_ADS", "1")
+    poll.poll_feed(feed_id)
+    with db() as conn:
+        feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+    assert feed["ads_filtered"] == 1
+
+
+def test_ads_filtered_column_zero_when_filter_disabled(feed_id, calls_with_ad, monkeypatch):
+    monkeypatch.setenv("PINTXOS_FILTER_ADS", "0")
+    poll.poll_feed(feed_id)
+    with db() as conn:
+        feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+    assert feed["ads_filtered"] == 0

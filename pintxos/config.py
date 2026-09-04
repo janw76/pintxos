@@ -13,7 +13,7 @@ DEFAULTS: dict[str, str | None] = {
     "PINTXOS_POLL_MINUTES": "30",
     "PINTXOS_ITEMS_PER_FEED": "50",
     "PINTXOS_BASE_URL": None,
-    "PINTXOS_FILTER_ADS": "1",
+    "PINTXOS_FILTER_ADS": "0",
     "PINTXOS_AD_TITLE_PATTERNS": "",
 }
 

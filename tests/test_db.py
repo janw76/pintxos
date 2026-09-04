@@ -2,6 +2,7 @@ import sqlite3
 
 import pytest
 
+from pintxos.config import db_path
 from pintxos.db import connect, init_db, now
 
 
@@ -82,3 +83,30 @@ def test_get_setting_opens_own_connection_when_none_given(db):
     db.execute("INSERT INTO settings (key, value) VALUES ('PINTXOS_MODEL', 'from-db')")
     db.commit()
     assert get_setting("PINTXOS_MODEL") == "from-db"
+
+
+def test_connect_migrates_existing_db_missing_ads_filtered_column(tmp_path, monkeypatch):
+    """An older DB (created before ads_filtered existed) gains the column on connect()."""
+    monkeypatch.setenv("PINTXOS_DATA_DIR", str(tmp_path))
+    old_conn = sqlite3.connect(db_path())
+    old_conn.executescript(
+        """
+        CREATE TABLE feeds (
+            id INTEGER PRIMARY KEY,
+            url TEXT UNIQUE NOT NULL,
+            title TEXT,
+            created_at TEXT,
+            last_polled_at TEXT,
+            last_error TEXT
+        );
+        """
+    )
+    old_conn.commit()
+    old_conn.close()
+
+    conn = connect()
+    try:
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(feeds)")}
+        assert "ads_filtered" in cols
+    finally:
+        conn.close()

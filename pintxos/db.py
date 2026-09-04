@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS feeds (
     title TEXT,
     created_at TEXT,
     last_polled_at TEXT,
-    last_error TEXT
+    last_error TEXT,
+    ads_filtered INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS items (
@@ -51,6 +52,11 @@ def connect() -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
     conn.executescript(SCHEMA)  # CREATE IF NOT EXISTS: cheap, and every caller gets a ready DB
+    # ponytail: one-column guarded migration, not a migration framework. If this grows past
+    # a column or two, replace it with a real schema-version table.
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(feeds)")}
+    if "ads_filtered" not in cols:
+        conn.execute("ALTER TABLE feeds ADD COLUMN ads_filtered INTEGER NOT NULL DEFAULT 0")
     return conn
 
 

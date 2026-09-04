@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 import pintxos.app as app_module
 from pintxos.app import app
 from pintxos.config import get_setting
+from pintxos.db import db
 
 
 def test_add_feed_appears_in_list(monkeypatch):
@@ -222,7 +223,7 @@ def test_settings_page_shows_ad_filter_defaults():
         page = c.get("/settings").text
 
     assert 'name="filter_ads"' in page
-    assert 'name="filter_ads" value="1" checked' in page
+    assert 'name="filter_ads" value="1" checked' not in page
     assert '<textarea id="ad_title_patterns" name="ad_title_patterns" rows="4" class="mono" ></textarea>' in page
     assert "Set by PINTXOS_FILTER_ADS" not in page
 
@@ -343,7 +344,7 @@ def test_settings_filter_ads_env_pinned_disables_control_and_ignores_submission(
 
 
 def test_index_ads_skipped_cell_is_empty_without_a_count(monkeypatch):
-    """The count isn't stored yet, so `feed.ads_filtered` is undefined - and falsy."""
+    """ads_filtered defaults to 0, so nothing renders in the ads-skipped cell."""
     monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
     with TestClient(app) as c:
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
@@ -351,3 +352,17 @@ def test_index_ads_skipped_cell_is_empty_without_a_count(monkeypatch):
 
     assert "<td class=\"nowrap\">" in page  # the items cell rendered
     assert "ads skipped" not in page
+
+
+def test_index_shows_ads_skipped_count(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        with db() as conn:
+            conn.execute(
+                "UPDATE feeds SET ads_filtered = 1 WHERE url = ?",
+                ("https://example.com/feed.xml",),
+            )
+        page = c.get("/").text
+
+    assert "1 ads skipped" in page

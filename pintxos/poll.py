@@ -242,11 +242,10 @@ def poll_feed(feed_id: int) -> bool:
                 "LIMIT ?)",
                 (feed_id, feed_id, limit),
             )
-            # ponytail: ads_filtered count persisted in the next bead.
-            ads_filtered = len(filtered)  # noqa: F841 - not stored yet
             conn.execute(
-                "UPDATE feeds SET last_polled_at = ?, last_error = NULL WHERE id = ?",
-                (now(), feed_id),
+                "UPDATE feeds SET last_polled_at = ?, last_error = NULL, ads_filtered = ? "
+                "WHERE id = ?",
+                (now(), len(filtered), feed_id),
             )
         return True
     finally:
