@@ -78,29 +78,88 @@ def test_poll_now_returns_303(monkeypatch):
         assert resp.headers["location"] == "/"
 
 
-def test_status_column_and_refresh(monkeypatch):
+def _poll_button(page: str) -> str:
+    """The <button …>…</button> inside the /feeds/1/poll form."""
+    start = page.index("/feeds/1/poll")
+    end = page.index("</form>", start)
+    return page[start:end]
+
+
+def test_poll_button_carries_poll_state_and_refresh(monkeypatch):
+    """No Status column: the poll button itself reads Polling… (disabled, progress in the
+    tooltip, page auto-refreshes), Failed (danger tint, error in the tooltip, still clickable)
+    or Poll now (idle)."""
     monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
     with TestClient(app) as c:
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
 
+        # active: the status text moves into the button's tooltip
         monkeypatch.setattr(app_module, "poll_status", {1: "Summarizing 2/5"})
         page = c.get("/").text
-        assert "Summarizing 2/5" in page
         assert 'http-equiv="refresh"' in page
-        poll_form_start = page.index('/feeds/1/poll')
-        poll_form_end = page.index("</form>", poll_form_start)
-        assert "disabled" in page[poll_form_start:poll_form_end]
+        btn = _poll_button(page)
+        assert ">Polling…<" in btn
+        assert "disabled" in btn
+        assert 'title="Summarizing 2/5"' in btn
+        assert "btn-polling" in btn
+        assert "btn-danger" not in btn
+        assert "<th>Status</th>" not in page
 
+        # idle
         monkeypatch.setattr(app_module, "poll_status", {})
         page = c.get("/").text
         assert 'http-equiv="refresh"' not in page
-        poll_form_start = page.index('/feeds/1/poll')
-        poll_form_end = page.index("</form>", poll_form_start)
-        assert "disabled" not in page[poll_form_start:poll_form_end]
+        btn = _poll_button(page)
+        assert ">Poll now<" in btn
+        assert "disabled" not in btn
+        assert "title=" not in btn
+        assert "btn-tint-neutral" in btn
+        assert "btn-polling" not in btn
+
+        # failed: retry stays enabled, error text is the tooltip (escaped for the attribute)
+        with db() as conn:
+            conn.execute('UPDATE feeds SET last_error = ? WHERE id = 1', ('HTTP 500: "boom"',))
+        page = c.get("/").text
+        btn = _poll_button(page)
+        assert ">Failed<" in btn
+        assert "disabled" not in btn
+        assert "btn-danger" in btn
+        assert 'title="HTTP 500: &#34;boom&#34;"' in btn
+        assert page.count("/feeds/1/poll") == 1
+
+        # active wins over a stale last_error
+        monkeypatch.setattr(app_module, "poll_status", {1: "Fetching"})
+        btn = _poll_button(c.get("/").text)
+        assert ">Polling…<" in btn and 'title="Fetching"' in btn and "btn-danger" not in btn
 
         page = c.get("/?err=Oops").text
         assert 'class="flash"' in page
         assert "Oops" in page
+
+
+def test_poll_button_pulse_css_and_reduced_motion():
+    with TestClient(app) as c:
+        page = c.get("/").text
+    assert "@keyframes pintxos-pulse" in page
+    assert "animation: pintxos-pulse 1.6s ease-in-out infinite" in page
+    assert "@media (prefers-reduced-motion: reduce) { .btn-polling, .btn-polling:hover { animation: none; } }" in page
+    assert "td.actions .btn-poll { min-width: 5.5rem; }" in page
+    assert "button:disabled { opacity: .7; cursor: default; }" in page
+
+
+def test_last_error_column_shows_dash_or_message(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        page = c.get("/").text
+        assert "<th>Last error</th>" in page
+        assert '<td class="error"><span class="muted">-</span></td>' in page
+
+        with db() as conn:
+            conn.execute("UPDATE feeds SET last_error = ? WHERE id = 1", ("timed out",))
+        page = c.get("/").text
+        assert '<td class="error">timed out</td>' in page
+        assert '<span class="muted">-</span>' not in page
 
 
 def test_settings_post_persists():
@@ -645,16 +704,24 @@ def test_index_copy_has_own_column_and_actions_stay_on_one_line(monkeypatch):
 
 
 def test_index_colgroup_widths_sum_to_100_percent(monkeypatch):
-    """Eight fixed columns budgeted to fit 968px (1000px viewport) without scroll."""
+    """Seven fixed columns budgeted to fit 968px (1000px viewport) without scroll."""
     monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
     with TestClient(app) as c:
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
         page = c.get("/").text
 
     widths = [int(w) for w in re.findall(r'<col style="width: (\d+)%">', page)]
-    assert len(widths) == 8
+    assert len(widths) == 7
     assert sum(widths) == 100
-    assert page.count("<th>") == 8
+    assert page.count("<th>") == 7
+    assert "<th>Status</th>" not in page
+    assert "<th>Last error</th>" in page
+
+
+def test_index_empty_state_colspan_matches_columns():
+    with TestClient(app) as c:
+        page = c.get("/").text
+    assert '<td colspan="7" class="empty">' in page
 
 
 def test_feed_edit_radios_keep_their_controls(monkeypatch):

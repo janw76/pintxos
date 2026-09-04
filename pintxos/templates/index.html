@@ -13,16 +13,18 @@
   <table>
     <!-- Widths are budgeted against a 968px table (1000px viewport - 2rem body padding);
          every column is wider than its widest unbreakable content, and the actions column
-         holds Edit filters / Poll now / Delete on one line. See pintxos-gno.9. -->
+         holds Edit filters / Poll now / Delete on one line. The poll button carries the
+         poll state (Polling… / Failed) with the detail in its tooltip, so there is no
+         Status column. See pintxos-gno.9 and pintxos-gno.11.
+         Actions at 968px: 72 + 88 (poll min-width) + 52 + gaps ≈18 + padding 12 ≈ 242 ≤ 26% = 252. -->
     <colgroup>
-      <col style="width: 12%">
-      <col style="width: 13%">
+      <col style="width: 17%">
+      <col style="width: 17%">
       <col style="width: 10%">
       <col style="width: 9%">
+      <col style="width: 11%">
       <col style="width: 10%">
-      <col style="width: 12%">
-      <col style="width: 10%">
-      <col style="width: 24%">
+      <col style="width: 26%">
     </colgroup>
     <thead>
       <tr>
@@ -31,7 +33,6 @@
         <th></th>
         <th>Items</th>
         <th>Last polled</th>
-        <th>Status</th>
         <th>Last error</th>
         <th></th>
       </tr>
@@ -50,16 +51,24 @@
           <div class="muted">{% if feed.ads_filtered %}{{ feed.ads_filtered }} ad{{ "" if feed.ads_filtered == 1 else "s" }} skipped{% endif %}</div>
         </td>
         <td class="muted nowrap" title="{{ feed.last_polled_at or '' }}">{{ feed.last_polled_at | ago }}</td>
-        <td class="muted">{{ status.get(feed.id, "") }}</td>
-        <td class="error">{{ feed.last_error or "" }}</td>
+        <td class="error">{% if feed.last_error %}{{ feed.last_error }}{% else %}<span class="muted">-</span>{% endif %}</td>
         <td class="actions">
           <form method="get" action="/feeds/{{ feed.id }}"><button type="submit" class="btn-tint-neutral">Edit filters</button></form>
-          <form method="post" action="/feeds/{{ feed.id }}/poll"><button type="submit" class="btn-tint-neutral"{% if feed.id in status %} disabled{% endif %}>Poll now</button></form>
+          {#- The poll button carries the poll state: idle / active (pulse, progress in tooltip) / failed (error in tooltip). #}
+          <form method="post" action="/feeds/{{ feed.id }}/poll">
+            {%- if feed.id in status -%}
+            <button type="submit" class="btn-poll btn-polling" disabled title="{{ status[feed.id] }}">Polling…</button>
+            {%- elif feed.last_error -%}
+            <button type="submit" class="btn-poll btn-danger" title="{{ feed.last_error }}">Failed</button>
+            {%- else -%}
+            <button type="submit" class="btn-poll btn-tint-neutral">Poll now</button>
+            {%- endif -%}
+          </form>
           <form method="post" action="/feeds/{{ feed.id }}/delete" onsubmit="return confirm('Delete feed?')"><button type="submit" class="btn-danger">Delete</button></form>
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="8" class="empty">No feeds yet — add one above.</td></tr>
+      <tr><td colspan="7" class="empty">No feeds yet — add one above.</td></tr>
       {% endfor %}
     </tbody>
   </table>

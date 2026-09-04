@@ -46,7 +46,7 @@
     th:first-child, td:first-child { padding-left: 0; }
     th:last-child, td:last-child { padding-right: 0; }
     thead th { font-size: 0.8125rem; font-weight: 600; color: var(--text-muted); padding-top: 0.3rem; padding-bottom: 0.3rem; white-space: nowrap; overflow-wrap: normal; }
-    /* ponytail: below tablet width the fixed 8-column grid cannot fit; let .table-wrap scroll instead. */
+    /* ponytail: below tablet width the fixed 7-column grid cannot fit; let .table-wrap scroll instead. */
     @media (max-width: 720px) { table { table-layout: auto; min-width: 640px; } }
     tbody tr:hover { background: var(--surface); }
     tbody tr:last-child td { border-bottom: none; }
@@ -57,6 +57,8 @@
     td.actions form + form { margin-left: 0.3rem; }
     /* Copy sits left-aligned in its own column; reserve the width of "Copied!" so the swap does not reflow. */
     td.copy .btn-copy { min-width: 4rem; }
+    /* The poll button reads Poll now / Polling… / Failed; one width so the row never shifts between states. */
+    td.actions .btn-poll { min-width: 5.5rem; }
     .empty { padding: 2rem 0; color: var(--text-muted); }
 
     form { display: inline; }
@@ -95,6 +97,7 @@
     table button { font-size: 0.75rem; padding: 0.2rem 0.45rem; }
     button:hover { border-color: #cdd2d9; background: var(--surface); }
     button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    button:disabled { opacity: .7; cursor: default; }
     .btn-primary { color: #ffffff; background: #3f5fd8; border-color: #3f5fd8; }
     .btn-primary:hover { background: #3151c9; border-color: #3151c9; }
     .btn-tint-accent { color: #3151c9; background: #eef2ff; border-color: #d6ddfb; }
@@ -103,6 +106,10 @@
     .btn-tint-neutral:hover { background: #eceff3; }
     .btn-danger { color: var(--danger); background: #fdf3f4; border-color: #f3c9ce; }
     .btn-danger:hover { color: var(--danger); background: #fbe4e7; border-color: var(--danger); }
+    /* Active poll: neutral tint with a soft pulse; the progress text lives in the title attribute. */
+    .btn-polling, .btn-polling:hover { color: var(--text); background: var(--surface); border-color: var(--border); animation: pintxos-pulse 1.6s ease-in-out infinite; }
+    @keyframes pintxos-pulse { 50% { opacity: .55; } }
+    @media (prefers-reduced-motion: reduce) { .btn-polling, .btn-polling:hover { animation: none; } }
     .cancel { margin-left: 0.75rem; color: var(--text-muted); font-size: 0.875rem; }
 
     .flash, .msg {
