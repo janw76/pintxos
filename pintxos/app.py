@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote
 
+from apscheduler.jobstores.base import JobLookupError
 from fastapi import FastAPI, Form, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -139,6 +140,12 @@ def add_feed(url: str = Form(...)) -> Response:
 def delete_feed(feed_id: int) -> Response:
     with db() as conn:
         conn.execute("DELETE FROM feeds WHERE id = ?", (feed_id,))
+    # A manual poll may still be queued for this feed; drop it and its "Queued" status.
+    try:
+        scheduler.remove_job(f"feed-{feed_id}")
+    except JobLookupError:
+        pass
+    poll_status.pop(feed_id, None)
     return _redirect("/")
 
 

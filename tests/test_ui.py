@@ -401,3 +401,18 @@ def test_flash_banner_renders_once_and_url_is_cleaned_client_side(monkeypatch):
         assert "history.replaceState" in page
         clean = c.get("/").text
         assert 'class="msg"' not in clean
+
+
+def test_delete_feed_drops_queued_manual_poll_and_status():
+    import pintxos.poll as poll
+
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        # scheduler is not started under PINTXOS_NO_SCHEDULER, so the job stays pending
+        assert poll.scheduler.get_job("feed-1") is not None
+        assert poll._status.get(1) == "Queued"
+        resp = c.post("/feeds/1/delete", follow_redirects=False)
+        assert resp.status_code == 303
+        assert poll.scheduler.get_job("feed-1") is None
+        assert 1 not in poll._status
+        assert "Queued" not in c.get("/").text
