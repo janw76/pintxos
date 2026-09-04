@@ -87,11 +87,17 @@ def _filter_ads_enabled(conn) -> bool:
 
 
 def _extra_ad_patterns(conn) -> list[re.Pattern]:
-    try:
-        return adfilter.compile_patterns(get_setting("PINTXOS_AD_TITLE_PATTERNS", conn))
-    except ValueError as e:
-        log.warning("invalid PINTXOS_AD_TITLE_PATTERNS, using built-in rules only: %s", e)
-        return []
+    text = get_setting("PINTXOS_AD_TITLE_PATTERNS", conn) or ""
+    patterns: list[re.Pattern] = []
+    for lineno, raw_line in enumerate(text.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            patterns.append(re.compile(line, re.IGNORECASE))
+        except re.error as e:
+            log.warning("invalid PINTXOS_AD_TITLE_PATTERNS line %d %r: %s", lineno, line, e)
+    return patterns
 
 
 def _set_error(feed_id: int, message: str, polled: bool = True) -> None:

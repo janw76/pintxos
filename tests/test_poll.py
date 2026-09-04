@@ -367,6 +367,16 @@ def test_invalid_extra_ad_pattern_logs_warning_and_keeps_builtin_rules(
     assert "https://example.com/coupons" not in [row["link"] for row in items()]
 
 
+def test_extra_ad_patterns_keeps_valid_lines_around_an_invalid_one(monkeypatch, caplog):
+    monkeypatch.setenv("PINTXOS_AD_TITLE_PATTERNS", "giveaway\n(bad\nsponsored:")
+    with db() as conn, caplog.at_level("WARNING"):
+        patterns = poll._extra_ad_patterns(conn)
+    assert [p.pattern for p in patterns] == ["giveaway", "sponsored:"]
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert "line 2" in warnings[0].message
+
+
 def test_second_poll_re_evaluates_ad_and_does_not_store_it(
     feed_id, calls_with_ad, caplog, monkeypatch
 ):
