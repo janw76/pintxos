@@ -82,6 +82,18 @@ def items():
         return conn.execute("SELECT * FROM items ORDER BY published_at DESC").fetchall()
 
 
+def feed_row(feed_id):
+    with db() as conn:
+        return conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+
+
+def set_feed(feed_id, **columns):
+    """Set per-feed columns (filter_ads, ad_title_patterns) straight through SQL."""
+    with db() as conn:
+        for name, value in columns.items():
+            conn.execute(f"UPDATE feeds SET {name} = ? WHERE id = ?", (value, feed_id))
+
+
 def test_first_poll_inserts_items(feed_id, calls):
     poll.poll_all()
     rows = items()
@@ -367,10 +379,10 @@ def test_invalid_extra_ad_pattern_logs_warning_and_keeps_builtin_rules(
     assert "https://example.com/coupons" not in [row["link"] for row in items()]
 
 
-def test_extra_ad_patterns_keeps_valid_lines_around_an_invalid_one(monkeypatch, caplog):
+def test_extra_ad_patterns_keeps_valid_lines_around_an_invalid_one(feed_id, monkeypatch, caplog):
     monkeypatch.setenv("PINTXOS_AD_TITLE_PATTERNS", "giveaway\n(bad\nsponsored:")
     with db() as conn, caplog.at_level("WARNING"):
-        patterns = poll._extra_ad_patterns(conn)
+        patterns = poll._extra_ad_patterns(conn, feed_row(feed_id))
     assert [p.pattern for p in patterns] == ["giveaway", "sponsored:"]
     warnings = [r for r in caplog.records if r.levelname == "WARNING"]
     assert len(warnings) == 1
@@ -460,3 +472,131 @@ def test_ads_filtered_column_zero_when_filter_disabled(feed_id, calls_with_ad, m
     with db() as conn:
         feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
     assert feed["ads_filtered"] == 0
+
+
+def _serve(monkeypatch, xml: bytes) -> list[str]:
+    """Serve `xml` as the feed, never fetch articles, record the titles summarized."""
+    seen: list[str] = []
+
+    def fake_get(url):
+        if url == FEED_URL:
+            return FakeResponse(xml)
+        raise AssertionError(f"unexpected GET {url}")
+
+    def fake_summarize(text, original_title, url):
+        seen.append(original_title)
+        return "HEADLINE", f"summary of {original_title}"
+
+    monkeypatch.setattr(poll, "_get", fake_get)
+    monkeypatch.setattr(poll, "fetch_article", lambda link: None)
+    monkeypatch.setattr(poll, "summarize", fake_summarize)
+    return seen
+
+
+def test_feed_override_on_filters_ads_while_global_is_off(feed_id, calls_with_ad, monkeypatch):
+    """filter_ads = 1 on the feed wins over a global setting that is off."""
+    monkeypatch.setenv("PINTXOS_FILTER_ADS", "0")
+    set_feed(feed_id, filter_ads=1)
+
+    poll.poll_feed(feed_id)
+
+    assert len(calls_with_ad) == 2
+    assert "https://example.com/coupons" not in [row["link"] for row in items()]
+    assert feed_row(feed_id)["ads_filtered"] == 1
+
+
+def test_feed_override_off_keeps_ads_while_global_is_on(feed_id, calls_with_ad, monkeypatch):
+    """filter_ads = 0 on the feed wins over a global setting that is on."""
+    monkeypatch.setenv("PINTXOS_FILTER_ADS", "1")
+    set_feed(feed_id, filter_ads=0)
+
+    poll.poll_feed(feed_id)
+
+    assert len(calls_with_ad) == 3
+    assert "https://example.com/coupons" in [row["link"] for row in items()]
+    assert feed_row(feed_id)["ads_filtered"] == 0
+
+
+def test_feed_without_override_follows_global_on(feed_id, calls_with_ad, monkeypatch):
+    assert feed_row(feed_id)["filter_ads"] is None  # a new feed has no override
+    monkeypatch.setenv("PINTXOS_FILTER_ADS", "1")
+
+    poll.poll_feed(feed_id)
+
+    assert len(calls_with_ad) == 2
+    assert feed_row(feed_id)["ads_filtered"] == 1
+
+
+def test_feed_without_override_follows_global_off(feed_id, calls_with_ad, monkeypatch):
+    assert feed_row(feed_id)["filter_ads"] is None
+    monkeypatch.setenv("PINTXOS_FILTER_ADS", "0")
+
+    poll.poll_feed(feed_id)
+
+    assert len(calls_with_ad) == 3
+    assert feed_row(feed_id)["ads_filtered"] == 0
+
+
+# The third entry is renamed to something only a per-feed pattern catches, the second to
+# something only a global pattern catches; neither trips a built-in rule.
+GIVEAWAY_XML = (
+    SAMPLE.decode()
+    .replace("Third article with almost no body text at all", "Big Giveaway")
+    .replace("Second article about a merger", "Best Labor Day Deals 2026")
+    .encode()
+)
+
+
+def test_feed_ad_title_patterns_filter_entry_not_caught_by_builtin_rules(feed_id, monkeypatch):
+    seen = _serve(monkeypatch, GIVEAWAY_XML)
+    set_feed(feed_id, filter_ads=1, ad_title_patterns="giveaway")
+
+    poll.poll_feed(feed_id)
+
+    assert seen == ["First article about a rocket launch", "Best Labor Day Deals 2026"]
+    assert feed_row(feed_id)["ads_filtered"] == 1
+
+
+def test_global_and_feed_ad_title_patterns_both_apply(feed_id, monkeypatch):
+    seen = _serve(monkeypatch, GIVEAWAY_XML)
+    monkeypatch.setenv("PINTXOS_AD_TITLE_PATTERNS", "best .* deals")
+    set_feed(feed_id, filter_ads=1, ad_title_patterns="giveaway")
+
+    poll.poll_feed(feed_id)
+
+    assert seen == ["First article about a rocket launch"]
+    assert feed_row(feed_id)["ads_filtered"] == 2
+
+
+def test_feed_ad_patterns_ignored_when_filter_disabled(feed_id, monkeypatch):
+    seen = _serve(monkeypatch, GIVEAWAY_XML)
+    set_feed(feed_id, filter_ads=0, ad_title_patterns="giveaway")
+
+    poll.poll_feed(feed_id)
+
+    assert "Big Giveaway" in seen
+
+
+def test_invalid_feed_ad_pattern_warns_with_feed_id_and_keeps_valid_lines(feed_id, caplog):
+    set_feed(feed_id, ad_title_patterns="giveaway\n(bad")
+
+    with db() as conn, caplog.at_level("WARNING"):
+        patterns = poll._extra_ad_patterns(conn, feed_row(feed_id))
+
+    assert [p.pattern for p in patterns] == ["giveaway"]
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert f"feed {feed_id}" in warnings[0].getMessage()
+    assert "line 2" in warnings[0].getMessage()
+
+
+def test_invalid_feed_ad_pattern_still_filters_with_the_good_line(feed_id, monkeypatch, caplog):
+    seen = _serve(monkeypatch, GIVEAWAY_XML)
+    set_feed(feed_id, filter_ads=1, ad_title_patterns="giveaway\n(bad")
+
+    with caplog.at_level("WARNING"):
+        poll.poll_feed(feed_id)
+
+    assert f"feed {feed_id}" in caplog.text
+    assert "Big Giveaway" not in seen
+    assert feed_row(feed_id)["ads_filtered"] == 1

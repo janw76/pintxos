@@ -82,18 +82,34 @@ def _entry_sort_key(entry):
     return (0, tuple(-value for value in parsed[:6])) if parsed else (1, ())
 
 
-def _filter_ads_enabled(conn) -> bool:
+def _filter_ads_enabled(conn, feed) -> bool:
+    """Effective ad-filter toggle for `feed`: its override if set, else the global setting."""
+    override = feed["filter_ads"]
+    if override is not None:
+        return bool(int(override))
     return is_truthy(get_setting("PINTXOS_FILTER_ADS", conn))
 
 
-def _extra_ad_patterns(conn) -> list[re.Pattern]:
-    text = get_setting("PINTXOS_AD_TITLE_PATTERNS", conn) or ""
-    return adfilter.compile_patterns(
-        text,
+def _extra_ad_patterns(conn, feed) -> list[re.Pattern]:
+    """Global extra title patterns plus this feed's own, in that order.
+
+    Both sources are optional and independently fault-tolerant: a line that
+    doesn't compile is logged and skipped, and the rest still apply.
+    """
+    global_patterns = adfilter.compile_patterns(
+        get_setting("PINTXOS_AD_TITLE_PATTERNS", conn) or "",
         on_error=lambda lineno, line, e: log.warning(
             "invalid PINTXOS_AD_TITLE_PATTERNS line %d %r: %s", lineno, line, e
         ),
     )
+    feed_id = feed["id"]
+    feed_patterns = adfilter.compile_patterns(
+        feed["ad_title_patterns"] or "",
+        on_error=lambda lineno, line, e: log.warning(
+            "feed %s: invalid title pattern line %d %r: %s", feed_id, lineno, line, e
+        ),
+    )
+    return global_patterns + feed_patterns
 
 
 def _set_error(feed_id: int, message: str, polled: bool = True) -> None:
@@ -120,8 +136,8 @@ def poll_feed(feed_id: int) -> bool:
             return True
         url, feed_title = feed["url"], feed["title"]
         limit = int(get_setting("PINTXOS_ITEMS_PER_FEED", conn))
-        filter_ads = _filter_ads_enabled(conn)
-        extra_ad_patterns = _extra_ad_patterns(conn) if filter_ads else []
+        filter_ads = _filter_ads_enabled(conn, feed)
+        extra_ad_patterns = _extra_ad_patterns(conn, feed) if filter_ads else []
 
     try:
         try:
