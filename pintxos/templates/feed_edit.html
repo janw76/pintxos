@@ -7,7 +7,7 @@
   <fieldset class="field">
     <legend>Ad filter</legend>
     <div class="radios">
-      <label class="radio"><input type="radio" name="filter_ads" value="" {% if feed.filter_ads is none %}checked{% endif %}> Inherit (currently {{ "on" if global_filter_ads_on else "off" }})</label>
+      <label class="radio"><input type="radio" name="filter_ads" value="" {% if feed.filter_ads is none %}checked{% endif %}> <a href="/settings">Global</a> (currently {{ "on" if global_filter_ads_on else "off" }})</label>
       <label class="radio"><input type="radio" name="filter_ads" value="1" {% if feed.filter_ads == 1 %}checked{% endif %}> On</label>
       <label class="radio"><input type="radio" name="filter_ads" value="0" {% if feed.filter_ads == 0 %}checked{% endif %}> Off</label>
     </div>
@@ -16,7 +16,7 @@
     <fieldset class="field">
       <legend>Extra title patterns</legend>
       <div class="radios">
-        <label class="radio"><input type="radio" name="ad_patterns_mode" value="" {% if feed.ad_patterns_mode is none %}checked{% endif %}> Inherit global patterns</label>
+        <label class="radio"><input type="radio" name="ad_patterns_mode" value="" {% if feed.ad_patterns_mode is none %}checked{% endif %}> <a href="/settings">Global</a> patterns</label>
         <label class="radio"><input type="radio" name="ad_patterns_mode" value="1" {% if feed.ad_patterns_mode == 1 %}checked{% endif %}> Global + this feed's patterns</label>
         <label class="radio"><input type="radio" name="ad_patterns_mode" value="0" {% if feed.ad_patterns_mode == 0 %}checked{% endif %}> Off (no extra patterns for this feed)</label>
       </div>

@@ -734,3 +734,12 @@ def test_feed_edit_radios_keep_their_controls(monkeypatch):
     assert page.count('type="radio"') == 6
     assert ".field input, .field textarea { width: 100%; }" not in page
     assert "accent-color: var(--accent)" in page
+
+
+def test_feed_edit_page_says_global_linked_to_settings(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        page = c.get("/feeds/1").text
+        assert page.count('<a href="/settings">Global</a>') == 2
+        assert "Inherit" not in page
