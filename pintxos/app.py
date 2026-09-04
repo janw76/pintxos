@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import sqlite3
-import threading
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,7 +16,8 @@ from fastapi.templating import Jinja2Templates
 from pintxos.config import get_setting
 from pintxos.db import db, init_db, now
 from pintxos.feed_out import render_rss
-from pintxos.poll import poll_feed, reschedule, scheduler, start_scheduler
+from pintxos.poll import _status as poll_status
+from pintxos.poll import poll_one, reschedule, scheduler, start_scheduler
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -113,7 +113,9 @@ def index(request: Request) -> Response:
         feed = dict(row)
         feed["output_url"] = f"{base_url}/feeds/{feed['id']}.xml"
         feeds.append(feed)
-    return templates.TemplateResponse(request, "index.html", {"feeds": feeds})
+    return templates.TemplateResponse(
+        request, "index.html", {"feeds": feeds, "status": dict(poll_status)}
+    )
 
 
 @app.post("/feeds")
@@ -128,7 +130,7 @@ def add_feed(url: str = Form(...)) -> Response:
         except sqlite3.IntegrityError:
             return _redirect("/", err="Already subscribed")
         new_id = cur.lastrowid
-    threading.Thread(target=poll_feed, args=(new_id,), daemon=True).start()
+    poll_one(new_id)
     return _redirect("/")
 
 
@@ -141,8 +143,8 @@ def delete_feed(feed_id: int) -> Response:
 
 @app.post("/feeds/{feed_id}/poll")
 def poll_feed_now(feed_id: int) -> Response:
-    threading.Thread(target=poll_feed, args=(feed_id,), daemon=True).start()
-    return _redirect("/", msg="Polling…")
+    poll_one(feed_id)
+    return _redirect("/")
 
 
 @app.get("/settings")

@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Feeds · Pintxøs{% endblock %}
+{% block head %}{% if status %}<meta http-equiv="refresh" content="3">{% endif %}{% endblock %}
 {% block content %}
 <h1>Feeds</h1>
 
@@ -11,12 +12,13 @@
 <div class="table-wrap">
   <table>
     <colgroup>
-      <col style="width: 22%">
-      <col style="width: 30%">
-      <col style="width: 6%">
-      <col style="width: 10%">
-      <col style="width: 12%">
       <col style="width: 20%">
+      <col style="width: 27%">
+      <col style="width: 5%">
+      <col style="width: 9%">
+      <col style="width: 11%">
+      <col style="width: 10%">
+      <col style="width: 18%">
     </colgroup>
     <thead>
       <tr>
@@ -24,6 +26,7 @@
         <th>Output URL</th>
         <th>Items</th>
         <th>Last polled</th>
+        <th>Status</th>
         <th>Last error</th>
         <th></th>
       </tr>
@@ -43,10 +46,11 @@
         </td>
         <td>{{ feed.item_count }}</td>
         <td class="muted nowrap" title="{{ feed.last_polled_at or '' }}">{{ feed.last_polled_at | ago }}</td>
+        <td class="muted nowrap">{{ status.get(feed.id, "") }}</td>
         <td class="error">{{ feed.last_error or "" }}</td>
         <td class="actions">
           <form method="post" action="/feeds/{{ feed.id }}/poll">
-            <button type="submit" class="btn-tint-neutral">Poll now</button>
+            <button type="submit" class="btn-tint-neutral"{% if feed.id in status %} disabled{% endif %}>Poll now</button>
           </form>
           <form method="post" action="/feeds/{{ feed.id }}/delete" onsubmit="return confirm('Delete feed?')">
             <button type="submit" class="btn-danger">Delete</button>
@@ -54,7 +58,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="6" class="empty">No feeds yet — add one above.</td></tr>
+      <tr><td colspan="7" class="empty">No feeds yet — add one above.</td></tr>
       {% endfor %}
     </tbody>
   </table>
