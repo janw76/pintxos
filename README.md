@@ -1,5 +1,7 @@
 # Pintxøs – Bite-sized, honest RSS feeds.
 
+**Garbage in, sanity out.**
+
 Pintxøs grabs an RSS feed and re-publishes its articles with neutral, plain-facts headlines plus a short factual ≤100 words summary. No more annoying clickbait titles and summaries.
 
 ## What / why
