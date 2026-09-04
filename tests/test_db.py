@@ -113,7 +113,7 @@ def test_connect_migrates_existing_db_missing_ads_filtered_column(tmp_path, monk
 
 
 def test_connect_migrates_existing_db_missing_per_feed_ad_columns(tmp_path, monkeypatch):
-    """A DB created before the per-feed override columns gains both on connect()."""
+    """A DB created before the per-feed override columns gains them all on connect()."""
     monkeypatch.setenv("PINTXOS_DATA_DIR", str(tmp_path))
     old_conn = sqlite3.connect(db_path())
     old_conn.executescript(
@@ -136,9 +136,10 @@ def test_connect_migrates_existing_db_missing_per_feed_ad_columns(tmp_path, monk
     conn = connect()
     try:
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(feeds)")}
-        assert {"filter_ads", "ad_title_patterns"} <= cols
+        assert {"filter_ads", "ad_title_patterns", "ad_patterns_mode"} <= cols
         row = conn.execute("SELECT * FROM feeds").fetchone()
         assert row["filter_ads"] is None  # existing feeds keep following the global setting
         assert row["ad_title_patterns"] is None
+        assert row["ad_patterns_mode"] is None  # and inherit the global title patterns
     finally:
         conn.close()

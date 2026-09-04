@@ -91,17 +91,24 @@ def _filter_ads_enabled(conn, feed) -> bool:
 
 
 def _extra_ad_patterns(conn, feed) -> list[re.Pattern]:
-    """Global extra title patterns plus this feed's own, in that order.
+    """Extra title patterns for this feed, honouring its ad_patterns_mode.
 
+    NULL (inherit) uses the global patterns only, 1 adds the feed's own on top,
+    0 means no extra title patterns at all (the built-in rules still apply).
     Both sources are optional and independently fault-tolerant: a line that
     doesn't compile is logged and skipped, and the rest still apply.
     """
+    mode = feed["ad_patterns_mode"]
+    if mode == 0:
+        return []
     global_patterns = adfilter.compile_patterns(
         get_setting("PINTXOS_AD_TITLE_PATTERNS", conn) or "",
         on_error=lambda lineno, line, e: log.warning(
             "invalid PINTXOS_AD_TITLE_PATTERNS line %d %r: %s", lineno, line, e
         ),
     )
+    if mode != 1:
+        return global_patterns
     feed_id = feed["id"]
     feed_patterns = adfilter.compile_patterns(
         feed["ad_title_patterns"] or "",

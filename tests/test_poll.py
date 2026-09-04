@@ -88,7 +88,7 @@ def feed_row(feed_id):
 
 
 def set_feed(feed_id, **columns):
-    """Set per-feed columns (filter_ads, ad_title_patterns) straight through SQL."""
+    """Set per-feed columns (filter_ads, ad_title_patterns, ad_patterns_mode) via SQL."""
     with db() as conn:
         for name, value in columns.items():
             conn.execute(f"UPDATE feeds SET {name} = ? WHERE id = ?", (value, feed_id))
@@ -549,7 +549,7 @@ GIVEAWAY_XML = (
 
 def test_feed_ad_title_patterns_filter_entry_not_caught_by_builtin_rules(feed_id, monkeypatch):
     seen = _serve(monkeypatch, GIVEAWAY_XML)
-    set_feed(feed_id, filter_ads=1, ad_title_patterns="giveaway")
+    set_feed(feed_id, filter_ads=1, ad_patterns_mode=1, ad_title_patterns="giveaway")
 
     poll.poll_feed(feed_id)
 
@@ -560,7 +560,7 @@ def test_feed_ad_title_patterns_filter_entry_not_caught_by_builtin_rules(feed_id
 def test_global_and_feed_ad_title_patterns_both_apply(feed_id, monkeypatch):
     seen = _serve(monkeypatch, GIVEAWAY_XML)
     monkeypatch.setenv("PINTXOS_AD_TITLE_PATTERNS", "best .* deals")
-    set_feed(feed_id, filter_ads=1, ad_title_patterns="giveaway")
+    set_feed(feed_id, filter_ads=1, ad_patterns_mode=1, ad_title_patterns="giveaway")
 
     poll.poll_feed(feed_id)
 
@@ -568,9 +568,54 @@ def test_global_and_feed_ad_title_patterns_both_apply(feed_id, monkeypatch):
     assert feed_row(feed_id)["ads_filtered"] == 2
 
 
+def test_patterns_mode_inherit_ignores_feed_patterns(feed_id, monkeypatch):
+    """ad_patterns_mode NULL: the global patterns apply, the feed's own do not."""
+    seen = _serve(monkeypatch, GIVEAWAY_XML)
+    monkeypatch.setenv("PINTXOS_AD_TITLE_PATTERNS", "best .* deals")
+    set_feed(feed_id, filter_ads=1, ad_title_patterns="giveaway")
+    assert feed_row(feed_id)["ad_patterns_mode"] is None  # a new feed inherits
+
+    poll.poll_feed(feed_id)
+
+    assert seen == ["First article about a rocket launch", "Big Giveaway"]
+    assert feed_row(feed_id)["ads_filtered"] == 1
+
+
+def test_patterns_mode_off_drops_extra_patterns_but_keeps_builtin_rules(
+    feed_id, calls_with_ad, monkeypatch
+):
+    """ad_patterns_mode 0: no extra title patterns, yet the coupon ad is still filtered."""
+    monkeypatch.setenv("PINTXOS_FILTER_ADS", "1")
+    monkeypatch.setenv("PINTXOS_AD_TITLE_PATTERNS", "about a merger")
+    set_feed(feed_id, ad_patterns_mode=0, ad_title_patterns="rocket launch")
+
+    poll.poll_feed(feed_id)
+
+    titles = [original_title for _, original_title, _ in calls_with_ad]
+    assert titles == ["First article about a rocket launch", "Second article about a merger"]
+    assert "https://example.com/coupons" not in [row["link"] for row in items()]
+    assert feed_row(feed_id)["ads_filtered"] == 1
+
+
+def test_extra_ad_patterns_per_mode(feed_id, monkeypatch):
+    """The three modes, straight off the helper: inherit, on, off."""
+    monkeypatch.setenv("PINTXOS_AD_TITLE_PATTERNS", "best .* deals")
+    set_feed(feed_id, ad_title_patterns="giveaway")
+
+    def patterns():
+        with db() as conn:
+            return [p.pattern for p in poll._extra_ad_patterns(conn, feed_row(feed_id))]
+
+    assert patterns() == ["best .* deals"]  # mode NULL: global only
+    set_feed(feed_id, ad_patterns_mode=1)
+    assert patterns() == ["best .* deals", "giveaway"]  # mode 1: global + feed
+    set_feed(feed_id, ad_patterns_mode=0)
+    assert patterns() == []  # mode 0: nothing extra
+
+
 def test_feed_ad_patterns_ignored_when_filter_disabled(feed_id, monkeypatch):
     seen = _serve(monkeypatch, GIVEAWAY_XML)
-    set_feed(feed_id, filter_ads=0, ad_title_patterns="giveaway")
+    set_feed(feed_id, filter_ads=0, ad_patterns_mode=1, ad_title_patterns="giveaway")
 
     poll.poll_feed(feed_id)
 
@@ -578,7 +623,7 @@ def test_feed_ad_patterns_ignored_when_filter_disabled(feed_id, monkeypatch):
 
 
 def test_invalid_feed_ad_pattern_warns_with_feed_id_and_keeps_valid_lines(feed_id, caplog):
-    set_feed(feed_id, ad_title_patterns="giveaway\n(bad")
+    set_feed(feed_id, ad_patterns_mode=1, ad_title_patterns="giveaway\n(bad")
 
     with db() as conn, caplog.at_level("WARNING"):
         patterns = poll._extra_ad_patterns(conn, feed_row(feed_id))
@@ -592,7 +637,7 @@ def test_invalid_feed_ad_pattern_warns_with_feed_id_and_keeps_valid_lines(feed_i
 
 def test_invalid_feed_ad_pattern_still_filters_with_the_good_line(feed_id, monkeypatch, caplog):
     seen = _serve(monkeypatch, GIVEAWAY_XML)
-    set_feed(feed_id, filter_ads=1, ad_title_patterns="giveaway\n(bad")
+    set_feed(feed_id, filter_ads=1, ad_patterns_mode=1, ad_title_patterns="giveaway\n(bad")
 
     with caplog.at_level("WARNING"):
         poll.poll_feed(feed_id)

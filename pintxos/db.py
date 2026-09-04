@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS feeds (
     last_error TEXT,
     ads_filtered INTEGER NOT NULL DEFAULT 0,
     filter_ads INTEGER,
-    ad_title_patterns TEXT
+    ad_title_patterns TEXT,
+    ad_patterns_mode INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS items (
@@ -62,6 +63,8 @@ def connect() -> sqlite3.Connection:
         # NULL = "use the global setting"; 0/1 = explicit per-feed override.
         ("filter_ads", "INTEGER"),
         ("ad_title_patterns", "TEXT"),
+        # NULL = inherit (global patterns only); 1 = global + this feed's; 0 = no extra patterns.
+        ("ad_patterns_mode", "INTEGER"),
     ):
         if name not in cols:
             conn.execute(f"ALTER TABLE feeds ADD COLUMN {name} {ddl}")
