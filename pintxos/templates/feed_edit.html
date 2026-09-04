@@ -7,18 +7,18 @@
   <fieldset class="field">
     <legend>Ad filter</legend>
     <div class="radios">
-      <label class="radio"><input type="radio" name="filter_ads" value="inherit" {% if filter_choice == "inherit" %}checked{% endif %}> Inherit (currently {{ "on" if global_filter_ads_on else "off" }})</label>
-      <label class="radio"><input type="radio" name="filter_ads" value="on" {% if filter_choice == "on" %}checked{% endif %}> On</label>
-      <label class="radio"><input type="radio" name="filter_ads" value="off" {% if filter_choice == "off" %}checked{% endif %}> Off</label>
+      <label class="radio"><input type="radio" name="filter_ads" value="" {% if feed.filter_ads is none %}checked{% endif %}> Inherit (currently {{ "on" if global_filter_ads_on else "off" }})</label>
+      <label class="radio"><input type="radio" name="filter_ads" value="1" {% if feed.filter_ads == 1 %}checked{% endif %}> On</label>
+      <label class="radio"><input type="radio" name="filter_ads" value="0" {% if feed.filter_ads == 0 %}checked{% endif %}> Off</label>
     </div>
   </fieldset>
   <div class="patterns">
     <fieldset class="field">
       <legend>Extra title patterns</legend>
       <div class="radios">
-        <label class="radio"><input type="radio" name="ad_patterns_mode" value="inherit" {% if patterns_choice == "inherit" %}checked{% endif %}> Inherit global patterns</label>
-        <label class="radio"><input type="radio" name="ad_patterns_mode" value="on" {% if patterns_choice == "on" %}checked{% endif %}> Global + this feed's patterns</label>
-        <label class="radio"><input type="radio" name="ad_patterns_mode" value="off" {% if patterns_choice == "off" %}checked{% endif %}> Off (no extra patterns for this feed)</label>
+        <label class="radio"><input type="radio" name="ad_patterns_mode" value="" {% if feed.ad_patterns_mode is none %}checked{% endif %}> Inherit global patterns</label>
+        <label class="radio"><input type="radio" name="ad_patterns_mode" value="1" {% if feed.ad_patterns_mode == 1 %}checked{% endif %}> Global + this feed's patterns</label>
+        <label class="radio"><input type="radio" name="ad_patterns_mode" value="0" {% if feed.ad_patterns_mode == 0 %}checked{% endif %}> Off (no extra patterns for this feed)</label>
       </div>
     </fieldset>
     <div class="field">
@@ -27,11 +27,11 @@
     </div>
     <div class="field">
       <label for="ad_title_patterns">This feed's patterns</label>
-      <textarea id="ad_title_patterns" name="ad_title_patterns" rows="4" class="mono" {% if patterns_disabled %}disabled{% endif %}>{{ ad_title_patterns }}</textarea>
+      <textarea id="ad_title_patterns" name="ad_title_patterns" rows="4" class="mono">{{ ad_title_patterns }}</textarea>
       <div class="muted">One regex per line, applied in addition to the global patterns</div>
     </div>
   </div>
   <button type="submit" class="btn-primary">Save</button>
-  <a class="button btn-tint-neutral" href="/">Cancel</a>
+  <a href="/" class="muted" style="margin-left:.75rem">Cancel</a>
 </form>
 {% endblock %}

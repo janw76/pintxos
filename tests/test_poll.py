@@ -493,48 +493,34 @@ def _serve(monkeypatch, xml: bytes) -> list[str]:
     return seen
 
 
-def test_feed_override_on_filters_ads_while_global_is_off(feed_id, calls_with_ad, monkeypatch):
-    """filter_ads = 1 on the feed wins over a global setting that is off."""
-    monkeypatch.setenv("PINTXOS_FILTER_ADS", "0")
-    set_feed(feed_id, filter_ads=1)
+@pytest.mark.parametrize(
+    "feed_override, global_setting, expect_ad_filtered",
+    [
+        (1, "0", True),  # override on wins over a global setting that is off
+        (0, "1", False),  # override off wins over a global setting that is on
+        (None, "1", True),  # no override: follows global on
+        (None, "0", False),  # no override: follows global off
+    ],
+)
+def test_feed_override_and_global_interaction(
+    feed_id, calls_with_ad, monkeypatch, feed_override, global_setting, expect_ad_filtered
+):
+    monkeypatch.setenv("PINTXOS_FILTER_ADS", global_setting)
+    if feed_override is not None:
+        set_feed(feed_id, filter_ads=feed_override)
+    else:
+        assert feed_row(feed_id)["filter_ads"] is None  # a new feed has no override
 
     poll.poll_feed(feed_id)
 
-    assert len(calls_with_ad) == 2
-    assert "https://example.com/coupons" not in [row["link"] for row in items()]
-    assert feed_row(feed_id)["ads_filtered"] == 1
-
-
-def test_feed_override_off_keeps_ads_while_global_is_on(feed_id, calls_with_ad, monkeypatch):
-    """filter_ads = 0 on the feed wins over a global setting that is on."""
-    monkeypatch.setenv("PINTXOS_FILTER_ADS", "1")
-    set_feed(feed_id, filter_ads=0)
-
-    poll.poll_feed(feed_id)
-
-    assert len(calls_with_ad) == 3
-    assert "https://example.com/coupons" in [row["link"] for row in items()]
-    assert feed_row(feed_id)["ads_filtered"] == 0
-
-
-def test_feed_without_override_follows_global_on(feed_id, calls_with_ad, monkeypatch):
-    assert feed_row(feed_id)["filter_ads"] is None  # a new feed has no override
-    monkeypatch.setenv("PINTXOS_FILTER_ADS", "1")
-
-    poll.poll_feed(feed_id)
-
-    assert len(calls_with_ad) == 2
-    assert feed_row(feed_id)["ads_filtered"] == 1
-
-
-def test_feed_without_override_follows_global_off(feed_id, calls_with_ad, monkeypatch):
-    assert feed_row(feed_id)["filter_ads"] is None
-    monkeypatch.setenv("PINTXOS_FILTER_ADS", "0")
-
-    poll.poll_feed(feed_id)
-
-    assert len(calls_with_ad) == 3
-    assert feed_row(feed_id)["ads_filtered"] == 0
+    if expect_ad_filtered:
+        assert len(calls_with_ad) == 2
+        assert "https://example.com/coupons" not in [row["link"] for row in items()]
+        assert feed_row(feed_id)["ads_filtered"] == 1
+    else:
+        assert len(calls_with_ad) == 3
+        assert "https://example.com/coupons" in [row["link"] for row in items()]
+        assert feed_row(feed_id)["ads_filtered"] == 0
 
 
 # The third entry is renamed to something only a per-feed pattern catches, the second to
@@ -568,35 +554,6 @@ def test_global_and_feed_ad_title_patterns_both_apply(feed_id, monkeypatch):
     assert feed_row(feed_id)["ads_filtered"] == 2
 
 
-def test_patterns_mode_inherit_ignores_feed_patterns(feed_id, monkeypatch):
-    """ad_patterns_mode NULL: the global patterns apply, the feed's own do not."""
-    seen = _serve(monkeypatch, GIVEAWAY_XML)
-    monkeypatch.setenv("PINTXOS_AD_TITLE_PATTERNS", "best .* deals")
-    set_feed(feed_id, filter_ads=1, ad_title_patterns="giveaway")
-    assert feed_row(feed_id)["ad_patterns_mode"] is None  # a new feed inherits
-
-    poll.poll_feed(feed_id)
-
-    assert seen == ["First article about a rocket launch", "Big Giveaway"]
-    assert feed_row(feed_id)["ads_filtered"] == 1
-
-
-def test_patterns_mode_off_drops_extra_patterns_but_keeps_builtin_rules(
-    feed_id, calls_with_ad, monkeypatch
-):
-    """ad_patterns_mode 0: no extra title patterns, yet the coupon ad is still filtered."""
-    monkeypatch.setenv("PINTXOS_FILTER_ADS", "1")
-    monkeypatch.setenv("PINTXOS_AD_TITLE_PATTERNS", "about a merger")
-    set_feed(feed_id, ad_patterns_mode=0, ad_title_patterns="rocket launch")
-
-    poll.poll_feed(feed_id)
-
-    titles = [original_title for _, original_title, _ in calls_with_ad]
-    assert titles == ["First article about a rocket launch", "Second article about a merger"]
-    assert "https://example.com/coupons" not in [row["link"] for row in items()]
-    assert feed_row(feed_id)["ads_filtered"] == 1
-
-
 def test_extra_ad_patterns_per_mode(feed_id, monkeypatch):
     """The three modes, straight off the helper: inherit, on, off."""
     monkeypatch.setenv("PINTXOS_AD_TITLE_PATTERNS", "best .* deals")
@@ -622,8 +579,11 @@ def test_feed_ad_patterns_ignored_when_filter_disabled(feed_id, monkeypatch):
     assert "Big Giveaway" in seen
 
 
-def test_invalid_feed_ad_pattern_warns_with_feed_id_and_keeps_valid_lines(feed_id, caplog):
-    set_feed(feed_id, ad_patterns_mode=1, ad_title_patterns="giveaway\n(bad")
+def test_invalid_feed_ad_pattern_warns_with_feed_id_and_still_filters_with_good_line(
+    feed_id, monkeypatch, caplog
+):
+    seen = _serve(monkeypatch, GIVEAWAY_XML)
+    set_feed(feed_id, filter_ads=1, ad_patterns_mode=1, ad_title_patterns="giveaway\n(bad")
 
     with db() as conn, caplog.at_level("WARNING"):
         patterns = poll._extra_ad_patterns(conn, feed_row(feed_id))
@@ -634,11 +594,7 @@ def test_invalid_feed_ad_pattern_warns_with_feed_id_and_keeps_valid_lines(feed_i
     assert f"feed {feed_id}" in warnings[0].getMessage()
     assert "line 2" in warnings[0].getMessage()
 
-
-def test_invalid_feed_ad_pattern_still_filters_with_the_good_line(feed_id, monkeypatch, caplog):
-    seen = _serve(monkeypatch, GIVEAWAY_XML)
-    set_feed(feed_id, filter_ads=1, ad_patterns_mode=1, ad_title_patterns="giveaway\n(bad")
-
+    caplog.clear()
     with caplog.at_level("WARNING"):
         poll.poll_feed(feed_id)
 

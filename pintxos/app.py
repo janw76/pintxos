@@ -109,84 +109,46 @@ def feed_edit_page(request: Request, feed_id: int) -> Response:
             raise HTTPException(status_code=404, detail="feed not found")
         global_filter_ads_on = is_truthy(get_setting("PINTXOS_FILTER_ADS", conn))
         global_patterns = get_setting("PINTXOS_AD_TITLE_PATTERNS", conn) or ""
-    override = feed["filter_ads"]
-    if override is None:
-        filter_choice = "inherit"
-    elif override:
-        filter_choice = "on"
-    else:
-        filter_choice = "off"
-    patterns_mode = feed["ad_patterns_mode"]
-    if patterns_mode is None:
-        patterns_choice = "inherit"
-    elif patterns_mode:
-        patterns_choice = "on"
-    else:
-        patterns_choice = "off"
     return templates.TemplateResponse(
         request,
         "feed_edit.html",
         {
             "feed": dict(feed),
-            "filter_choice": filter_choice,
             "ad_title_patterns": feed["ad_title_patterns"] or "",
             "global_filter_ads_on": global_filter_ads_on,
             "global_patterns": global_patterns,
-            "patterns_choice": patterns_choice,
-            "patterns_disabled": patterns_choice in ("inherit", "off"),
         },
     )
 
 
 @app.post("/feeds/{feed_id}")
-async def feed_edit_save(
+def feed_edit_save(
     feed_id: int,
-    request: Request,
-    filter_ads: str = Form(...),
-    ad_patterns_mode: str = Form(...),
+    filter_ads: str = Form(""),
+    ad_patterns_mode: str = Form(""),
+    ad_title_patterns: str = Form(""),
 ) -> Response:
-    with db() as conn:
-        exists = conn.execute(
-            "SELECT id, ad_title_patterns FROM feeds WHERE id = ?", (feed_id,)
-        ).fetchone()
-    if exists is None:
-        raise HTTPException(status_code=404, detail="feed not found")
-
-    if filter_ads not in ("inherit", "on", "off"):
+    if filter_ads not in ("", "0", "1"):
         return _redirect(f"/feeds/{feed_id}", err="Invalid filter choice")
-    if ad_patterns_mode not in ("inherit", "on", "off"):
+    if ad_patterns_mode not in ("", "0", "1"):
         return _redirect(f"/feeds/{feed_id}", err="Invalid patterns choice")
 
-    # A disabled textarea (patterns mode inherit/off, per the server-rendered
-    # `disabled` attribute) is never submitted by the browser; keep the
-    # stored patterns untouched in that case instead of wiping them. FastAPI's
-    # Form(...) collapses an empty submitted value to the same "absent" state
-    # as a field that's missing entirely, so the raw form data is read here to
-    # tell "not submitted" (disabled) apart from "submitted but blank"
-    # (explicitly cleared).
-    form = await request.form()
-    if "ad_title_patterns" not in form:
-        patterns_value = exists["ad_title_patterns"]
-    else:
-        ad_title_patterns = str(form["ad_title_patterns"])
-        patterns = "\n".join(
-            line.strip() for line in ad_title_patterns.splitlines() if line.strip()
-        )
-        try:
-            adfilter.compile_patterns(patterns)
-        except ValueError as e:
-            return _redirect(f"/feeds/{feed_id}", err=f"Invalid pattern: {e}")
-        patterns_value = patterns or None
+    try:
+        adfilter.compile_patterns(ad_title_patterns)
+    except ValueError as e:
+        return _redirect(f"/feeds/{feed_id}", err=f"Invalid pattern: {e}")
 
-    filter_ads_value = {"inherit": None, "on": 1, "off": 0}[filter_ads]
-    patterns_mode_value = {"inherit": None, "on": 1, "off": 0}[ad_patterns_mode]
+    filter_ads_value = int(filter_ads) if filter_ads else None
+    patterns_mode_value = int(ad_patterns_mode) if ad_patterns_mode else None
 
     with db() as conn:
-        conn.execute(
+        cur = conn.execute(
             "UPDATE feeds SET filter_ads = ?, ad_patterns_mode = ?, ad_title_patterns = ? "
             "WHERE id = ?",
-            (filter_ads_value, patterns_mode_value, patterns_value, feed_id),
+            (filter_ads_value, patterns_mode_value, ad_title_patterns or None, feed_id),
         )
+    if cur.rowcount == 0:
+        raise HTTPException(status_code=404, detail="feed not found")
 
     return _redirect("/", msg="Saved")
 
@@ -299,9 +261,8 @@ def save_settings(
     if not (1 <= items_per_feed_i <= 500):
         return _redirect("/settings", err="Items per feed must be between 1 and 500")
 
-    patterns = "\n".join(line.rstrip() for line in ad_title_patterns.splitlines()).strip("\n")
     try:
-        adfilter.compile_patterns(patterns)
+        adfilter.compile_patterns(ad_title_patterns)
     except ValueError as e:
         return _redirect("/settings", err=f"Invalid pattern: {e}")
 
@@ -317,7 +278,7 @@ def save_settings(
     if not env_pinned("PINTXOS_FILTER_ADS"):
         pairs.append(("PINTXOS_FILTER_ADS", "1" if filter_ads == "1" else "0"))
     if not env_pinned("PINTXOS_AD_TITLE_PATTERNS"):
-        pairs.append(("PINTXOS_AD_TITLE_PATTERNS", patterns))
+        pairs.append(("PINTXOS_AD_TITLE_PATTERNS", ad_title_patterns))
 
     with db() as conn:
         conn.executemany(

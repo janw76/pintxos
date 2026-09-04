@@ -52,7 +52,7 @@
         <td class="muted nowrap">{{ status.get(feed.id, "") }}</td>
         <td class="error">{{ feed.last_error or "" }}</td>
         <td class="actions">
-          <a class="button btn-tint-neutral" href="/feeds/{{ feed.id }}">Edit filters</a>
+          <form method="get" action="/feeds/{{ feed.id }}"><button type="submit" class="btn-tint-neutral">Edit filters</button></form>
           <form method="post" action="/feeds/{{ feed.id }}/poll">
             <button type="submit" class="btn-tint-neutral"{% if feed.id in status %} disabled{% endif %}>Poll now</button>
           </form>
