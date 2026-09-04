@@ -418,13 +418,74 @@ def test_delete_feed_drops_queued_manual_poll_and_status():
         assert "Queued" not in c.get("/").text
 
 
-def test_feed_edit_page_shows_filter_select_and_patterns_textarea(monkeypatch):
+def test_feed_edit_page_shows_radios_and_global_patterns_box(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post(
+            "/settings",
+            data={
+                "model": "m",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "",
+                "ad_title_patterns": "black friday\n\\bgiveaway\\b",
+            },
+            follow_redirects=False,
+        )
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        page = c.get("/feeds/1").text
+
+    # six radios: three for filter_ads, three for ad_patterns_mode
+    assert page.count('type="radio"') == 6
+    assert 'name="filter_ads"' in page
+    assert 'name="ad_patterns_mode"' in page
+    assert 'name="ad_title_patterns"' in page
+    # unsaved feed defaults to "inherit" for both groups
+    assert 'name="filter_ads" value="inherit" checked' in page
+    assert 'name="filter_ads" value="on" checked' not in page
+    assert 'name="filter_ads" value="off" checked' not in page
+    assert 'name="ad_patterns_mode" value="inherit" checked' in page
+    assert 'name="ad_patterns_mode" value="on" checked' not in page
+    assert 'name="ad_patterns_mode" value="off" checked' not in page
+    # read-only global patterns box shows the global text
+    assert 'class="mono global-box"' in page
+    assert "black friday" in page
+    assert "\\bgiveaway\\b" in page
+    # saved mode is "inherit" -> the feed's own textarea is server-disabled
+    assert 'id="ad_title_patterns" name="ad_title_patterns" rows="4" class="mono" disabled' in page
+
+
+def test_feed_edit_page_shows_global_box_placeholder_when_empty(monkeypatch):
     monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
     with TestClient(app) as c:
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
         page = c.get("/feeds/1").text
-        assert 'name="filter_ads"' in page
-        assert 'name="ad_title_patterns"' in page
+    assert "(none)" in page
+
+
+def test_feed_edit_page_reflects_saved_state(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        c.post(
+            "/feeds/1",
+            data={
+                "filter_ads": "off",
+                "ad_patterns_mode": "on",
+                "ad_title_patterns": "giveaway",
+            },
+            follow_redirects=False,
+        )
+        page = c.get("/feeds/1").text
+
+    assert page.count('type="radio"') == 6
+    assert 'name="filter_ads" value="off" checked' in page
+    assert 'name="filter_ads" value="inherit" checked' not in page
+    assert 'name="ad_patterns_mode" value="on" checked' in page
+    assert 'name="ad_patterns_mode" value="inherit" checked' not in page
+    assert "giveaway" in page
+    # saved mode is "on" -> the feed's own textarea is not server-disabled
+    assert 'id="ad_title_patterns" name="ad_title_patterns" rows="4" class="mono" disabled' not in page
 
 
 def test_feed_edit_post_off_and_patterns_saved(monkeypatch):
@@ -433,7 +494,11 @@ def test_feed_edit_post_off_and_patterns_saved(monkeypatch):
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
         resp = c.post(
             "/feeds/1",
-            data={"filter_ads": "off", "ad_title_patterns": "giveaway"},
+            data={
+                "filter_ads": "off",
+                "ad_patterns_mode": "on",
+                "ad_title_patterns": "giveaway",
+            },
             follow_redirects=False,
         )
         assert resp.status_code == 303
@@ -441,15 +506,20 @@ def test_feed_edit_post_off_and_patterns_saved(monkeypatch):
 
         with db() as conn:
             row = conn.execute(
-                "SELECT filter_ads, ad_title_patterns FROM feeds WHERE id = 1"
+                "SELECT filter_ads, ad_patterns_mode, ad_title_patterns FROM feeds WHERE id = 1"
             ).fetchone()
         assert row["filter_ads"] == 0
+        assert row["ad_patterns_mode"] == 1
         assert row["ad_title_patterns"] == "giveaway"
 
         # normalisation: strip each line, drop blank lines, join survivors with "\n"
         resp = c.post(
             "/feeds/1",
-            data={"filter_ads": "on", "ad_title_patterns": "\n\n  foo  \n\n  bar\n\n"},
+            data={
+                "filter_ads": "on",
+                "ad_patterns_mode": "on",
+                "ad_title_patterns": "\n\n  foo  \n\n  bar\n\n",
+            },
             follow_redirects=False,
         )
         assert resp.status_code == 303
@@ -460,13 +530,29 @@ def test_feed_edit_post_off_and_patterns_saved(monkeypatch):
         assert row["ad_title_patterns"] == "foo\nbar"
 
 
+def test_feed_edit_post_patterns_mode_off_stores_zero(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        resp = c.post(
+            "/feeds/1",
+            data={"filter_ads": "inherit", "ad_patterns_mode": "off"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+    with db() as conn:
+        row = conn.execute("SELECT ad_patterns_mode FROM feeds WHERE id = 1").fetchone()
+    assert row["ad_patterns_mode"] == 0
+
+
 def test_feed_edit_post_invalid_regex_rejected_and_unchanged(monkeypatch):
     monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
     with TestClient(app) as c:
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
         resp = c.post(
             "/feeds/1",
-            data={"filter_ads": "on", "ad_title_patterns": "ok\n(\n"},
+            data={"filter_ads": "on", "ad_patterns_mode": "on", "ad_title_patterns": "ok\n(\n"},
             follow_redirects=False,
         )
         assert resp.status_code == 303
@@ -486,22 +572,58 @@ def test_feed_edit_post_inherit_stores_null(monkeypatch):
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
         c.post(
             "/feeds/1",
-            data={"filter_ads": "off", "ad_title_patterns": "giveaway"},
+            data={
+                "filter_ads": "off",
+                "ad_patterns_mode": "on",
+                "ad_title_patterns": "giveaway",
+            },
             follow_redirects=False,
         )
+        # explicit empty ad_title_patterns (field submitted, but blank) clears it
         resp = c.post(
             "/feeds/1",
-            data={"filter_ads": "inherit", "ad_title_patterns": ""},
+            data={"filter_ads": "inherit", "ad_patterns_mode": "inherit", "ad_title_patterns": ""},
             follow_redirects=False,
         )
         assert resp.status_code == 303
 
     with db() as conn:
         row = conn.execute(
-            "SELECT filter_ads, ad_title_patterns FROM feeds WHERE id = 1"
+            "SELECT filter_ads, ad_patterns_mode, ad_title_patterns FROM feeds WHERE id = 1"
         ).fetchone()
     assert row["filter_ads"] is None
+    assert row["ad_patterns_mode"] is None
     assert row["ad_title_patterns"] is None
+
+
+def test_feed_edit_post_missing_patterns_field_keeps_stored_value(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        c.post(
+            "/feeds/1",
+            data={
+                "filter_ads": "off",
+                "ad_patterns_mode": "on",
+                "ad_title_patterns": "giveaway",
+            },
+            follow_redirects=False,
+        )
+        # a server-disabled textarea (mode switched to "inherit") is never
+        # submitted by a real browser -- omit the field entirely here.
+        resp = c.post(
+            "/feeds/1",
+            data={"filter_ads": "off", "ad_patterns_mode": "inherit"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+    with db() as conn:
+        row = conn.execute(
+            "SELECT ad_patterns_mode, ad_title_patterns FROM feeds WHERE id = 1"
+        ).fetchone()
+    assert row["ad_patterns_mode"] is None
+    assert row["ad_title_patterns"] == "giveaway"
 
 
 def test_feed_edit_page_404_for_unknown_feed():
@@ -514,7 +636,7 @@ def test_feed_edit_post_404_for_unknown_feed():
     with TestClient(app) as c:
         resp = c.post(
             "/feeds/999",
-            data={"filter_ads": "on", "ad_title_patterns": ""},
+            data={"filter_ads": "on", "ad_patterns_mode": "on", "ad_title_patterns": ""},
             follow_redirects=False,
         )
     assert resp.status_code == 404
@@ -530,19 +652,39 @@ def test_feed_xml_route_still_works_after_edit_routes_added(monkeypatch):
     assert resp.headers["content-type"].startswith("application/rss+xml")
 
 
-def test_index_has_edit_link_to_feed(monkeypatch):
+def test_index_has_edit_filters_link_to_feed(monkeypatch):
     monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
     with TestClient(app) as c:
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
         page = c.get("/").text
     assert 'href="/feeds/1"' in page
+    assert "Edit filters" in page
+    assert page.count("/feeds/1/poll") == 1
 
 
 def test_feed_edit_post_unknown_choice_rejected(monkeypatch):
     monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
     with TestClient(app) as c:
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
-        resp = c.post("/feeds/1", data={"filter_ads": "maybe", "ad_title_patterns": ""}, follow_redirects=False)
+        resp = c.post(
+            "/feeds/1",
+            data={"filter_ads": "maybe", "ad_patterns_mode": "inherit", "ad_title_patterns": ""},
+            follow_redirects=False,
+        )
         assert resp.status_code == 303 and resp.headers["location"].startswith("/feeds/1?err=")
         with db() as conn:
             assert conn.execute("SELECT filter_ads FROM feeds WHERE id = 1").fetchone()[0] is None
+
+
+def test_feed_edit_post_unknown_patterns_mode_rejected(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        resp = c.post(
+            "/feeds/1",
+            data={"filter_ads": "inherit", "ad_patterns_mode": "maybe"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303 and resp.headers["location"].startswith("/feeds/1?err=")
+        with db() as conn:
+            assert conn.execute("SELECT ad_patterns_mode FROM feeds WHERE id = 1").fetchone()[0] is None

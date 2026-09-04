@@ -130,6 +130,19 @@
     .field-narrow input { max-width: 8rem; }
     .field-checkbox label { display: flex; align-items: center; gap: 0.4rem; font-weight: 400; }
     .field-checkbox input[type=checkbox] { width: auto; }
+    fieldset.field { border: 0; padding: 0; }
+    fieldset.field legend { padding: 0; font-weight: 500; margin-bottom: 0.3rem; font-size: inherit; }
+
+    .radios { display: flex; gap: 1rem; flex-wrap: nowrap; }
+    @media (max-width: 600px) { .radios { flex-direction: column; gap: 0.4rem; } }
+    label.radio { display: inline-flex; gap: 0.35rem; align-items: center; font-weight: 400; }
+
+    textarea[readonly], .global-box { background: var(--surface); color: var(--text-muted); }
+
+    .patterns:has(input[value="off"]:checked) .global-box,
+    .patterns:has(input[value="off"]:checked) textarea { opacity: 0.45; pointer-events: none; }
+    .patterns:has(input[value="inherit"]:checked) textarea[name=ad_title_patterns] { opacity: 0.45; pointer-events: none; }
+    .filters:has(input[name=filter_ads][value="off"]:checked) .patterns { opacity: 0.45; pointer-events: none; }
   </style>
 </head>
 <body>

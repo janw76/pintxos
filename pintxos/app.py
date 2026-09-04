@@ -108,6 +108,7 @@ def feed_edit_page(request: Request, feed_id: int) -> Response:
         if feed is None:
             raise HTTPException(status_code=404, detail="feed not found")
         global_filter_ads_on = is_truthy(get_setting("PINTXOS_FILTER_ADS", conn))
+        global_patterns = get_setting("PINTXOS_AD_TITLE_PATTERNS", conn) or ""
     override = feed["filter_ads"]
     if override is None:
         filter_choice = "inherit"
@@ -115,6 +116,13 @@ def feed_edit_page(request: Request, feed_id: int) -> Response:
         filter_choice = "on"
     else:
         filter_choice = "off"
+    patterns_mode = feed["ad_patterns_mode"]
+    if patterns_mode is None:
+        patterns_choice = "inherit"
+    elif patterns_mode:
+        patterns_choice = "on"
+    else:
+        patterns_choice = "off"
     return templates.TemplateResponse(
         request,
         "feed_edit.html",
@@ -123,37 +131,61 @@ def feed_edit_page(request: Request, feed_id: int) -> Response:
             "filter_choice": filter_choice,
             "ad_title_patterns": feed["ad_title_patterns"] or "",
             "global_filter_ads_on": global_filter_ads_on,
+            "global_patterns": global_patterns,
+            "patterns_choice": patterns_choice,
+            "patterns_disabled": patterns_choice in ("inherit", "off"),
         },
     )
 
 
 @app.post("/feeds/{feed_id}")
-def feed_edit_save(
+async def feed_edit_save(
     feed_id: int,
+    request: Request,
     filter_ads: str = Form(...),
-    ad_title_patterns: str = Form(""),
+    ad_patterns_mode: str = Form(...),
 ) -> Response:
     with db() as conn:
-        exists = conn.execute("SELECT id FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        exists = conn.execute(
+            "SELECT id, ad_title_patterns FROM feeds WHERE id = ?", (feed_id,)
+        ).fetchone()
     if exists is None:
         raise HTTPException(status_code=404, detail="feed not found")
 
     if filter_ads not in ("inherit", "on", "off"):
         return _redirect(f"/feeds/{feed_id}", err="Invalid filter choice")
+    if ad_patterns_mode not in ("inherit", "on", "off"):
+        return _redirect(f"/feeds/{feed_id}", err="Invalid patterns choice")
 
-    patterns = "\n".join(line.strip() for line in ad_title_patterns.splitlines() if line.strip())
-    try:
-        adfilter.compile_patterns(patterns)
-    except ValueError as e:
-        return _redirect(f"/feeds/{feed_id}", err=f"Invalid pattern: {e}")
+    # A disabled textarea (patterns mode inherit/off, per the server-rendered
+    # `disabled` attribute) is never submitted by the browser; keep the
+    # stored patterns untouched in that case instead of wiping them. FastAPI's
+    # Form(...) collapses an empty submitted value to the same "absent" state
+    # as a field that's missing entirely, so the raw form data is read here to
+    # tell "not submitted" (disabled) apart from "submitted but blank"
+    # (explicitly cleared).
+    form = await request.form()
+    if "ad_title_patterns" not in form:
+        patterns_value = exists["ad_title_patterns"]
+    else:
+        ad_title_patterns = str(form["ad_title_patterns"])
+        patterns = "\n".join(
+            line.strip() for line in ad_title_patterns.splitlines() if line.strip()
+        )
+        try:
+            adfilter.compile_patterns(patterns)
+        except ValueError as e:
+            return _redirect(f"/feeds/{feed_id}", err=f"Invalid pattern: {e}")
+        patterns_value = patterns or None
 
     filter_ads_value = {"inherit": None, "on": 1, "off": 0}[filter_ads]
-    patterns_value = patterns or None
+    patterns_mode_value = {"inherit": None, "on": 1, "off": 0}[ad_patterns_mode]
 
     with db() as conn:
         conn.execute(
-            "UPDATE feeds SET filter_ads = ?, ad_title_patterns = ? WHERE id = ?",
-            (filter_ads_value, patterns_value, feed_id),
+            "UPDATE feeds SET filter_ads = ?, ad_patterns_mode = ?, ad_title_patterns = ? "
+            "WHERE id = ?",
+            (filter_ads_value, patterns_mode_value, patterns_value, feed_id),
         )
 
     return _redirect("/", msg="Saved")

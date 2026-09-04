@@ -55,7 +55,8 @@ add your own regexes, one per line, via `PINTXOS_AD_TITLE_PATTERNS` or the
 same Settings textarea. The filter only applies to entries seen after it is
 turned on — it never touches items already stored. The Feeds page shows "N
 ads skipped" under a feed's item count for its last poll. Each feed can also
-override the global switch and add its own patterns from its Edit page.
+override the global switch and choose whether it inherits, extends, or
+ignores the global patterns from its Edit filters page.
 
 ```
 black friday
