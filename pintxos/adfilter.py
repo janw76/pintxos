@@ -100,6 +100,26 @@ def entry_tags(entry) -> list[str]:
     return tags
 
 
+def _match_title(title: str | None, extra_title_patterns: Sequence[re.Pattern] = ()) -> str | None:
+    """Return a `"title:<pattern>"` reason if `title` matches a title rule, else None."""
+    title = title or ""
+    for pattern in (*AD_TITLE_PATTERNS, *extra_title_patterns):
+        if pattern.search(title):
+            return f"title:{pattern.pattern}"
+    return None
+
+
+def _match_link(link: str | None) -> str | None:
+    """Return `"link"` if the last path segment of `link` matches AD_LINK_PATTERN, else None."""
+    link = link or ""
+    if link:
+        path = urlparse(link).path
+        segments = [seg for seg in path.split("/") if seg]
+        if segments and AD_LINK_PATTERN.search(segments[-1]):
+            return "link"
+    return None
+
+
 def is_ad(entry, extra_title_patterns: Sequence[re.Pattern] = ()) -> str | None:
     """Return a short reason string if `entry` looks like an ad, else None.
 
@@ -112,19 +132,29 @@ def is_ad(entry, extra_title_patterns: Sequence[re.Pattern] = ()) -> str | None:
         if term in AD_TAGS:
             return f"tag:{term}"
 
-    title = entry.get("title") or ""
-    for pattern in (*AD_TITLE_PATTERNS, *extra_title_patterns):
-        if pattern.search(title):
-            return f"title:{pattern.pattern}"
+    reason = _match_title(entry.get("title"), extra_title_patterns)
+    if reason is not None:
+        return reason
 
-    link = entry.get("link") or ""
-    if link:
-        path = urlparse(link).path
-        segments = [seg for seg in path.split("/") if seg]
-        if segments and AD_LINK_PATTERN.search(segments[-1]):
-            return "link"
+    return _match_link(entry.get("link"))
 
-    return None
+
+def is_ad_stored(
+    original_title: str | None,
+    link: str | None,
+    extra_title_patterns: Sequence[re.Pattern] = (),
+) -> str | None:
+    """Return a short reason string if a *stored* item looks like an ad, else None.
+
+    Applies only the title and link rules (no tags -- tags aren't stored with
+    items). Used to purge items that were summarized and saved before the ad
+    filter existed, or before an extra pattern was added.
+    """
+    reason = _match_title(original_title, extra_title_patterns)
+    if reason is not None:
+        return reason
+
+    return _match_link(link)
 
 
 def compile_patterns(text: str | None) -> list[re.Pattern]:

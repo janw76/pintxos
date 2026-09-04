@@ -404,3 +404,65 @@ def test_extra_pattern_filters_entry_not_caught_by_builtin_rules(feed_id, monkey
         "Second article about a merger",
     ]
     assert len(items()) == 2
+
+
+def _seed_item(feed_id, guid, link, title):
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO items(feed_id, guid, link, original_title, published_at, "
+            "headline, summary, fallback, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (feed_id, guid, link, title, now(), "old headline", "old summary", 0, now()),
+        )
+
+
+def test_purge_stored_ads_removes_pre_filter_coupon_rows_on_poll(feed_id, calls, caplog):
+    _seed_item(
+        feed_id, "old-ad-1", "https://example.com/deals/acme-promo-code/",
+        "Acme Promo Codes: 40% Off",
+    )
+    _seed_item(
+        feed_id, "old-ad-2", "https://example.com/deals/foo-coupon/", "Foo Coupons",
+    )
+    _seed_item(
+        feed_id, "old-real", "https://example.com/story/real-news/", "Real News",
+    )
+
+    with caplog.at_level("INFO"):
+        poll.poll_feed(feed_id)
+
+    guids = {row["guid"] for row in items()}
+    assert "old-ad-1" not in guids
+    assert "old-ad-2" not in guids
+    assert "old-real" in guids
+    assert "purged 2 stored ad items" in caplog.text
+
+
+def test_purge_stored_ads_is_idempotent(feed_id, calls):
+    _seed_item(
+        feed_id, "old-ad-1", "https://example.com/deals/acme-promo-code/",
+        "Acme Promo Codes: 40% Off",
+    )
+    _seed_item(
+        feed_id, "old-ad-2", "https://example.com/deals/foo-coupon/", "Foo Coupons",
+    )
+    poll.poll_feed(feed_id)
+    assert poll.purge_stored_ads(feed_id) == 0
+
+
+def test_purge_stored_ads_skipped_when_filter_disabled(feed_id, calls, monkeypatch):
+    monkeypatch.setenv("PINTXOS_FILTER_ADS", "0")
+    _seed_item(
+        feed_id, "old-ad-1", "https://example.com/deals/acme-promo-code/",
+        "Acme Promo Codes: 40% Off",
+    )
+    _seed_item(
+        feed_id, "old-ad-2", "https://example.com/deals/foo-coupon/", "Foo Coupons",
+    )
+    poll.poll_feed(feed_id)
+    guids = {row["guid"] for row in items()}
+    assert "old-ad-1" in guids
+    assert "old-ad-2" in guids
+
+
+def test_purge_stored_ads_on_feed_with_no_items_returns_zero(feed_id):
+    assert poll.purge_stored_ads(feed_id) == 0

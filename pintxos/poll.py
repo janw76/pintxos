@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
 import feedparser
@@ -94,6 +95,30 @@ def _extra_ad_patterns(conn) -> list[re.Pattern]:
         return []
 
 
+def purge_stored_ads(feed_id: int, extra_patterns: Sequence[re.Pattern] = ()) -> int:
+    """Delete already-stored items that look like ads. Returns the number deleted.
+
+    One-time cleanup for items summarized and saved before the ad filter
+    existed (or before `extra_patterns` was added). Idempotent: once purged,
+    an item can't match again.
+    """
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT id, original_title, link FROM items WHERE feed_id = ?", (feed_id,)
+        ).fetchall()
+        ids = [
+            row["id"]
+            for row in rows
+            if adfilter.is_ad_stored(row["original_title"], row["link"], extra_patterns)
+            is not None
+        ]
+        if ids:
+            conn.executemany("DELETE FROM items WHERE id = ?", [(i,) for i in ids])
+    if ids:
+        log.info("feed %s: purged %d stored ad items", feed_id, len(ids))
+    return len(ids)
+
+
 def _set_error(feed_id: int, message: str, polled: bool = True) -> None:
     with db() as conn:
         if polled:
@@ -134,6 +159,12 @@ def poll_feed(feed_id: int) -> bool:
             log.warning("feed fetch failed %s: %s", url, e)
             _set_error(feed_id, str(e))
             return True
+
+        # Purge already-stored ads before computing `seen`, so their guids aren't
+        # treated as seen -- they fall back into new_entries and get re-evaluated
+        # (and skipped) by the filter below, never re-summarized.
+        if filter_ads:
+            purge_stored_ads(feed_id, extra_ad_patterns)
 
         with db() as conn:
             title = (parsed.feed.get("title") or "").strip()
