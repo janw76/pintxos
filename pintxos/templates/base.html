@@ -157,6 +157,9 @@
 
     .patterns:not(:has(input[name=ad_patterns_mode][value="1"]:checked)) .field:has(textarea[name=ad_title_patterns]) { visibility: hidden; }
     .filters:has(input[name=filter_ads][value="0"]:checked) .patterns { opacity: 0.45; pointer-events: none; }
+    /* The filter log lists whole titles: full width, no bullets. */
+    .filter-log { max-width: none; }
+    .filter-log-list { list-style: none; padding-left: 0; margin: 0.3rem 0; }
   </style>
 </head>
 <body>
