@@ -166,7 +166,9 @@
   <script>
     // ponytail: one tiny inline script for the copy buttons, no bundler needed.
     function pintxosCopy(btn, text) {
-      navigator.clipboard.writeText(text);
+      // navigator.clipboard needs https/localhost; plain-http LAN installs get the textarea fallback.
+      if (navigator.clipboard) { navigator.clipboard.writeText(text); }
+      else { var t = document.createElement("textarea"); t.value = text; document.body.appendChild(t); t.select(); document.execCommand("copy"); t.remove(); }
       var old = btn.textContent;
       btn.textContent = "Copied!";
       setTimeout(function () { btn.textContent = old; }, 1200);
