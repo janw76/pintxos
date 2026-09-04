@@ -11,14 +11,16 @@
 
 <div class="table-wrap">
   <table>
+    <!-- Widths are budgeted against a 968px table (1000px viewport - 2rem body padding);
+         every column is wider than its widest unbreakable content. See pintxos-gno.8. -->
     <colgroup>
-      <col style="width: 20%">
-      <col style="width: 19%">
-      <col style="width: 9%">
+      <col style="width: 22%">
+      <col style="width: 18%">
       <col style="width: 9%">
       <col style="width: 11%">
+      <col style="width: 13%">
       <col style="width: 10%">
-      <col style="width: 22%">
+      <col style="width: 17%">
     </colgroup>
     <thead>
       <tr>
@@ -38,27 +40,25 @@
           <div>{{ feed.title or feed.url }}</div>
           <div class="muted url">{{ feed.url }}</div>
         </td>
+        <td><span class="output-url">{{ feed.output_url }}</span></td>
         <td>
-          <div class="url-cell">
-            <span class="output-url">{{ feed.output_url }}</span>
-            <button type="button" class="btn-tint-accent" onclick="pintxosCopy(this, '{{ feed.output_url }}')">Copy</button>
-          </div>
-        </td>
-        <td class="nowrap">
           <div>{{ feed.item_count }}</div>
           <div class="muted">{% if feed.ads_filtered %}{{ feed.ads_filtered }} ad{{ "" if feed.ads_filtered == 1 else "s" }} skipped{% endif %}</div>
         </td>
         <td class="muted nowrap" title="{{ feed.last_polled_at or '' }}">{{ feed.last_polled_at | ago }}</td>
-        <td class="muted nowrap">{{ status.get(feed.id, "") }}</td>
+        <td class="muted">{{ status.get(feed.id, "") }}</td>
         <td class="error">{{ feed.last_error or "" }}</td>
         <td class="actions">
-          <form method="get" action="/feeds/{{ feed.id }}"><button type="submit" class="btn-tint-neutral">Edit filters</button></form>
-          <form method="post" action="/feeds/{{ feed.id }}/poll">
-            <button type="submit" class="btn-tint-neutral"{% if feed.id in status %} disabled{% endif %}>Poll now</button>
-          </form>
-          <form method="post" action="/feeds/{{ feed.id }}/delete" onsubmit="return confirm('Delete feed?')">
-            <button type="submit" class="btn-danger">Delete</button>
-          </form>
+          <div class="actions-row">
+            <button type="button" class="btn-tint-accent btn-copy" onclick="pintxosCopy(this, '{{ feed.output_url }}')">Copy</button>
+            <form method="get" action="/feeds/{{ feed.id }}"><button type="submit" class="btn-tint-neutral">Edit filters</button></form>
+            <form method="post" action="/feeds/{{ feed.id }}/poll">
+              <button type="submit" class="btn-tint-neutral"{% if feed.id in status %} disabled{% endif %}>Poll now</button>
+            </form>
+            <form method="post" action="/feeds/{{ feed.id }}/delete" onsubmit="return confirm('Delete feed?')">
+              <button type="submit" class="btn-danger">Delete</button>
+            </form>
+          </div>
         </td>
       </tr>
       {% else %}

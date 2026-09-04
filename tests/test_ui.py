@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from fastapi.testclient import TestClient
 
 import pintxos.app as app_module
@@ -350,7 +352,7 @@ def test_index_ads_skipped_cell_is_empty_without_a_count(monkeypatch):
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
         page = c.get("/").text
 
-    assert "<td class=\"nowrap\">" in page  # the items cell rendered
+    assert "<div>0</div>" in page  # the items cell rendered
     assert "skipped" not in page
 
 
@@ -609,3 +611,45 @@ def test_feed_edit_post_unknown_choice_rejected(monkeypatch):
         assert resp.status_code == 303 and resp.headers["location"].startswith("/feeds/1?err=")
         with db() as conn:
             assert conn.execute("SELECT filter_ads FROM feeds WHERE id = 1").fetchone()[0] is None
+
+
+def test_index_action_buttons_share_one_cell_in_order(monkeypatch):
+    """Copy joins the other actions, first of four, in the right-aligned cell."""
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        page = c.get("/").text
+
+    start = page.index('<td class="actions">')
+    cell = page[start : page.index("</td>", start)]
+    assert '<div class="actions-row">' in cell
+    assert "pintxosCopy(this, " in cell
+    order = [cell.index(label) for label in (">Copy<", ">Edit filters<", ">Poll now<", ">Delete<")]
+    assert order == sorted(order)
+    # the output URL cell is left holding just the chip
+    assert '<td><span class="output-url">' in page
+    assert page.count("/feeds/1/poll") == 1
+
+
+def test_index_colgroup_widths_sum_to_100_percent(monkeypatch):
+    """Seven fixed columns budgeted to fit 968px (1000px viewport) without scroll."""
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        page = c.get("/").text
+
+    widths = [int(w) for w in re.findall(r'<col style="width: (\d+)%">', page)]
+    assert len(widths) == 7
+    assert sum(widths) == 100
+
+
+def test_feed_edit_radios_keep_their_controls(monkeypatch):
+    """The 100%-width field rule must not reach radios, or the controls collapse."""
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        page = c.get("/feeds/1").text
+
+    assert page.count('type="radio"') == 6
+    assert ".field input, .field textarea { width: 100%; }" not in page
+    assert "accent-color: var(--accent)" in page

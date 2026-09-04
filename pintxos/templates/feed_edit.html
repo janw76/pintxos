@@ -2,7 +2,7 @@
 {% block title %}Edit feed · Pintxøs{% endblock %}
 {% block content %}
 <h1>{{ feed.title or feed.url }}</h1>
-<div class="muted">{{ feed.url }}</div>
+<div class="muted url">{{ feed.url }}</div>
 <form class="filters" method="post" action="/feeds/{{ feed.id }}">
   <fieldset class="field">
     <legend>Ad filter</legend>
@@ -23,7 +23,7 @@
     </fieldset>
     <div class="field">
       <label for="global_patterns">Global patterns (applied)</label>
-      <textarea id="global_patterns" readonly class="mono global-box">{{ global_patterns if global_patterns else "(none)" }}</textarea>
+      <textarea id="global_patterns" rows="3" readonly class="mono global-box">{{ global_patterns if global_patterns else "(none)" }}</textarea>
     </div>
     <div class="field">
       <label for="ad_title_patterns">This feed's patterns</label>
@@ -32,6 +32,6 @@
     </div>
   </div>
   <button type="submit" class="btn-primary">Save</button>
-  <a href="/" class="muted" style="margin-left:.75rem">Cancel</a>
+  <a href="/" class="cancel">Cancel</a>
 </form>
 {% endblock %}

@@ -16,6 +16,7 @@
       --danger: #b00020;
       --success: #1a7a1a;
       --surface: #f7f8fa;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     }
     *, *::before, *::after { box-sizing: border-box; }
     body {
@@ -45,13 +46,17 @@
     th:first-child, td:first-child { padding-left: 0; }
     th:last-child, td:last-child { padding-right: 0; }
     thead th { font-size: 0.8125rem; font-weight: 600; color: var(--text-muted); padding-top: 0.3rem; padding-bottom: 0.3rem; white-space: nowrap; overflow-wrap: normal; }
-    /* ponytail: below tablet width the fixed 6-column grid cannot fit; let .table-wrap scroll instead. */
+    /* ponytail: below tablet width the fixed 7-column grid cannot fit; let .table-wrap scroll instead. */
     @media (max-width: 720px) { table { table-layout: auto; min-width: 640px; } }
     tbody tr:hover { background: var(--surface); }
     tbody tr:last-child td { border-bottom: none; }
     td.nowrap { white-space: nowrap; }
-    td.actions { text-align: right; white-space: nowrap; }
-    td.actions form + form { margin-left: 0.5rem; }
+    /* Four buttons cannot sit on one line at 1000px; let them wrap 2x2, right-aligned. */
+    td.actions { white-space: normal; }
+    .actions-row { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.35rem; }
+    .actions-row form { display: inline-flex; }
+    /* Reserve the width of the "Copied!" label so the row does not reflow on click. */
+    .actions-row .btn-copy { min-width: 4rem; }
     .empty { padding: 2rem 0; color: var(--text-muted); }
 
     form { display: inline; }
@@ -67,14 +72,15 @@
       border: 1px solid var(--border);
       border-radius: 6px;
     }
-    input:focus, textarea:focus {
+    /* Text-like controls only: radios and checkboxes keep their native focus ring. */
+    :is(input[type=url], input[type=text], input[type=number], input[type=password], textarea):focus-visible {
       outline: none;
       border-color: var(--accent);
       box-shadow: 0 0 0 3px rgba(76, 110, 245, 0.15);
     }
     input:disabled, textarea:disabled { background: #f4f5f7; color: var(--text-muted); }
     ::placeholder { color: #9aa1ab; }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.8125rem; }
+    .mono { font-family: var(--mono); font-size: 0.8125rem; }
 
     button {
       font: inherit;
@@ -86,7 +92,7 @@
       border-radius: 6px;
       cursor: pointer;
     }
-    table button { font-size: 0.8125rem; padding: 0.25rem 0.55rem; }
+    table button { font-size: 0.75rem; padding: 0.2rem 0.45rem; }
     button:hover { border-color: #cdd2d9; background: var(--surface); }
     button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .btn-primary { color: #ffffff; background: #3f5fd8; border-color: #3f5fd8; }
@@ -97,20 +103,7 @@
     .btn-tint-neutral:hover { background: #eceff3; }
     .btn-danger { color: var(--danger); background: #fdf3f4; border-color: #f3c9ce; }
     .btn-danger:hover { color: var(--danger); background: #fbe4e7; border-color: var(--danger); }
-
-    .url-cell { display: flex; align-items: flex-start; gap: 0.5rem; flex-wrap: wrap; }
-    .output-url {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 0.75rem;
-      color: var(--text);
-      background: var(--surface);
-      padding: 0.15rem 0.4rem;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      user-select: all;
-      overflow-wrap: anywhere;
-      white-space: normal;
-    }
+    .cancel { margin-left: 0.75rem; color: var(--text-muted); font-size: 0.875rem; }
 
     .flash, .msg {
       font-size: 0.9375rem;
@@ -123,21 +116,34 @@
     .msg { color: var(--success); background: #f2f9f2; border-color: #cfe6cf; }
     .error { color: var(--danger); }
     .muted { color: var(--text-muted); font-size: 0.875rem; overflow-wrap: anywhere; }
-    .url { font-size: 0.75rem; }
+    /* Every URL on the site is set the same way: mono, 0.75rem, breaks anywhere. */
+    .url, .output-url { font-family: var(--mono); font-size: 0.75rem; overflow-wrap: anywhere; }
+    .output-url {
+      display: inline-block;
+      max-width: 100%;
+      color: var(--text);
+      background: var(--surface);
+      padding: 0.15rem 0.4rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      user-select: all;
+    }
 
     .field { max-width: 26rem; margin-bottom: 1.25rem; }
     .field label { display: block; font-weight: 500; margin-bottom: 0.3rem; }
-    .field input, .field textarea { width: 100%; }
+    /* Only text-like controls stretch: a 100% radio or checkbox loses its control. */
+    .field :is(input[type=url], input[type=text], input[type=number], input[type=password], textarea) { width: 100%; }
     .field .muted { margin-top: 0.35rem; }
     .field-narrow input { max-width: 8rem; }
     .field-checkbox label { display: flex; align-items: center; gap: 0.4rem; font-weight: 400; }
-    .field-checkbox input[type=checkbox] { width: auto; }
-    fieldset.field { border: 0; padding: 0; }
+    /* A row of radios is not an input; it needs the full column, not the 26rem field cap. */
+    fieldset.field { border: 0; padding: 0; max-width: none; }
     fieldset.field legend { padding: 0; font-weight: 500; margin-bottom: 0.3rem; font-size: inherit; }
 
-    .radios { display: flex; gap: 1rem; flex-wrap: nowrap; }
+    .radios { display: flex; gap: 1.25rem; flex-wrap: nowrap; font-size: 0.875rem; }
     @media (max-width: 600px) { .radios { flex-direction: column; gap: 0.4rem; } }
     label.radio { display: inline-flex; gap: 0.35rem; align-items: center; font-weight: 400; }
+    .radios input { margin: 0; accent-color: var(--accent); }
 
     textarea[readonly], .global-box { background: var(--surface); color: var(--text-muted); }
 
