@@ -120,6 +120,16 @@ def _extra_ad_patterns(conn, feed) -> list[re.Pattern]:
     return global_patterns + feed_patterns
 
 
+def _keep_patterns(conn) -> list[re.Pattern]:
+    """Global keep patterns: titles matching any of these are never filtered."""
+    return adfilter.compile_patterns(
+        get_setting("PINTXOS_AD_KEEP_PATTERNS", conn) or "",
+        on_error=lambda lineno, line, e: log.warning(
+            "invalid PINTXOS_AD_KEEP_PATTERNS line %d %r: %s", lineno, line, e
+        ),
+    )
+
+
 def _set_error(feed_id: int, message: str, polled: bool = True) -> None:
     with db() as conn:
         if polled:
@@ -146,6 +156,7 @@ def poll_feed(feed_id: int) -> bool:
         limit = int(get_setting("PINTXOS_ITEMS_PER_FEED", conn))
         filter_ads = _filter_ads_enabled(conn, feed)
         extra_ad_patterns = _extra_ad_patterns(conn, feed) if filter_ads else []
+        keep_patterns = _keep_patterns(conn) if filter_ads else []
 
     try:
         try:
@@ -185,7 +196,7 @@ def poll_feed(feed_id: int) -> bool:
         if filter_ads:
             kept = []
             for guid, link, entry in new_entries:
-                reason = adfilter.is_ad(entry, extra_ad_patterns)
+                reason = adfilter.is_ad(entry, extra_ad_patterns, keep_patterns=keep_patterns)
                 if reason is None:
                     kept.append((guid, link, entry))
                 else:

@@ -375,6 +375,81 @@ def test_settings_post_ad_patterns_roundtrip():
     assert get_setting("PINTXOS_AD_TITLE_PATTERNS") == "best .* deals\nfree shipping"
 
 
+def test_settings_post_invalid_keep_pattern_rejected_and_nothing_saved():
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "m",
+                "poll_minutes": "15",
+                "items_per_feed": "10",
+                "api_key": "",
+                "ad_keep_patterns": "ok\n(\n",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        location = resp.headers["location"]
+        assert location.startswith("/settings?err=")
+
+        page = c.get(location).text
+        assert "Invalid keep pattern" in page
+        assert "line 2" in page
+
+    # nothing saved: poll_minutes still at its built-in default
+    assert get_setting("PINTXOS_POLL_MINUTES") == "30"
+
+
+def test_settings_post_keep_patterns_roundtrip():
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "m",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "",
+                "ad_keep_patterns": "fraud\nnot a scam",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        page = c.get("/settings").text
+
+    assert "fraud" in page
+    assert "not a scam" in page
+    assert get_setting("PINTXOS_AD_KEEP_PATTERNS") == "fraud\nnot a scam"
+
+
+def test_settings_keep_patterns_env_pinned_disables_control_and_ignores_submission(monkeypatch):
+    monkeypatch.setenv("PINTXOS_AD_KEEP_PATTERNS", "fraud")
+    with TestClient(app) as c:
+        page = c.get("/settings").text
+        assert 'id="ad_keep_patterns" name="ad_keep_patterns" rows="4" class="mono" disabled>' in page
+        assert "Set by PINTXOS_AD_KEEP_PATTERNS in the environment." in page
+
+        c.post(
+            "/settings",
+            data={
+                "model": "m",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "",
+                "ad_keep_patterns": "should not be saved",
+            },
+            follow_redirects=False,
+        )
+
+    monkeypatch.delenv("PINTXOS_AD_KEEP_PATTERNS")
+    from pintxos.db import db
+
+    with db() as conn:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key = ?", ("PINTXOS_AD_KEEP_PATTERNS",)
+        ).fetchone()
+    assert row is None
+
+
 def test_settings_filter_ads_env_pinned_disables_control_and_ignores_submission(monkeypatch):
     monkeypatch.setenv("PINTXOS_FILTER_ADS", "0")
     with TestClient(app) as c:

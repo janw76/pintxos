@@ -15,6 +15,7 @@ DEFAULTS: dict[str, str | None] = {
     "PINTXOS_BASE_URL": None,
     "PINTXOS_FILTER_ADS": "0",
     "PINTXOS_AD_TITLE_PATTERNS": "",
+    "PINTXOS_AD_KEEP_PATTERNS": "",
 }
 
 

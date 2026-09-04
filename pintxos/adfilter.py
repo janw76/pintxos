@@ -6,7 +6,9 @@ coupon-code roundups ("Groupon Promo Codes: 60% Off in September 2026",
 posts that get republished with a new percentage every few days, and we
 don't want to spend an LLM call summarizing each refresh.
 
-`is_ad` checks three signals, in order of confidence:
+`is_ad` first checks `keep_patterns` against the title: a match there wins
+over every block rule below, built-ins included, and the entry is kept.
+Otherwise it checks three signals, in order of confidence:
 
 1. RSS category tags. Feedparser's `tags` list is the most reliable signal:
    coupon roundups are consistently tagged with terms like "coupons" or
@@ -26,11 +28,13 @@ matched by title text. The *tag* "deals" (as in Wired's "Gear / Deals"
 category) is a much stronger, curated signal than the word appearing
 somewhere in a headline.
 
-Known limitation: the loose title rules (bare "coupons?", "N% off") are
-broad enough to occasionally skip a real story at entry time -- e.g.
-"Coupon fraud ring busted by FBI". When that happens, only that entry's
-summary is lost for this poll; the entry is re-evaluated on the next poll
-(it is never marked seen), and nothing is ever deleted from the database.
+Known limitation: the loose title rule (bare "coupons?") is broad enough
+to occasionally skip a real story at entry time -- e.g. "Coupon fraud ring
+busted by FBI". When that happens, only that entry's summary is lost for
+this poll; the entry is re-evaluated on the next poll (it is never marked
+seen), and nothing is ever deleted from the database. `keep_patterns` (see
+`is_ad`) lets you rescue specific titles from this and every other block
+rule, built-ins included.
 """
 
 from __future__ import annotations
@@ -59,7 +63,6 @@ AD_TAGS: frozenset[str] = frozenset(
 AD_TITLE_PATTERNS: tuple[re.Pattern, ...] = (
     re.compile(r"\b(?:promo|coupon|discount)\s+codes?\b", re.IGNORECASE),
     re.compile(r"\bcoupons?\b", re.IGNORECASE),
-    re.compile(r"\b\d+%\s+off\b", re.IGNORECASE),
     re.compile(r"\bsponsored\b", re.IGNORECASE),
 )
 
@@ -129,14 +132,25 @@ def _match_link(link: str | None) -> str | None:
     return None
 
 
-def is_ad(entry, extra_title_patterns: Sequence[re.Pattern] = ()) -> str | None:
+def is_ad(
+    entry,
+    extra_title_patterns: Sequence[re.Pattern] = (),
+    keep_patterns: Sequence[re.Pattern] = (),
+) -> str | None:
     """Return a short reason string if `entry` looks like an ad, else None.
 
-    Checks, in order: tags (AD_TAGS), title (AD_TITLE_PATTERNS then
-    extra_title_patterns), then the link's last path segment
+    Checks `keep_patterns` against the title first: a match there wins over
+    every block rule below, built-ins included, and short-circuits to None.
+    Otherwise checks, in order: tags (AD_TAGS), title (AD_TITLE_PATTERNS
+    then extra_title_patterns), then the link's last path segment
     (AD_LINK_PATTERN). `entry` may be a plain dict or a feedparser
     FeedParserDict; missing title/link/tags are treated as absent.
     """
+    title = entry.get("title") or ""
+    for pattern in keep_patterns:
+        if pattern.search(title):
+            return None
+
     for term in entry_tags(entry):
         if term in AD_TAGS:
             return f"tag:{term}"

@@ -78,11 +78,9 @@ def test_sponsored_tag_is_flagged():
     assert reason.startswith("tag:")
 
 
-def test_percent_off_title_flagged_but_unrelated_discount_text_is_not():
-    ad_entry = {"title": "Save 40% off this weekend"}
-    reason = is_ad(ad_entry)
-    assert reason is not None
-    assert reason.startswith("title:")
+def test_bare_percent_off_title_is_not_flagged_and_discount_text_is_not_either():
+    non_ad_entry = {"title": "Save 40% off this weekend"}
+    assert is_ad(non_ad_entry) is None
 
     non_ad_entry = {"title": "The discount rate debate at the Fed"}
     assert is_ad(non_ad_entry) is None
@@ -128,3 +126,16 @@ def test_is_ad_still_flags_bare_coupon_mention_at_entry_time():
     reason = is_ad({"title": "Coupon fraud ring busted by FBI"})
     assert reason is not None
     assert reason.startswith("title:")
+
+
+def test_keep_pattern_rescues_a_title_that_would_otherwise_be_flagged():
+    entry = {"title": "Coupon fraud ring busted by FBI"}
+    assert is_ad(entry) is not None
+    assert is_ad(entry, keep_patterns=compile_patterns("fraud")) is None
+
+
+def test_keep_pattern_does_not_rescue_unrelated_titles(wired_entries):
+    """A non-matching keep pattern leaves the fixture's ad detection untouched."""
+    keep = compile_patterns("this pattern matches nothing in the fixture")
+    flagged_titles = {e.get("title") for e in wired_entries if is_ad(e, keep_patterns=keep)}
+    assert flagged_titles == EXPECTED_AD_TITLES

@@ -52,8 +52,10 @@ nothing and never reach the output feed — detected by RSS category (e.g.
 Wired's "Gear / Deals" tag), title shape ("Groupon Promo Codes: 60% Off in
 September 2026"), or a URL slug ending in `-promo-code`/`-coupons`. You can
 add your own regexes, one per line, via `PINTXOS_AD_TITLE_PATTERNS` or the
-same Settings textarea. The filter only applies to entries seen after it is
-turned on — it never touches items already stored. The Feeds page shows "N
+same Settings textarea. Titles matching `PINTXOS_AD_KEEP_PATTERNS` (also one
+regex per line, editable on the Settings page) are never filtered, overriding
+every block rule including the built-ins. The filter only applies to entries
+seen after it is turned on — it never touches items already stored. The Feeds page shows "N
 ads skipped" under a feed's item count for its last poll. Each feed can also
 override the global switch and choose whether it inherits, extends, or
 ignores the global patterns from its Edit filters page.
@@ -113,6 +115,7 @@ to the database. `PINTXOS_BASE_URL` and `PINTXOS_DATA_DIR` are environment-only.
 | `PINTXOS_ITEMS_PER_FEED` | `50` | Items kept per output feed (older ones pruned). |
 | `PINTXOS_FILTER_ADS` | `0` | Skip ad/coupon entries before fetch/summarize. Set to `1` to turn this on. |
 | `PINTXOS_AD_TITLE_PATTERNS` | *(empty)* | Extra title regexes, one per line, matched case-insensitively, in addition to the built-in ad rules. |
+| `PINTXOS_AD_KEEP_PATTERNS` | *(empty)* | Title regexes, one per line, matched case-insensitively; a match overrides every block rule, built-ins included, and the entry is kept. |
 | `PINTXOS_BASE_URL` | *(none, inferred from the request)* | Base URL used to build output feed links, e.g. `https://pintxos.example.com`. |
 | `PINTXOS_DATA_DIR` | `./data` | Directory for the SQLite database. |
 

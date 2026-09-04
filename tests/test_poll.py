@@ -369,6 +369,19 @@ def test_filter_ads_disabled_summarizes_everything(feed_id, calls_with_ad, monke
     assert "https://example.com/coupons" in [row["link"] for row in items()]
 
 
+def test_keep_pattern_rescues_entry_from_ads_filtered_and_last_filtered(
+    feed_id, calls_with_ad, monkeypatch
+):
+    monkeypatch.setenv("PINTXOS_FILTER_ADS", "1")
+    monkeypatch.setenv("PINTXOS_AD_KEEP_PATTERNS", "groupon")
+    poll.poll_feed(feed_id)
+    assert len(calls_with_ad) == 3
+    assert "https://example.com/coupons" in [row["link"] for row in items()]
+    feed = feed_row(feed_id)
+    assert feed["ads_filtered"] == 0
+    assert json.loads(feed["last_filtered"]) == []
+
+
 def test_invalid_extra_ad_pattern_logs_warning_and_keeps_builtin_rules(
     feed_id, calls_with_ad, monkeypatch, caplog
 ):
