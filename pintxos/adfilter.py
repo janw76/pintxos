@@ -26,14 +26,11 @@ matched by title text. The *tag* "deals" (as in Wired's "Gear / Deals"
 category) is a much stronger, curated signal than the word appearing
 somewhere in a headline.
 
-Known limitation: `purge_stored_ads` (via `is_ad_stored`) only applies the
-strict title patterns (AD_TITLE_PATTERNS_STRICT), not the loose ones
-(bare "coupons?", "N% off") that `is_ad` uses at entry time. A title like
-"Coupon fraud ring busted by FBI" can be skipped before it is ever fetched
-(loose match at entry), but if it's already stored -- e.g. from before the
-filter was enabled -- the purge will never delete it, because the loose
-"coupons?" pattern is too eager to trust against real journalism once
-titles are no longer being freshly evaluated one feed-poll at a time.
+Known limitation: the loose title rules (bare "coupons?", "N% off") are
+broad enough to occasionally skip a real story at entry time -- e.g.
+"Coupon fraud ring busted by FBI". When that happens, only that entry's
+summary is lost for this poll; the entry is re-evaluated on the next poll
+(it is never marked seen), and nothing is ever deleted from the database.
 """
 
 from __future__ import annotations
@@ -59,21 +56,12 @@ AD_TAGS: frozenset[str] = frozenset(
     }
 )
 
-# Strict: specific enough to also be safe for purging already-stored items (see
-# is_ad_stored below) -- unlikely to false-positive on real journalism.
-AD_TITLE_PATTERNS_STRICT: tuple[re.Pattern, ...] = (
+AD_TITLE_PATTERNS: tuple[re.Pattern, ...] = (
     re.compile(r"\b(?:promo|coupon|discount)\s+codes?\b", re.IGNORECASE),
-    re.compile(r"\bsponsored\b", re.IGNORECASE),
-)
-
-# Loose: broad enough to catch more coupon roundups at entry time, but too eager to
-# risk deleting a stored item on (e.g. "Coupon fraud ring busted by FBI").
-AD_TITLE_PATTERNS_LOOSE: tuple[re.Pattern, ...] = (
     re.compile(r"\bcoupons?\b", re.IGNORECASE),
     re.compile(r"\b\d+%\s+off\b", re.IGNORECASE),
+    re.compile(r"\bsponsored\b", re.IGNORECASE),
 )
-
-AD_TITLE_PATTERNS: tuple[re.Pattern, ...] = AD_TITLE_PATTERNS_STRICT + AD_TITLE_PATTERNS_LOOSE
 
 # Applied to the last non-empty path segment of the link, e.g.
 # "groupon-promo-code" or "expressvpn-coupons". A bare final segment like
@@ -120,12 +108,11 @@ def entry_tags(entry) -> list[str]:
 
 def _match_title(
     title: str | None,
-    patterns: Sequence[re.Pattern] = AD_TITLE_PATTERNS,
     extra_title_patterns: Sequence[re.Pattern] = (),
 ) -> str | None:
     """Return a `"title:<pattern>"` reason if `title` matches a title rule, else None."""
     title = title or ""
-    for pattern in (*patterns, *extra_title_patterns):
+    for pattern in (*AD_TITLE_PATTERNS, *extra_title_patterns):
         if pattern.search(title):
             return f"title:{pattern.pattern}"
     return None
@@ -159,29 +146,6 @@ def is_ad(entry, extra_title_patterns: Sequence[re.Pattern] = ()) -> str | None:
         return reason
 
     return _match_link(entry.get("link"))
-
-
-def is_ad_stored(
-    original_title: str | None,
-    link: str | None,
-    extra_title_patterns: Sequence[re.Pattern] = (),
-) -> str | None:
-    """Return a short reason string if a *stored* item looks like an ad, else None.
-
-    Applies only the title and link rules (no tags -- tags aren't stored with
-    items), and only the strict title patterns (AD_TITLE_PATTERNS_STRICT plus
-    extra_title_patterns) -- see the module docstring's "Known limitation" for
-    why the loose patterns are not used here. Used to purge items that were
-    summarized and saved before the ad filter existed, or before an extra
-    pattern was added.
-    """
-    reason = _match_title(
-        original_title, AD_TITLE_PATTERNS_STRICT, extra_title_patterns=extra_title_patterns
-    )
-    if reason is not None:
-        return reason
-
-    return _match_link(link)
 
 
 def compile_patterns(text: str | None) -> list[re.Pattern]:

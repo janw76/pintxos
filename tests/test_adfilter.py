@@ -8,7 +8,7 @@ from pathlib import Path
 import feedparser
 import pytest
 
-from pintxos.adfilter import compile_patterns, entry_tags, is_ad, is_ad_stored
+from pintxos.adfilter import compile_patterns, entry_tags, is_ad
 
 FIXTURE = Path(__file__).parent / "fixtures" / "wired.xml"
 
@@ -118,55 +118,13 @@ def test_is_ad_handles_empty_and_none_fields():
     assert is_ad({"tags": None, "title": None, "link": None}) is None
 
 
-def test_is_ad_stored_flags_all_expected_ad_titles(wired_entries):
-    entries_by_title = {e.get("title"): e for e in wired_entries}
-    for title in EXPECTED_AD_TITLES:
-        entry = entries_by_title[title]
-        assert is_ad_stored(title, entry.get("link")) is not None, title
-
-
-def test_is_ad_stored_leaves_real_story_alone():
-    assert (
-        is_ad_stored(
-            "Wikipedia Workers Unionize for the First Time",
-            "https://www.wired.com/story/wikipedia-workers-vote-on-whether-to-unionize/",
-        )
-        is None
-    )
-
-
-def test_is_ad_stored_handles_none_fields():
-    assert is_ad_stored(None, None) is None
-
-
-def test_is_ad_stored_uses_extra_title_patterns():
-    title = "Best Labor Day Deals 2026"
-    assert is_ad_stored(title, "https://example.com/story/labor-day-deals-roundup/") is None
-    extra = compile_patterns("best .* deals")
-    assert (
-        is_ad_stored(title, "https://example.com/story/labor-day-deals-roundup/", extra)
-        is not None
-    )
-
-
 def test_entry_tags_splits_slash_separated_segments():
     entry = {"tags": [{"term": "Gear / Deals"}]}
     assert entry_tags(entry) == ["gear / deals", "gear", "deals"]
 
 
-def test_is_ad_stored_does_not_flag_bare_coupon_mention_in_real_news():
-    """Strict-only purge: a bare 'coupon' mention in real journalism is never deleted."""
-    assert is_ad_stored("Coupon fraud ring busted by FBI", "https://x/story/fbi") is None
-
-
 def test_is_ad_still_flags_bare_coupon_mention_at_entry_time():
     """The loose patterns still apply to is_ad (entry-time filtering is unchanged)."""
     reason = is_ad({"title": "Coupon fraud ring busted by FBI"})
-    assert reason is not None
-    assert reason.startswith("title:")
-
-
-def test_is_ad_stored_still_flags_strict_promo_code_title():
-    reason = is_ad_stored("Groupon Promo Codes: 60% Off", "https://example.com/x")
     assert reason is not None
     assert reason.startswith("title:")

@@ -52,10 +52,8 @@ nothing and never reach the output feed — detected by RSS category (e.g.
 Wired's "Gear / Deals" tag), title shape ("Groupon Promo Codes: 60% Off in
 September 2026"), or a URL slug ending in `-promo-code`/`-coupons`. You can
 add your own regexes, one per line, via `PINTXOS_AD_TITLE_PATTERNS` or the
-same Settings textarea. On each poll, already-stored items that match the
-stricter rules (promo/coupon/discount codes, sponsored, matching URL slugs,
-your own patterns) are deleted; looser matches (a bare "coupon", "N% off")
-only skip new entries and never delete stored ones. The Feeds page shows "N
+same Settings textarea. The filter only applies to entries seen after it is
+turned on — it never touches items already stored. The Feeds page shows "N
 ads skipped" under a feed's item count for its last poll.
 
 ```

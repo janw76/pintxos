@@ -421,84 +421,19 @@ def _seed_item(feed_id, guid, link, title):
         )
 
 
-def test_purge_stored_ads_removes_pre_filter_coupon_rows_on_poll(
-    feed_id, calls, caplog, monkeypatch
-):
+def test_stored_ad_looking_item_survives_poll_with_filter_enabled(feed_id, calls, monkeypatch):
+    """Turning the filter on never touches items already stored: it only applies to
+    entries seen after it is enabled."""
     monkeypatch.setenv("PINTXOS_FILTER_ADS", "1")
     _seed_item(
-        feed_id, "old-ad-1", "https://example.com/deals/acme-promo-code/",
-        "Acme Promo Codes: 40% Off",
-    )
-    _seed_item(
-        feed_id, "old-ad-2", "https://example.com/deals/foo-coupon/", "Foo Coupons",
-    )
-    _seed_item(
-        feed_id, "old-real", "https://example.com/story/real-news/", "Real News",
-    )
-
-    with caplog.at_level("INFO"):
-        poll.poll_feed(feed_id)
-
-    guids = {row["guid"] for row in items()}
-    assert "old-ad-1" not in guids
-    assert "old-ad-2" not in guids
-    assert "old-real" in guids
-    assert "purged 2 stored ad items" in caplog.text
-
-
-def test_purge_stored_ads_keeps_bare_coupon_mention_through_full_poll(feed_id, calls, monkeypatch):
-    """End-to-end through poll_feed(): a stored item with a strict "promo code" title/
-    link is purged, but a stored real story that merely mentions "coupon" in passing
-    ("Coupon fraud ring busted by FBI") survives -- purge only ever applies the strict
-    title/link patterns, never the loose ones that catch that kind of headline at
-    entry time."""
-    monkeypatch.setenv("PINTXOS_FILTER_ADS", "1")
-    _seed_item(
-        feed_id, "old-ad", "https://example.com/deals/acme-promo-code/",
-        "Acme Promo Codes: 40% Off",
-    )
-    _seed_item(
-        feed_id, "old-real", "https://example.com/story/coupon-fraud-fbi/",
-        "Coupon fraud ring busted by FBI",
+        feed_id, "old-ad", "https://example.com/deals/groupon-promo-code/",
+        "Groupon Promo Codes: 60% Off",
     )
 
     poll.poll_feed(feed_id)
 
     titles = {row["original_title"] for row in items()}
-    assert "Acme Promo Codes: 40% Off" not in titles
-    assert "Coupon fraud ring busted by FBI" in titles
-
-
-def test_purge_stored_ads_is_idempotent(feed_id, calls, monkeypatch):
-    monkeypatch.setenv("PINTXOS_FILTER_ADS", "1")
-    _seed_item(
-        feed_id, "old-ad-1", "https://example.com/deals/acme-promo-code/",
-        "Acme Promo Codes: 40% Off",
-    )
-    _seed_item(
-        feed_id, "old-ad-2", "https://example.com/deals/foo-coupon/", "Foo Coupons",
-    )
-    poll.poll_feed(feed_id)
-    assert poll.purge_stored_ads(feed_id) == 0
-
-
-def test_purge_stored_ads_skipped_when_filter_disabled(feed_id, calls, monkeypatch):
-    monkeypatch.setenv("PINTXOS_FILTER_ADS", "0")
-    _seed_item(
-        feed_id, "old-ad-1", "https://example.com/deals/acme-promo-code/",
-        "Acme Promo Codes: 40% Off",
-    )
-    _seed_item(
-        feed_id, "old-ad-2", "https://example.com/deals/foo-coupon/", "Foo Coupons",
-    )
-    poll.poll_feed(feed_id)
-    guids = {row["guid"] for row in items()}
-    assert "old-ad-1" in guids
-    assert "old-ad-2" in guids
-
-
-def test_purge_stored_ads_on_feed_with_no_items_returns_zero(feed_id):
-    assert poll.purge_stored_ads(feed_id) == 0
+    assert "Groupon Promo Codes: 60% Off" in titles
 
 
 def test_ads_filtered_column_set_when_filter_enabled(feed_id, calls_with_ad, monkeypatch):
