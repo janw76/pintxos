@@ -446,6 +446,29 @@ def test_purge_stored_ads_removes_pre_filter_coupon_rows_on_poll(
     assert "purged 2 stored ad items" in caplog.text
 
 
+def test_purge_stored_ads_keeps_bare_coupon_mention_through_full_poll(feed_id, calls, monkeypatch):
+    """End-to-end through poll_feed(): a stored item with a strict "promo code" title/
+    link is purged, but a stored real story that merely mentions "coupon" in passing
+    ("Coupon fraud ring busted by FBI") survives -- purge only ever applies the strict
+    title/link patterns, never the loose ones that catch that kind of headline at
+    entry time."""
+    monkeypatch.setenv("PINTXOS_FILTER_ADS", "1")
+    _seed_item(
+        feed_id, "old-ad", "https://example.com/deals/acme-promo-code/",
+        "Acme Promo Codes: 40% Off",
+    )
+    _seed_item(
+        feed_id, "old-real", "https://example.com/story/coupon-fraud-fbi/",
+        "Coupon fraud ring busted by FBI",
+    )
+
+    poll.poll_feed(feed_id)
+
+    titles = {row["original_title"] for row in items()}
+    assert "Acme Promo Codes: 40% Off" not in titles
+    assert "Coupon fraud ring busted by FBI" in titles
+
+
 def test_purge_stored_ads_is_idempotent(feed_id, calls, monkeypatch):
     monkeypatch.setenv("PINTXOS_FILTER_ADS", "1")
     _seed_item(
