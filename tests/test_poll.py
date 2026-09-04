@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from pathlib import Path
 
 import pytest
+from apscheduler.executors.pool import ThreadPoolExecutor
+from apscheduler.schedulers.background import BackgroundScheduler
 
 from pintxos import poll
 from pintxos.db import db, now
@@ -147,14 +151,54 @@ def test_feed_http_error_sets_last_error(feed_id, monkeypatch):
     assert "503" in feed["last_error"]
 
 
-def test_overlapping_poll_is_skipped(feed_id, calls):
-    poll._lock.acquire()
+def test_poll_one_double_click_runs_once(monkeypatch):
+    """Two clicks before the job runs collapse into a single execution."""
+    release = threading.Event()
+    runs = []
+
+    def blocking_poll_feed(fid):
+        runs.append(fid)
+        release.wait(5)
+        return True
+
+    scheduler = BackgroundScheduler(executors={"default": ThreadPoolExecutor(1)})
+    monkeypatch.setattr(poll, "scheduler", scheduler)
+    monkeypatch.setattr(poll, "poll_feed", blocking_poll_feed)
+    # Paused so both clicks land before the worker can pick the job up - that is the
+    # race the job id is meant to collapse, and pausing makes the test deterministic.
+    scheduler.start(paused=True)
     try:
-        poll.poll_all()
+        poll.poll_one(1)
+        poll.poll_one(1)  # same job id replaces the pending one
+        assert [job.id for job in scheduler.get_jobs()] == ["feed-1"]
+        assert poll._status[1] == "Queued"
+        scheduler.resume()
+        release.set()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and (scheduler.get_jobs() or not runs):
+            time.sleep(0.02)
+        scheduler.shutdown(wait=True)  # waits for the running job to finish
+        assert runs == [1]
     finally:
-        poll._lock.release()
-    assert calls == []
-    assert items() == []
+        release.set()
+        if scheduler.running:
+            scheduler.shutdown(wait=True)
+        poll._status.pop(1, None)  # poll_feed was faked, so nobody cleared it
+
+
+def test_status_cleared_after_poll(feed_id, calls, monkeypatch):
+    seen_status = []
+    real_summarize = poll.summarize
+
+    def spy(text, original_title, url):
+        seen_status.append(poll._status.get(feed_id))
+        return real_summarize(text, original_title, url)
+
+    monkeypatch.setattr(poll, "summarize", spy)
+    assert poll.poll_feed(feed_id) is True
+    assert feed_id not in poll._status
+    assert seen_status and all(s.startswith("Summarizing") for s in seen_status)
+    assert seen_status[0] == "Summarizing 1/3"
 
 
 def test_fetch_article_extracts_html(monkeypatch):
