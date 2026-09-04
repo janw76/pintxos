@@ -18,6 +18,11 @@ DEFAULTS: dict[str, str | None] = {
 }
 
 
+def is_truthy(value: str | None) -> bool:
+    """True if `value` looks like an enabled boolean flag ("1", "true", "yes", "on")."""
+    return (value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def get_setting(key: str, conn=None) -> str | None:
     """Resolve a setting: env var wins, then the settings table, then the default."""
     env = os.environ.get(key)

@@ -215,3 +215,128 @@ def test_base_shell_has_wordmark_favicon_and_github_link():
     assert 'rel="icon"' in page
     assert "github.com/janw76/pintxos" in page
     assert "ui-sans-serif" in page
+
+
+def test_settings_page_shows_ad_filter_defaults():
+    with TestClient(app) as c:
+        page = c.get("/settings").text
+
+    assert 'name="filter_ads"' in page
+    assert 'name="filter_ads" value="1" checked' in page
+    assert '<textarea id="ad_title_patterns" name="ad_title_patterns" rows="4" class="mono" ></textarea>' in page
+    assert "Set by PINTXOS_FILTER_ADS" not in page
+
+
+def test_settings_post_without_filter_ads_stores_off():
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "m",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        page = c.get("/settings").text
+
+    assert get_setting("PINTXOS_FILTER_ADS") == "0"
+    assert 'name="filter_ads" value="1" checked' not in page
+
+
+def test_settings_post_with_filter_ads_stores_on():
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "m",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "",
+                "filter_ads": "1",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        page = c.get("/settings").text
+
+    assert get_setting("PINTXOS_FILTER_ADS") == "1"
+    assert 'name="filter_ads" value="1" checked' in page
+
+
+def test_settings_post_invalid_ad_pattern_rejected_and_nothing_saved():
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "m",
+                "poll_minutes": "15",
+                "items_per_feed": "10",
+                "api_key": "",
+                "ad_title_patterns": "ok\n(\n",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        location = resp.headers["location"]
+        assert location.startswith("/settings?err=")
+
+        page = c.get(location).text
+        assert "Invalid pattern" in page
+        assert "line 2" in page
+
+    # nothing saved: poll_minutes still at its built-in default
+    assert get_setting("PINTXOS_POLL_MINUTES") == "30"
+
+
+def test_settings_post_ad_patterns_roundtrip():
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "m",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "",
+                "ad_title_patterns": "best .* deals\nfree shipping",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        page = c.get("/settings").text
+
+    assert "best .* deals" in page
+    assert "free shipping" in page
+    assert get_setting("PINTXOS_AD_TITLE_PATTERNS") == "best .* deals\nfree shipping"
+
+
+def test_settings_filter_ads_env_pinned_disables_control_and_ignores_submission(monkeypatch):
+    monkeypatch.setenv("PINTXOS_FILTER_ADS", "0")
+    with TestClient(app) as c:
+        page = c.get("/settings").text
+        assert 'name="filter_ads" value="1"  disabled' in page
+        assert 'name="filter_ads" value="1" checked' not in page
+        assert "Set by PINTXOS_FILTER_ADS in the environment." in page
+
+        c.post(
+            "/settings",
+            data={
+                "model": "m",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "",
+                "filter_ads": "1",
+            },
+            follow_redirects=False,
+        )
+
+    monkeypatch.delenv("PINTXOS_FILTER_ADS")
+    from pintxos.db import db
+
+    with db() as conn:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key = ?", ("PINTXOS_FILTER_ADS",)
+        ).fetchone()
+    assert row is None

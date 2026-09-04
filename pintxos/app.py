@@ -13,7 +13,8 @@ from fastapi import FastAPI, Form, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from pintxos.config import get_setting
+from pintxos import adfilter
+from pintxos.config import get_setting, is_truthy
 from pintxos.db import db, init_db, now
 from pintxos.feed_out import render_rss
 from pintxos.poll import _status as poll_status
@@ -153,9 +154,14 @@ def settings_page(request: Request) -> Response:
         model = get_setting("PINTXOS_MODEL", conn)
         poll_minutes = get_setting("PINTXOS_POLL_MINUTES", conn)
         items_per_feed = get_setting("PINTXOS_ITEMS_PER_FEED", conn)
+        filter_ads = get_setting("PINTXOS_FILTER_ADS", conn)
+        ad_title_patterns = get_setting("PINTXOS_AD_TITLE_PATTERNS", conn) or ""
         row = conn.execute("SELECT value FROM settings WHERE key = ?", ("ANTHROPIC_API_KEY",)).fetchone()
     env_key_set = bool(os.environ.get("ANTHROPIC_API_KEY"))
     key_last4 = row["value"][-4:] if row and row["value"] else None
+    filter_ads_on = is_truthy(filter_ads)
+    filter_ads_env = "PINTXOS_FILTER_ADS" in os.environ
+    patterns_env = "PINTXOS_AD_TITLE_PATTERNS" in os.environ
     return templates.TemplateResponse(
         request,
         "settings.html",
@@ -165,6 +171,10 @@ def settings_page(request: Request) -> Response:
             "items_per_feed": items_per_feed,
             "env_key_set": env_key_set,
             "key_last4": key_last4,
+            "filter_ads_on": filter_ads_on,
+            "filter_ads_env": filter_ads_env,
+            "ad_title_patterns": ad_title_patterns,
+            "patterns_env": patterns_env,
         },
     )
 
@@ -175,6 +185,8 @@ def save_settings(
     poll_minutes: str = Form(...),
     items_per_feed: str = Form(...),
     api_key: str = Form(""),
+    filter_ads: str = Form(""),
+    ad_title_patterns: str = Form(""),
 ) -> Response:
     try:
         poll_minutes_i = int(poll_minutes)
@@ -185,6 +197,12 @@ def save_settings(
         return _redirect("/settings", err="Poll interval must be between 1 and 1440 minutes")
     if not (1 <= items_per_feed_i <= 500):
         return _redirect("/settings", err="Items per feed must be between 1 and 500")
+
+    patterns = "\n".join(line.rstrip() for line in ad_title_patterns.splitlines()).strip("\n")
+    try:
+        adfilter.compile_patterns(patterns)
+    except ValueError as e:
+        return _redirect("/settings", err=f"Invalid pattern: {e}")
 
     with db() as conn:
         conn.execute(
@@ -203,6 +221,19 @@ def save_settings(
             conn.execute(
                 "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
                 ("ANTHROPIC_API_KEY", api_key),
+            )
+        # Disabled checkboxes/textareas aren't submitted by browsers, so when the
+        # corresponding env var is set, the field is env-pinned: ignore it entirely.
+        if "PINTXOS_FILTER_ADS" not in os.environ:
+            filter_value = "1" if filter_ads == "1" else "0"
+            conn.execute(
+                "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
+                ("PINTXOS_FILTER_ADS", filter_value),
+            )
+        if "PINTXOS_AD_TITLE_PATTERNS" not in os.environ:
+            conn.execute(
+                "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
+                ("PINTXOS_AD_TITLE_PATTERNS", patterns),
             )
 
     if os.environ.get("PINTXOS_NO_SCHEDULER") != "1":

@@ -87,6 +87,8 @@ to the database. `PINTXOS_BASE_URL` and `PINTXOS_DATA_DIR` are environment-only.
 | `PINTXOS_BASE_URL` | *(none, inferred from the request)* | Base URL used to build output feed links, e.g. `https://pintxos.example.com`. |
 | `PINTXOS_DATA_DIR` | `./data` | Directory for the SQLite database. |
 
+The ad filter toggle and extra patterns can also be changed on the Settings page unless the corresponding environment variable is set.
+
 ## Security warning
 
 **Pintxøs has no authentication.** Anyone who can reach the web UI can add,

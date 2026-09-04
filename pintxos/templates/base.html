@@ -55,7 +55,7 @@
     .add-form { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; }
     .add-form input { flex: 1; min-width: 0; }
 
-    input[type=url], input[type=text], input[type=number], input[type=password] {
+    input[type=url], input[type=text], input[type=number], input[type=password], textarea {
       font: inherit;
       font-size: 0.9375rem;
       color: var(--text);
@@ -64,13 +64,14 @@
       border: 1px solid var(--border);
       border-radius: 6px;
     }
-    input:focus {
+    input:focus, textarea:focus {
       outline: none;
       border-color: var(--accent);
       box-shadow: 0 0 0 3px rgba(76, 110, 245, 0.15);
     }
-    input:disabled { background: #f4f5f7; color: var(--text-muted); }
+    input:disabled, textarea:disabled { background: #f4f5f7; color: var(--text-muted); }
     ::placeholder { color: #9aa1ab; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.8125rem; }
 
     button {
       font: inherit;
@@ -122,9 +123,11 @@
 
     .field { max-width: 26rem; margin-bottom: 1.25rem; }
     .field label { display: block; font-weight: 500; margin-bottom: 0.3rem; }
-    .field input { width: 100%; }
+    .field input, .field textarea { width: 100%; }
     .field .muted { margin-top: 0.35rem; }
     .field-narrow input { max-width: 8rem; }
+    .field-checkbox label { display: flex; align-items: center; gap: 0.4rem; font-weight: 400; }
+    .field-checkbox input[type=checkbox] { width: auto; }
   </style>
 </head>
 <body>

@@ -15,6 +15,17 @@
     <label for="items_per_feed">Items per feed</label>
     <input type="number" id="items_per_feed" name="items_per_feed" min="1" max="500" value="{{ items_per_feed }}">
   </div>
+  <div class="field field-checkbox">
+    <label><input type="checkbox" name="filter_ads" value="1" {% if filter_ads_on %}checked{% endif %} {% if filter_ads_env %}disabled{% endif %}> Filter out ads and coupon posts</label>
+    <div class="muted">Entries tagged as coupons/deals/sponsored, or titled like "Promo Codes: 40% Off", are skipped before summarizing.</div>
+    {% if filter_ads_env %}<div class="muted">Set by PINTXOS_FILTER_ADS in the environment.</div>{% endif %}
+  </div>
+  <div class="field">
+    <label for="ad_title_patterns">Extra title patterns (one regex per line)</label>
+    <textarea id="ad_title_patterns" name="ad_title_patterns" rows="4" class="mono" {% if patterns_env %}disabled{% endif %}>{{ ad_title_patterns }}</textarea>
+    <div class="muted">Case-insensitive. Example: best .* deals</div>
+    {% if patterns_env %}<div class="muted">Set by PINTXOS_AD_TITLE_PATTERNS in the environment.</div>{% endif %}
+  </div>
   <div class="field">
     <label for="api_key">Anthropic API key</label>
     {% if env_key_set %}

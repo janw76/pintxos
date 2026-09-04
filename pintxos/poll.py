@@ -14,7 +14,7 @@ from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from pintxos import adfilter
-from pintxos.config import get_setting
+from pintxos.config import get_setting, is_truthy
 from pintxos.db import db, now
 from pintxos.summarize import MissingApiKey, SummarizeError, summarize
 
@@ -84,7 +84,7 @@ def _entry_sort_key(entry):
 
 
 def _filter_ads_enabled(conn) -> bool:
-    return get_setting("PINTXOS_FILTER_ADS", conn).lower() in {"1", "true", "yes", "on"}
+    return is_truthy(get_setting("PINTXOS_FILTER_ADS", conn))
 
 
 def _extra_ad_patterns(conn) -> list[re.Pattern]:
