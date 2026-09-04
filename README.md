@@ -27,11 +27,9 @@ Same story, no guessing games. Sanity restored. Point Pintxøs at a feed once, a
 ## How it works
 
 1. Poll each subscribed feed on a schedule.
-2. Optionally skip entries that look like ads or coupon posts — by feed
-   category, title, or URL — before doing anything else, so they cost
-   nothing and never reach the output feed. Off by default; see
-   `PINTXOS_FILTER_ADS` to turn this on. When enabled, the Feeds page shows
-   how many were skipped on the last poll.
+2. Optionally skip entries that look like ads or coupon posts before doing
+   anything else — see [Filtering ads, coupons and other
+   noise](#filtering-ads-coupons-and-other-noise) below.
 3. For each new item, fetch the article's own URL and extract the body text
    with [trafilatura](https://github.com/adbar/trafilatura).
 4. If the page can't be fetched or extraction comes back too thin, fall back
@@ -42,6 +40,30 @@ Same story, no guessing games. Sanity restored. Point Pintxøs at a feed once, a
    never re-summarized.
 6. Serve the result back out as a clean RSS 2.0 feed, one output feed per
    subscribed input feed.
+
+## Filtering ads, coupons and other noise
+
+The ad filter is off by default; turn it on with `PINTXOS_FILTER_ADS=1` or the
+checkbox on the Settings page. When enabled, it skips entries that look like
+ads or coupon posts before fetching or summarizing them, so they cost
+nothing and never reach the output feed — detected by RSS category (e.g.
+Wired's "Gear / Deals" tag), title shape ("Groupon Promo Codes: 60% Off in
+September 2026"), or a URL slug ending in `-promo-code`/`-coupons`. You can
+add your own regexes, one per line, via `PINTXOS_AD_TITLE_PATTERNS` or the
+same Settings textarea. On each poll, already-stored items that match the
+stricter rules (promo/coupon/discount codes, sponsored, matching URL slugs,
+your own patterns) are deleted; looser matches (a bare "coupon", "N% off")
+only skip new entries and never delete stored ones. The Feeds page shows "N
+ads skipped" under a feed's item count for its last poll.
+
+```
+black friday
+\bgiveaway\b
+^sponsored:
+```
+
+The filter was contributed by Eric Bowman (@ebowman) — see
+[pintxos#2](https://github.com/janw76/pintxos/pull/2).
 
 ## Quickstart
 
