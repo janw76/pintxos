@@ -613,34 +613,48 @@ def test_feed_edit_post_unknown_choice_rejected(monkeypatch):
             assert conn.execute("SELECT filter_ads FROM feeds WHERE id = 1").fetchone()[0] is None
 
 
-def test_index_action_buttons_share_one_cell_in_order(monkeypatch):
-    """Copy joins the other actions, first of four, in the right-aligned cell."""
+def test_index_copy_has_own_column_and_actions_stay_on_one_line(monkeypatch):
+    """Copy sits in its own cell right after Output URL; the actions cell holds exactly
+    Edit filters, Poll now, Delete in that order and is styled never to wrap."""
     monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
     with TestClient(app) as c:
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
         page = c.get("/").text
 
+    # Copy cell immediately follows the output-url cell (only whitespace between them).
+    url_start = page.index('<td><span class="output-url">')
+    url_end = page.index("</td>", url_start) + len("</td>")
+    copy_start = page.index('<td class="copy">')
+    assert page[url_end:copy_start].strip() == ""
+    copy_cell = page[copy_start : page.index("</td>", copy_start)]
+    assert "pintxosCopy(this, " in copy_cell
+    assert ">Copy<" in copy_cell
+
+    # Actions cell: exactly the three buttons, in order, no Copy, no wrapping container.
     start = page.index('<td class="actions">')
     cell = page[start : page.index("</td>", start)]
-    assert '<div class="actions-row">' in cell
-    assert "pintxosCopy(this, " in cell
-    order = [cell.index(label) for label in (">Copy<", ">Edit filters<", ">Poll now<", ">Delete<")]
+    assert cell.count("<button") == 3
+    assert ">Copy<" not in cell and "pintxosCopy" not in cell
+    assert "actions-row" not in page
+    order = [cell.index(label) for label in (">Edit filters<", ">Poll now<", ">Delete<")]
     assert order == sorted(order)
-    # the output URL cell is left holding just the chip
-    assert '<td><span class="output-url">' in page
     assert page.count("/feeds/1/poll") == 1
+
+    # String guard: the rule that keeps the three buttons on one line.
+    assert "td.actions { white-space: nowrap;" in page
 
 
 def test_index_colgroup_widths_sum_to_100_percent(monkeypatch):
-    """Seven fixed columns budgeted to fit 968px (1000px viewport) without scroll."""
+    """Eight fixed columns budgeted to fit 968px (1000px viewport) without scroll."""
     monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
     with TestClient(app) as c:
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
         page = c.get("/").text
 
     widths = [int(w) for w in re.findall(r'<col style="width: (\d+)%">', page)]
-    assert len(widths) == 7
+    assert len(widths) == 8
     assert sum(widths) == 100
+    assert page.count("<th>") == 8
 
 
 def test_feed_edit_radios_keep_their_controls(monkeypatch):

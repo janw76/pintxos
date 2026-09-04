@@ -12,20 +12,23 @@
 <div class="table-wrap">
   <table>
     <!-- Widths are budgeted against a 968px table (1000px viewport - 2rem body padding);
-         every column is wider than its widest unbreakable content. See pintxos-gno.8. -->
+         every column is wider than its widest unbreakable content, and the actions column
+         holds Edit filters / Poll now / Delete on one line. See pintxos-gno.9. -->
     <colgroup>
-      <col style="width: 22%">
-      <col style="width: 18%">
-      <col style="width: 9%">
-      <col style="width: 11%">
+      <col style="width: 12%">
       <col style="width: 13%">
       <col style="width: 10%">
-      <col style="width: 17%">
+      <col style="width: 9%">
+      <col style="width: 10%">
+      <col style="width: 12%">
+      <col style="width: 10%">
+      <col style="width: 24%">
     </colgroup>
     <thead>
       <tr>
         <th>Feed</th>
         <th>Output URL</th>
+        <th></th>
         <th>Items</th>
         <th>Last polled</th>
         <th>Status</th>
@@ -41,6 +44,7 @@
           <div class="muted url">{{ feed.url }}</div>
         </td>
         <td><span class="output-url">{{ feed.output_url }}</span></td>
+        <td class="copy"><button type="button" class="btn-tint-accent btn-copy" onclick="pintxosCopy(this, '{{ feed.output_url }}')">Copy</button></td>
         <td>
           <div>{{ feed.item_count }}</div>
           <div class="muted">{% if feed.ads_filtered %}{{ feed.ads_filtered }} ad{{ "" if feed.ads_filtered == 1 else "s" }} skipped{% endif %}</div>
@@ -49,20 +53,13 @@
         <td class="muted">{{ status.get(feed.id, "") }}</td>
         <td class="error">{{ feed.last_error or "" }}</td>
         <td class="actions">
-          <div class="actions-row">
-            <button type="button" class="btn-tint-accent btn-copy" onclick="pintxosCopy(this, '{{ feed.output_url }}')">Copy</button>
-            <form method="get" action="/feeds/{{ feed.id }}"><button type="submit" class="btn-tint-neutral">Edit filters</button></form>
-            <form method="post" action="/feeds/{{ feed.id }}/poll">
-              <button type="submit" class="btn-tint-neutral"{% if feed.id in status %} disabled{% endif %}>Poll now</button>
-            </form>
-            <form method="post" action="/feeds/{{ feed.id }}/delete" onsubmit="return confirm('Delete feed?')">
-              <button type="submit" class="btn-danger">Delete</button>
-            </form>
-          </div>
+          <form method="get" action="/feeds/{{ feed.id }}"><button type="submit" class="btn-tint-neutral">Edit filters</button></form>
+          <form method="post" action="/feeds/{{ feed.id }}/poll"><button type="submit" class="btn-tint-neutral"{% if feed.id in status %} disabled{% endif %}>Poll now</button></form>
+          <form method="post" action="/feeds/{{ feed.id }}/delete" onsubmit="return confirm('Delete feed?')"><button type="submit" class="btn-danger">Delete</button></form>
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="7" class="empty">No feeds yet — add one above.</td></tr>
+      <tr><td colspan="8" class="empty">No feeds yet — add one above.</td></tr>
       {% endfor %}
     </tbody>
   </table>

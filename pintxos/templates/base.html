@@ -46,17 +46,17 @@
     th:first-child, td:first-child { padding-left: 0; }
     th:last-child, td:last-child { padding-right: 0; }
     thead th { font-size: 0.8125rem; font-weight: 600; color: var(--text-muted); padding-top: 0.3rem; padding-bottom: 0.3rem; white-space: nowrap; overflow-wrap: normal; }
-    /* ponytail: below tablet width the fixed 7-column grid cannot fit; let .table-wrap scroll instead. */
+    /* ponytail: below tablet width the fixed 8-column grid cannot fit; let .table-wrap scroll instead. */
     @media (max-width: 720px) { table { table-layout: auto; min-width: 640px; } }
     tbody tr:hover { background: var(--surface); }
     tbody tr:last-child td { border-bottom: none; }
     td.nowrap { white-space: nowrap; }
-    /* Four buttons cannot sit on one line at 1000px; let them wrap 2x2, right-aligned. */
-    td.actions { white-space: normal; }
-    .actions-row { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.35rem; }
-    .actions-row form { display: inline-flex; }
-    /* Reserve the width of the "Copied!" label so the row does not reflow on click. */
-    .actions-row .btn-copy { min-width: 4rem; }
+    /* Three action buttons on one line, right-aligned. nowrap means they can never break into two rows. */
+    td.actions { white-space: nowrap; text-align: right; }
+    td.actions form { display: inline-block; }
+    td.actions form + form { margin-left: 0.3rem; }
+    /* Copy sits left-aligned in its own column; reserve the width of "Copied!" so the swap does not reflow. */
+    td.copy .btn-copy { min-width: 4rem; }
     .empty { padding: 2rem 0; color: var(--text-muted); }
 
     form { display: inline; }
