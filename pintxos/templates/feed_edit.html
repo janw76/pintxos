@@ -31,6 +31,21 @@
       <div class="muted">One regex per line, applied in addition to the global patterns</div>
     </div>
   </div>
+  <div class="field filter-log">
+    <label>Filtered at last poll{% if feed.last_polled_at %} <span class="muted" title="{{ feed.last_polled_at }}">({{ feed.last_polled_at | ago }} ago)</span>{% endif %}</label>
+    {% if not feed.last_polled_at %}
+    <div class="muted">Not polled yet</div>
+    {% elif not last_filtered %}
+    <div class="muted">Nothing filtered at last poll</div>
+    {% else %}
+    <ul class="filter-log-list">
+      {% for entry in last_filtered %}
+      <li>{{ entry.title }} <span class="mono muted">{{ entry.reason }}</span></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    <div class="muted">Rule changes apply from the next poll.</div>
+  </div>
   <button type="submit" class="btn-primary">Save</button>
   <a href="/" class="cancel">Cancel</a>
 </form>

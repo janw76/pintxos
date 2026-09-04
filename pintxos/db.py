@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS feeds (
     last_polled_at TEXT,
     last_error TEXT,
     ads_filtered INTEGER NOT NULL DEFAULT 0,
+    last_filtered TEXT,
     filter_ads INTEGER,
     ad_title_patterns TEXT,
     ad_patterns_mode INTEGER
@@ -60,6 +61,7 @@ def connect() -> sqlite3.Connection:
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(feeds)")}
     for name, ddl in (
         ("ads_filtered", "INTEGER NOT NULL DEFAULT 0"),
+        ("last_filtered", "TEXT"),
         # NULL = "use the global setting"; 0/1 = explicit per-feed override.
         ("filter_ads", "INTEGER"),
         ("ad_title_patterns", "TEXT"),

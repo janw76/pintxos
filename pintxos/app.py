@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from contextlib import asynccontextmanager
@@ -109,6 +110,12 @@ def feed_edit_page(request: Request, feed_id: int) -> Response:
             raise HTTPException(status_code=404, detail="feed not found")
         global_filter_ads_on = is_truthy(get_setting("PINTXOS_FILTER_ADS", conn))
         global_patterns = get_setting("PINTXOS_AD_TITLE_PATTERNS", conn) or ""
+    try:
+        last_filtered = json.loads(feed["last_filtered"] or "[]")
+        if not isinstance(last_filtered, list):
+            raise ValueError("last_filtered is not a list")
+    except ValueError:
+        last_filtered = []
     return templates.TemplateResponse(
         request,
         "feed_edit.html",
@@ -117,6 +124,7 @@ def feed_edit_page(request: Request, feed_id: int) -> Response:
             "ad_title_patterns": feed["ad_title_patterns"] or "",
             "global_filter_ads_on": global_filter_ads_on,
             "global_patterns": global_patterns,
+            "last_filtered": last_filtered,
         },
     )
 

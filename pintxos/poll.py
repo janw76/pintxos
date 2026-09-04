@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from datetime import UTC, datetime, timedelta
@@ -188,7 +189,7 @@ def poll_feed(feed_id: int) -> bool:
                 if reason is None:
                     kept.append((guid, link, entry))
                 else:
-                    filtered.append(entry)
+                    filtered.append({"title": entry.get("title", ""), "reason": reason})
                     log.debug(
                         "feed %s: skipping ad (%s): %s", feed_id, reason, entry.get("title", "")
                     )
@@ -237,9 +238,9 @@ def poll_feed(feed_id: int) -> bool:
                 (feed_id, feed_id, limit),
             )
             conn.execute(
-                "UPDATE feeds SET last_polled_at = ?, last_error = NULL, ads_filtered = ? "
-                "WHERE id = ?",
-                (now(), len(filtered), feed_id),
+                "UPDATE feeds SET last_polled_at = ?, last_error = NULL, ads_filtered = ?, "
+                "last_filtered = ? WHERE id = ?",
+                (now(), len(filtered), json.dumps(filtered), feed_id),
             )
         return True
     finally:

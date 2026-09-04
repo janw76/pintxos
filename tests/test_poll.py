@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from pathlib import Path
@@ -17,6 +18,7 @@ from pintxos.summarize import MissingApiKey, SummarizeError
 FEED_URL = "https://example.com/feed.xml"
 SAMPLE = (Path(__file__).parent / "fixtures" / "sample.xml").read_bytes()
 SAMPLE_WITH_AD = (Path(__file__).parent / "fixtures" / "sample_with_ad.xml").read_bytes()
+WIRED = (Path(__file__).parent / "fixtures" / "wired.xml").read_bytes()
 
 
 class FakeResponse:
@@ -472,6 +474,32 @@ def test_ads_filtered_column_zero_when_filter_disabled(feed_id, calls_with_ad, m
     with db() as conn:
         feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
     assert feed["ads_filtered"] == 0
+
+
+def test_last_filtered_records_title_and_reason_for_wired_fixture(feed_id, monkeypatch):
+    monkeypatch.setenv("PINTXOS_FILTER_ADS", "1")
+
+    def fake_get(url):
+        assert url == FEED_URL
+        return FakeResponse(WIRED)
+
+    monkeypatch.setattr(poll, "_get", fake_get)
+    monkeypatch.setattr(poll, "fetch_article", lambda link: None)
+    monkeypatch.setattr(
+        poll, "summarize", lambda text, title, url: ("H", f"summary of {title}")
+    )
+
+    poll.poll_feed(feed_id)
+
+    feed = feed_row(feed_id)
+    assert feed["ads_filtered"] == 22
+    last_filtered = json.loads(feed["last_filtered"])
+    assert len(last_filtered) == 22
+    for entry in last_filtered:
+        assert set(entry) == {"title", "reason"}
+        assert entry["title"]
+        reason = entry["reason"]
+        assert reason == "link" or reason.startswith("tag:") or reason.startswith("title:")
 
 
 def _serve(monkeypatch, xml: bytes) -> list[str]:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 
 from fastapi.testclient import TestClient
@@ -743,3 +744,56 @@ def test_feed_edit_page_says_global_linked_to_settings(monkeypatch):
         page = c.get("/feeds/1").text
         assert page.count('<a href="/settings">Global</a>') == 2
         assert "Inherit" not in page
+
+
+def test_feed_edit_page_shows_filtered_title_and_reason(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        with db() as conn:
+            conn.execute(
+                "UPDATE feeds SET last_polled_at = ?, last_filtered = ? WHERE id = 1",
+                (
+                    "2026-09-04T00:00:00+00:00",
+                    json.dumps([{"title": "Groupon Promo Codes: 60% Off", "reason": "tag:coupons"}]),
+                ),
+            )
+        page = c.get("/feeds/1").text
+    assert "Groupon Promo Codes: 60% Off" in page
+    assert "tag:coupons" in page
+    assert "Nothing filtered at last poll" not in page
+
+
+def test_feed_edit_page_shows_empty_state_when_last_filtered_null(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        with db() as conn:
+            conn.execute(
+                "UPDATE feeds SET last_polled_at = ? WHERE id = 1",
+                ("2026-09-04T00:00:00+00:00",),
+            )
+        page = c.get("/feeds/1").text
+    assert "Nothing filtered at last poll" in page
+
+
+def test_feed_edit_page_not_polled_yet_shows_placeholder(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        page = c.get("/feeds/1").text
+    assert "Not polled yet" in page
+
+
+def test_feed_edit_page_malformed_last_filtered_does_not_500(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        with db() as conn:
+            conn.execute(
+                "UPDATE feeds SET last_polled_at = ?, last_filtered = ? WHERE id = 1",
+                ("2026-09-04T00:00:00+00:00", "not json"),
+            )
+        resp = c.get("/feeds/1")
+    assert resp.status_code == 200
+    assert "Nothing filtered at last poll" in resp.text
