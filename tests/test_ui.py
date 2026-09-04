@@ -391,3 +391,13 @@ def test_index_pluralizes_ads_skipped(monkeypatch):
         with db() as conn:
             conn.execute("UPDATE feeds SET ads_filtered = 2 WHERE id = 1")
         assert "2 ads skipped" in c.get("/").text
+
+
+def test_flash_banner_renders_once_and_url_is_cleaned_client_side(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        page = c.get("/?msg=Saved").text
+        assert 'class="msg"' in page and "Saved" in page
+        assert "history.replaceState" in page
+        clean = c.get("/").text
+        assert 'class="msg"' not in clean

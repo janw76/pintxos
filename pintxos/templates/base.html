@@ -150,6 +150,8 @@
       btn.textContent = "Copied!";
       setTimeout(function () { btn.textContent = old; }, 1200);
     }
+    // Flash text lives in ?msg=/?err=; strip it after the first render so reload/back/bookmark stay clean.
+    if (/[?&](msg|err)=/.test(location.search)) history.replaceState(null, "", location.pathname);
   </script>
 </body>
 </html>
