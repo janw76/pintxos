@@ -160,8 +160,8 @@ def settings_page(request: Request) -> Response:
     env_key_set = bool(os.environ.get("ANTHROPIC_API_KEY"))
     key_last4 = row["value"][-4:] if row and row["value"] else None
     filter_ads_on = is_truthy(filter_ads)
-    filter_ads_env = "PINTXOS_FILTER_ADS" in os.environ
-    patterns_env = "PINTXOS_AD_TITLE_PATTERNS" in os.environ
+    filter_ads_env = bool(os.environ.get("PINTXOS_FILTER_ADS"))
+    patterns_env = bool(os.environ.get("PINTXOS_AD_TITLE_PATTERNS"))
     return templates.TemplateResponse(
         request,
         "settings.html",
@@ -224,13 +224,13 @@ def save_settings(
             )
         # Disabled checkboxes/textareas aren't submitted by browsers, so when the
         # corresponding env var is set, the field is env-pinned: ignore it entirely.
-        if "PINTXOS_FILTER_ADS" not in os.environ:
+        if not os.environ.get("PINTXOS_FILTER_ADS"):
             filter_value = "1" if filter_ads == "1" else "0"
             conn.execute(
                 "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
                 ("PINTXOS_FILTER_ADS", filter_value),
             )
-        if "PINTXOS_AD_TITLE_PATTERNS" not in os.environ:
+        if not os.environ.get("PINTXOS_AD_TITLE_PATTERNS"):
             conn.execute(
                 "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
                 ("PINTXOS_AD_TITLE_PATTERNS", patterns),

@@ -366,3 +366,19 @@ def test_index_shows_ads_skipped_count(monkeypatch):
         page = c.get("/").text
 
     assert "1 ads skipped" in page
+
+
+def test_empty_env_var_does_not_pin_filter_setting(monkeypatch):
+    # An empty PINTXOS_FILTER_ADS (e.g. from an undefined compose variable) is
+    # "unset" to get_setting, so the UI must treat it as unset too.
+    monkeypatch.setenv("PINTXOS_FILTER_ADS", "")
+    with TestClient(app) as c:
+        page = c.get("/settings").text
+        assert "Set by PINTXOS_FILTER_ADS" not in page
+        c.post(
+            "/settings",
+            data={"model": "m", "poll_minutes": "30", "items_per_feed": "50",
+                  "api_key": "", "filter_ads": "1", "ad_title_patterns": ""},
+            follow_redirects=False,
+        )
+    assert get_setting("PINTXOS_FILTER_ADS") == "1"
