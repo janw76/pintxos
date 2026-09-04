@@ -228,6 +228,26 @@ def test_settings_page_shows_ad_filter_defaults():
     assert "Set by PINTXOS_FILTER_ADS" not in page
 
 
+def test_settings_page_groups_fields_under_headings_in_order():
+    with TestClient(app) as c:
+        page = c.get("/settings").text
+
+    ai_idx = page.index("<h2>AI</h2>")
+    feed_idx = page.index("<h2>Feed settings</h2>")
+    filters_idx = page.index("<h2>Content filters</h2>")
+    assert ai_idx < feed_idx < filters_idx
+
+    for needle in (
+        'name="model"',
+        'name="poll_minutes"',
+        'name="items_per_feed"',
+        'name="api_key"',
+        'name="filter_ads"',
+        'name="ad_title_patterns"',
+    ):
+        assert needle in page
+
+
 def test_settings_post_without_filter_ads_stores_off():
     with TestClient(app) as c:
         resp = c.post(
