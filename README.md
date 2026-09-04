@@ -2,7 +2,7 @@
 
 **Garbage in, sanity out.**
 
-Pintxøs grabs an RSS feed and re-publishes its articles with neutral, plain-facts headlines plus a short factual ≤100 words summary. No more annoying clickbait titles and summaries.
+Pintxøs grabs an RSS feed and republishes its articles as a new feed with neutral headlines and factual, ≤100-word summaries. No more clickbait or ragebait. Just plain facts.
 
 ## What / why
 
