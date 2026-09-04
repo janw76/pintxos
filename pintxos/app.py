@@ -101,6 +101,64 @@ def _redirect(path: str, *, msg: str | None = None, err: str | None = None) -> R
     return RedirectResponse(url=path, status_code=303)
 
 
+@app.get("/feeds/{feed_id}")
+def feed_edit_page(request: Request, feed_id: int) -> Response:
+    with db() as conn:
+        feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        if feed is None:
+            raise HTTPException(status_code=404, detail="feed not found")
+        global_filter_ads_on = is_truthy(get_setting("PINTXOS_FILTER_ADS", conn))
+    override = feed["filter_ads"]
+    if override is None:
+        filter_choice = "inherit"
+    elif override:
+        filter_choice = "on"
+    else:
+        filter_choice = "off"
+    return templates.TemplateResponse(
+        request,
+        "feed_edit.html",
+        {
+            "feed": dict(feed),
+            "filter_choice": filter_choice,
+            "ad_title_patterns": feed["ad_title_patterns"] or "",
+            "global_filter_ads_on": global_filter_ads_on,
+        },
+    )
+
+
+@app.post("/feeds/{feed_id}")
+def feed_edit_save(
+    feed_id: int,
+    filter_ads: str = Form(...),
+    ad_title_patterns: str = Form(""),
+) -> Response:
+    with db() as conn:
+        exists = conn.execute("SELECT id FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+    if exists is None:
+        raise HTTPException(status_code=404, detail="feed not found")
+
+    if filter_ads not in ("inherit", "on", "off"):
+        return _redirect(f"/feeds/{feed_id}", err="Invalid filter choice")
+
+    patterns = "\n".join(line.strip() for line in ad_title_patterns.splitlines() if line.strip())
+    try:
+        adfilter.compile_patterns(patterns)
+    except ValueError as e:
+        return _redirect(f"/feeds/{feed_id}", err=f"Invalid pattern: {e}")
+
+    filter_ads_value = {"inherit": None, "on": 1, "off": 0}[filter_ads]
+    patterns_value = patterns or None
+
+    with db() as conn:
+        conn.execute(
+            "UPDATE feeds SET filter_ads = ?, ad_title_patterns = ? WHERE id = ?",
+            (filter_ads_value, patterns_value, feed_id),
+        )
+
+    return _redirect("/", msg="Saved")
+
+
 @app.get("/")
 def index(request: Request) -> Response:
     with db() as conn:

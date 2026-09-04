@@ -13,12 +13,12 @@
   <table>
     <colgroup>
       <col style="width: 20%">
-      <col style="width: 23%">
+      <col style="width: 19%">
       <col style="width: 9%">
       <col style="width: 9%">
       <col style="width: 11%">
       <col style="width: 10%">
-      <col style="width: 18%">
+      <col style="width: 22%">
     </colgroup>
     <thead>
       <tr>
@@ -52,6 +52,7 @@
         <td class="muted nowrap">{{ status.get(feed.id, "") }}</td>
         <td class="error">{{ feed.last_error or "" }}</td>
         <td class="actions">
+          <a class="button btn-tint-neutral" href="/feeds/{{ feed.id }}">Edit</a>
           <form method="post" action="/feeds/{{ feed.id }}/poll">
             <button type="submit" class="btn-tint-neutral"{% if feed.id in status %} disabled{% endif %}>Poll now</button>
           </form>

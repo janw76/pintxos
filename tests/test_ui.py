@@ -416,3 +416,133 @@ def test_delete_feed_drops_queued_manual_poll_and_status():
         assert poll.scheduler.get_job("feed-1") is None
         assert 1 not in poll._status
         assert "Queued" not in c.get("/").text
+
+
+def test_feed_edit_page_shows_filter_select_and_patterns_textarea(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        page = c.get("/feeds/1").text
+        assert 'name="filter_ads"' in page
+        assert 'name="ad_title_patterns"' in page
+
+
+def test_feed_edit_post_off_and_patterns_saved(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        resp = c.post(
+            "/feeds/1",
+            data={"filter_ads": "off", "ad_title_patterns": "giveaway"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/?msg=Saved"
+
+        with db() as conn:
+            row = conn.execute(
+                "SELECT filter_ads, ad_title_patterns FROM feeds WHERE id = 1"
+            ).fetchone()
+        assert row["filter_ads"] == 0
+        assert row["ad_title_patterns"] == "giveaway"
+
+        # normalisation: strip each line, drop blank lines, join survivors with "\n"
+        resp = c.post(
+            "/feeds/1",
+            data={"filter_ads": "on", "ad_title_patterns": "\n\n  foo  \n\n  bar\n\n"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        with db() as conn:
+            row = conn.execute(
+                "SELECT ad_title_patterns FROM feeds WHERE id = 1"
+            ).fetchone()
+        assert row["ad_title_patterns"] == "foo\nbar"
+
+
+def test_feed_edit_post_invalid_regex_rejected_and_unchanged(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        resp = c.post(
+            "/feeds/1",
+            data={"filter_ads": "on", "ad_title_patterns": "ok\n(\n"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert resp.headers["location"].startswith("/feeds/1?err=")
+
+    with db() as conn:
+        row = conn.execute(
+            "SELECT filter_ads, ad_title_patterns FROM feeds WHERE id = 1"
+        ).fetchone()
+    assert row["filter_ads"] is None
+    assert row["ad_title_patterns"] is None
+
+
+def test_feed_edit_post_inherit_stores_null(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        c.post(
+            "/feeds/1",
+            data={"filter_ads": "off", "ad_title_patterns": "giveaway"},
+            follow_redirects=False,
+        )
+        resp = c.post(
+            "/feeds/1",
+            data={"filter_ads": "inherit", "ad_title_patterns": ""},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+    with db() as conn:
+        row = conn.execute(
+            "SELECT filter_ads, ad_title_patterns FROM feeds WHERE id = 1"
+        ).fetchone()
+    assert row["filter_ads"] is None
+    assert row["ad_title_patterns"] is None
+
+
+def test_feed_edit_page_404_for_unknown_feed():
+    with TestClient(app) as c:
+        resp = c.get("/feeds/999")
+    assert resp.status_code == 404
+
+
+def test_feed_edit_post_404_for_unknown_feed():
+    with TestClient(app) as c:
+        resp = c.post(
+            "/feeds/999",
+            data={"filter_ads": "on", "ad_title_patterns": ""},
+            follow_redirects=False,
+        )
+    assert resp.status_code == 404
+    assert "location" not in resp.headers
+
+
+def test_feed_xml_route_still_works_after_edit_routes_added(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        resp = c.get("/feeds/1.xml")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("application/rss+xml")
+
+
+def test_index_has_edit_link_to_feed(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        page = c.get("/").text
+    assert 'href="/feeds/1"' in page
+
+
+def test_feed_edit_post_unknown_choice_rejected(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        resp = c.post("/feeds/1", data={"filter_ads": "maybe", "ad_title_patterns": ""}, follow_redirects=False)
+        assert resp.status_code == 303 and resp.headers["location"].startswith("/feeds/1?err=")
+        with db() as conn:
+            assert conn.execute("SELECT filter_ads FROM feeds WHERE id = 1").fetchone()[0] is None

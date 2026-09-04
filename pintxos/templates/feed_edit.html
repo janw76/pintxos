@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Edit feed · Pintxøs{% endblock %}
+{% block content %}
+<h1>{{ feed.title or feed.url }}</h1>
+<div class="muted">{{ feed.url }}</div>
+<form method="post" action="/feeds/{{ feed.id }}">
+  <div class="field">
+    <label for="filter_ads">Ad filter</label>
+    <select id="filter_ads" name="filter_ads">
+      <option value="inherit" {% if filter_choice == "inherit" %}selected{% endif %}>Inherit global setting (currently {{ "on" if global_filter_ads_on else "off" }})</option>
+      <option value="on" {% if filter_choice == "on" %}selected{% endif %}>On</option>
+      <option value="off" {% if filter_choice == "off" %}selected{% endif %}>Off</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="ad_title_patterns">Extra title patterns (one regex per line)</label>
+    <textarea id="ad_title_patterns" name="ad_title_patterns" rows="4" class="mono">{{ ad_title_patterns }}</textarea>
+    <div class="muted">One regex per line, applied in addition to the global patterns</div>
+  </div>
+  <button type="submit" class="btn-primary">Save</button>
+  <a class="button btn-tint-neutral" href="/">Cancel</a>
+</form>
+{% endblock %}
