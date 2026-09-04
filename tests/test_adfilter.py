@@ -178,15 +178,42 @@ def test_entry_tags_splits_slash_separated_segments():
 
 def test_is_ad_still_flags_bare_coupon_mention_at_entry_time():
     """The loose patterns still apply to is_ad (entry-time filtering is unchanged)."""
-    reason = is_ad({"title": "Coupon fraud ring busted by FBI"})
+    reason = is_ad({"title": "Coupon clipping is back in fashion"})
     assert reason is not None
     assert reason.startswith("title:")
 
 
 def test_keep_pattern_rescues_a_title_that_would_otherwise_be_flagged():
-    entry = {"title": "Coupon fraud ring busted by FBI"}
+    entry = {"title": "Coupon clipping is back in fashion"}
     assert is_ad(entry) is not None
-    assert is_ad(entry, keep_patterns=compile_patterns("fraud")) is None
+    assert is_ad(entry, keep_patterns=compile_patterns("clipping")) is None
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Musk’s $10 billion stock sale rattles Tesla investors",
+        "TikTok is up for sale again after court ruling",
+        "Mr Trump, the White House is not for sale",
+        "Judge blocks the sale of Chrome to OpenAI",
+        "US approves $2 billion arms sale to Taiwan",
+        "Nvidia is now 20% off its all-time high",
+        "Coupon fraud ring busted by FBI",
+        "Regulators open investigation into Amazon's Big Deal Days pricing",
+        "Taylor Swift tickets go on sale Friday, here’s how to get them",
+        "Bake sale raises $5,000 for school robotics team",
+        "The sale of Warner Bros. to Paramount is complete",
+    ],
+)
+def test_keep_title_patterns_rescue_news_headlines(title):
+    assert is_ad({"title": title}) is None
+
+
+def test_keep_title_patterns_still_flag_real_deal_titles():
+    assert is_ad({"title": "Save 40% off this weekend"}) is not None
+    mattress_title = next(t for t in EXPECTED_TOMSGUIDE_AD_TITLES if t.startswith("There are hundreds"))
+    assert is_ad({"title": mattress_title}) is not None
+    assert is_ad({"title": "This meat probe is 30% off for Labor Day"}) is not None
 
 
 def test_keep_pattern_does_not_rescue_unrelated_titles(wired_entries):

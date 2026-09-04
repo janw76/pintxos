@@ -47,7 +47,7 @@
   <div class="field">
     <label for="ad_keep_patterns">One regex per line</label>
     <textarea id="ad_keep_patterns" name="ad_keep_patterns" rows="4" class="mono" {% if keep_patterns_env %}disabled{% endif %}>{{ ad_keep_patterns }}</textarea>
-    <div class="muted">Case-insensitive. Titles matching any of these are never filtered, even by the built-in rules.</div>
+    <div class="muted">Case-insensitive. Titles matching any of these are never filtered, even by the built-in block rules. Adds to the built-in keep rules.</div>
     {% if keep_patterns_env %}<div class="muted">Set by PINTXOS_AD_KEEP_PATTERNS in the environment.</div>{% endif %}
   </div>
 

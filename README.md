@@ -56,7 +56,9 @@ built-in rules also cover Tom's Guide style sale posts ("Labor Day sale",
 add your own regexes, one per line, via `PINTXOS_AD_TITLE_PATTERNS` or the
 same Settings textarea. Titles matching `PINTXOS_AD_KEEP_PATTERNS` (also one
 regex per line, editable on the Settings page) are never filtered, overriding
-every block rule including the built-ins. The filter only applies to entries
+every block rule including the built-ins. Built-in keep rules already rescue
+obvious news headlines (stock sale, for sale, lawsuits, fraud) from the block
+rules above; `PINTXOS_AD_KEEP_PATTERNS` adds to them. The filter only applies to entries
 seen after it is turned on — it never touches items already stored. The Feeds page shows "N
 ads skipped" under a feed's item count for its last poll. Each feed can also
 override the global switch and choose whether it inherits, extends, or
