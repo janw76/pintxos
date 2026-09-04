@@ -4,7 +4,11 @@ Wired's RSS feed (and feeds like it) mix real journalism with recurring
 coupon-code roundups ("Groupon Promo Codes: 60% Off in September 2026",
 "ExpressVPN Coupons: 73% Off", ...). These are near-identical, low-value
 posts that get republished with a new percentage every few days, and we
-don't want to spend an LLM call summarizing each refresh.
+don't want to spend an LLM call summarizing each refresh. The rules below
+were tuned on both Wired and Tom's Guide: the bare "N% off" title rule was
+removed in pintxos-rqb.3 on Wired-only evidence (it never fired there) and
+is reinstated here because Tom's Guide's Labor Day deal posts ("Skechers
+are up to 44% off", "up to 20% off") need it to be caught.
 
 `is_ad` first checks `keep_patterns` against the title: a match there wins
 over every block rule below, built-ins included, and the entry is kept.
@@ -48,6 +52,7 @@ AD_TAGS: frozenset[str] = frozenset(
         "coupons",
         "coupon",
         "deals",
+        "sales events",
         "promo codes",
         "promo code",
         "sponsored",
@@ -64,6 +69,9 @@ AD_TITLE_PATTERNS: tuple[re.Pattern, ...] = (
     re.compile(r"\b(?:promo|coupon|discount)\s+codes?\b", re.IGNORECASE),
     re.compile(r"\bcoupons?\b", re.IGNORECASE),
     re.compile(r"\bsponsored\b", re.IGNORECASE),
+    re.compile(r"\b\d+%\s+off\b", re.IGNORECASE),
+    re.compile(r"\bsale\b", re.IGNORECASE),
+    re.compile(r"\bsave up to\b", re.IGNORECASE),
 )
 
 # Applied to the last non-empty path segment of the link, e.g.

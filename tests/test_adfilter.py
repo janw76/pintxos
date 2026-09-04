@@ -1,4 +1,5 @@
-"""Tests for pintxos.adfilter, using a real Wired feed snapshot as ground truth."""
+"""Tests for pintxos.adfilter, using real Wired, Tom's Guide and Verge feed
+snapshots as ground truth."""
 
 from __future__ import annotations
 
@@ -11,6 +12,8 @@ import pytest
 from pintxos.adfilter import compile_patterns, entry_tags, is_ad
 
 FIXTURE = Path(__file__).parent / "fixtures" / "wired.xml"
+TOMSGUIDE_FIXTURE = Path(__file__).parent / "fixtures" / "tomsguide.xml"
+VERGE_FIXTURE = Path(__file__).parent / "fixtures" / "verge.xml"
 
 # The full set of titles that are coupon/promo posts in tests/fixtures/wired.xml,
 # verified by eye: every one of these is a recurring "X Promo/Coupon/Discount
@@ -41,9 +44,37 @@ EXPECTED_AD_TITLES = {
 }
 
 
+# The 7 (of 50) titles in tests/fixtures/tomsguide.xml that are Labor Day
+# deal/sale posts, verified by eye. Copied verbatim from the fixture (curly
+# apostrophes, em/en dashes and all).
+EXPECTED_TOMSGUIDE_AD_TITLES = {
+    "There are hundreds of luxury mattresses on sale this Labor Day, but this is the only hotel-style hybrid I'd buy",
+    "I found 12 of the best tool deals in Lowe's Labor Day sale — prices start at $15",
+    "Sony, Canon, and Nikon camera prices slashed in Best Buy’s Labor Day sale– up to 20% off",
+    "REI’s Labor Day sale is here: save up to 50% on Vuori, Patagonia Arc'teryx and more",
+    "Amazon's Labor Day sale is live — 41 deals that top my list for the weekend from $5",
+    "The ultimate Labor Day sales shopping guide: Live updates by our deals experts",
+    "Skechers are up to 44% off — step into fall with 11 deals on walking shoes and sandals",
+}
+
+
 @pytest.fixture(scope="module")
 def wired_entries():
     parsed = feedparser.parse(FIXTURE.read_bytes())
+    assert parsed.entries, "fixture failed to parse"
+    return parsed.entries
+
+
+@pytest.fixture(scope="module")
+def tomsguide_entries():
+    parsed = feedparser.parse(TOMSGUIDE_FIXTURE.read_bytes())
+    assert parsed.entries, "fixture failed to parse"
+    return parsed.entries
+
+
+@pytest.fixture(scope="module")
+def verge_entries():
+    parsed = feedparser.parse(VERGE_FIXTURE.read_bytes())
     assert parsed.entries, "fixture failed to parse"
     return parsed.entries
 
@@ -71,6 +102,28 @@ def test_video_doorbell_buying_guide_is_not_an_ad(wired_entries):
     assert is_ad(entry) is None
 
 
+def test_tomsguide_fixture_flags_exactly_the_expected_ad_titles(tomsguide_entries):
+    flagged_titles = {e.get("title") for e in tomsguide_entries if is_ad(e)}
+    assert flagged_titles == EXPECTED_TOMSGUIDE_AD_TITLES
+    assert len(flagged_titles) == 7
+
+
+def test_tomsguide_mattress_toppers_sales_plural_is_a_known_miss(tomsguide_entries):
+    # Plural "sales" ("...in the Labor Day sales") is deliberately not a title
+    # rule -- it also matches business news and mattress reviews -- so this
+    # entry is a known false negative, not a bug.
+    entry = _entry_by_title_substring(tomsguide_entries, "5 mattress toppers")
+    assert is_ad(entry) is None
+
+
+def test_verge_fixture_flags_exactly_the_alienware_woot_entry(verge_entries):
+    flagged = {e.get("title"): is_ad(e) for e in verge_entries if is_ad(e)}
+    assert len(flagged) == 1
+    (title, reason), = flagged.items()
+    assert "Alienware" in title
+    assert reason == "tag:deals"
+
+
 def test_sponsored_tag_is_flagged():
     entry = {"title": "Weekend reads", "tags": [{"term": "Sponsored"}]}
     reason = is_ad(entry)
@@ -78,9 +131,11 @@ def test_sponsored_tag_is_flagged():
     assert reason.startswith("tag:")
 
 
-def test_bare_percent_off_title_is_not_flagged_and_discount_text_is_not_either():
-    non_ad_entry = {"title": "Save 40% off this weekend"}
-    assert is_ad(non_ad_entry) is None
+def test_percent_off_title_is_flagged_but_discount_text_is_not():
+    ad_entry = {"title": "Save 40% off this weekend"}
+    reason = is_ad(ad_entry)
+    assert reason is not None
+    assert reason.startswith("title:")
 
     non_ad_entry = {"title": "The discount rate debate at the Fed"}
     assert is_ad(non_ad_entry) is None

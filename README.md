@@ -50,7 +50,9 @@ checkbox on the Settings page. When enabled, it skips entries that look like
 ads or coupon posts before fetching or summarizing them, so they cost
 nothing and never reach the output feed — detected by RSS category (e.g.
 Wired's "Gear / Deals" tag), title shape ("Groupon Promo Codes: 60% Off in
-September 2026"), or a URL slug ending in `-promo-code`/`-coupons`. You can
+September 2026"), or a URL slug ending in `-promo-code`/`-coupons`. The
+built-in rules also cover Tom's Guide style sale posts ("Labor Day sale",
+"save up to 50%", "44% off"). You can
 add your own regexes, one per line, via `PINTXOS_AD_TITLE_PATTERNS` or the
 same Settings textarea. Titles matching `PINTXOS_AD_KEEP_PATTERNS` (also one
 regex per line, editable on the Settings page) are never filtered, overriding
