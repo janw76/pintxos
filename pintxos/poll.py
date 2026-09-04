@@ -12,6 +12,7 @@ import trafilatura
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
 
+from pintxos import adfilter
 from pintxos.config import get_setting
 from pintxos.db import db, now
 from pintxos.summarize import MissingApiKey, SummarizeError, summarize
@@ -81,6 +82,18 @@ def _entry_sort_key(entry):
     return (0, tuple(-value for value in parsed[:6])) if parsed else (1, ())
 
 
+def _filter_ads_enabled(conn) -> bool:
+    return get_setting("PINTXOS_FILTER_ADS", conn).lower() in {"1", "true", "yes", "on"}
+
+
+def _extra_ad_patterns(conn) -> list[re.Pattern]:
+    try:
+        return adfilter.compile_patterns(get_setting("PINTXOS_AD_TITLE_PATTERNS", conn))
+    except ValueError as e:
+        log.warning("invalid PINTXOS_AD_TITLE_PATTERNS, using built-in rules only: %s", e)
+        return []
+
+
 def _set_error(feed_id: int, message: str, polled: bool = True) -> None:
     with db() as conn:
         if polled:
@@ -105,6 +118,8 @@ def poll_feed(feed_id: int) -> bool:
             return True
         url, feed_title = feed["url"], feed["title"]
         limit = int(get_setting("PINTXOS_ITEMS_PER_FEED", conn))
+        filter_ads = _filter_ads_enabled(conn)
+        extra_ad_patterns = _extra_ad_patterns(conn) if filter_ads else []
 
     try:
         try:
@@ -130,15 +145,33 @@ def poll_feed(feed_id: int) -> bool:
             }
 
         # Count the new entries up front so the status line can say "3 of 7".
-        fresh = []
+        new_entries = []
         for entry in sorted(parsed.entries, key=_entry_sort_key)[:limit]:
             guid = entry.get("id") or entry.get("link")
             if not guid or guid in seen:
                 continue
-            fresh.append((guid, entry.get("link") or guid, entry))
+            new_entries.append((guid, entry.get("link") or guid, entry))
 
-        total = len(fresh)
-        for i, (guid, link, entry) in enumerate(fresh, 1):
+        # Ad/coupon entries are filtered before fetch/summarize, but never inserted or
+        # otherwise recorded as seen -- they are simply re-evaluated on the next poll.
+        filtered = []
+        kept = new_entries
+        if filter_ads:
+            kept = []
+            for guid, link, entry in new_entries:
+                reason = adfilter.is_ad(entry, extra_ad_patterns)
+                if reason is None:
+                    kept.append((guid, link, entry))
+                else:
+                    filtered.append(entry)
+                    log.debug(
+                        "feed %s: skipping ad (%s): %s", feed_id, reason, entry.get("title", "")
+                    )
+            if filtered:
+                log.info("feed %s: filtered %d ad entries", feed_id, len(filtered))
+
+        total = len(kept)
+        for i, (guid, link, entry) in enumerate(kept, 1):
             original_title = entry.get("title", "")
             text = fetch_article(link) if link else None
             fallback = 0
@@ -178,6 +211,8 @@ def poll_feed(feed_id: int) -> bool:
                 "LIMIT ?)",
                 (feed_id, feed_id, limit),
             )
+            # ponytail: ads_filtered count persisted in the next bead.
+            ads_filtered = len(filtered)  # noqa: F841 - not stored yet
             conn.execute(
                 "UPDATE feeds SET last_polled_at = ?, last_error = NULL WHERE id = ?",
                 (now(), feed_id),
