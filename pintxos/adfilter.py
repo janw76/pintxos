@@ -36,7 +36,7 @@ summary is lost for this poll; the entry is re-evaluated on the next poll
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from urllib.parse import urlparse
 
 AD_TAGS: frozenset[str] = frozenset(
@@ -148,11 +148,15 @@ def is_ad(entry, extra_title_patterns: Sequence[re.Pattern] = ()) -> str | None:
     return _match_link(entry.get("link"))
 
 
-def compile_patterns(text: str | None) -> list[re.Pattern]:
+def compile_patterns(
+    text: str | None, on_error: Callable[[int, str, re.error], None] | None = None
+) -> list[re.Pattern]:
     """Compile one case-insensitive regex per non-blank line of `text`.
 
-    Raises ValueError with the offending 1-based line number and text if a
-    line fails to compile as a regex.
+    By default, raises ValueError with the offending 1-based line number and
+    text if a line fails to compile as a regex. If `on_error` is given, bad
+    lines are skipped instead: `on_error(lineno, line, err)` is called for
+    each one and compilation continues.
     """
     if not text:
         return []
@@ -165,5 +169,7 @@ def compile_patterns(text: str | None) -> list[re.Pattern]:
         try:
             patterns.append(re.compile(line, re.IGNORECASE))
         except re.error as err:
-            raise ValueError(f"line {lineno}: {line!r}: {err}") from err
+            if on_error is None:
+                raise ValueError(f"line {lineno}: {line!r}: {err}") from err
+            on_error(lineno, line, err)
     return patterns

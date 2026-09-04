@@ -155,6 +155,10 @@ def poll_feed_now(feed_id: int) -> Response:
     return _redirect("/")
 
 
+def env_pinned(key: str) -> bool:
+    return bool(os.environ.get(key))
+
+
 @app.get("/settings")
 def settings_page(request: Request) -> Response:
     with db() as conn:
@@ -164,11 +168,11 @@ def settings_page(request: Request) -> Response:
         filter_ads = get_setting("PINTXOS_FILTER_ADS", conn)
         ad_title_patterns = get_setting("PINTXOS_AD_TITLE_PATTERNS", conn) or ""
         row = conn.execute("SELECT value FROM settings WHERE key = ?", ("ANTHROPIC_API_KEY",)).fetchone()
-    env_key_set = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    env_key_set = env_pinned("ANTHROPIC_API_KEY")
     key_last4 = row["value"][-4:] if row and row["value"] else None
     filter_ads_on = is_truthy(filter_ads)
-    filter_ads_env = bool(os.environ.get("PINTXOS_FILTER_ADS"))
-    patterns_env = bool(os.environ.get("PINTXOS_AD_TITLE_PATTERNS"))
+    filter_ads_env = env_pinned("PINTXOS_FILTER_ADS")
+    patterns_env = env_pinned("PINTXOS_AD_TITLE_PATTERNS")
     return templates.TemplateResponse(
         request,
         "settings.html",
@@ -211,37 +215,24 @@ def save_settings(
     except ValueError as e:
         return _redirect("/settings", err=f"Invalid pattern: {e}")
 
+    pairs = [
+        ("PINTXOS_MODEL", model),
+        ("PINTXOS_POLL_MINUTES", str(poll_minutes_i)),
+        ("PINTXOS_ITEMS_PER_FEED", str(items_per_feed_i)),
+    ]
+    if api_key and not env_pinned("ANTHROPIC_API_KEY"):
+        pairs.append(("ANTHROPIC_API_KEY", api_key))
+    # Disabled checkboxes/textareas aren't submitted by browsers, so when the
+    # corresponding env var is set, the field is env-pinned: ignore it entirely.
+    if not env_pinned("PINTXOS_FILTER_ADS"):
+        pairs.append(("PINTXOS_FILTER_ADS", "1" if filter_ads == "1" else "0"))
+    if not env_pinned("PINTXOS_AD_TITLE_PATTERNS"):
+        pairs.append(("PINTXOS_AD_TITLE_PATTERNS", patterns))
+
     with db() as conn:
-        conn.execute(
-            "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
-            ("PINTXOS_MODEL", model),
+        conn.executemany(
+            "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)", pairs
         )
-        conn.execute(
-            "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
-            ("PINTXOS_POLL_MINUTES", str(poll_minutes_i)),
-        )
-        conn.execute(
-            "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
-            ("PINTXOS_ITEMS_PER_FEED", str(items_per_feed_i)),
-        )
-        if api_key and not os.environ.get("ANTHROPIC_API_KEY"):
-            conn.execute(
-                "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
-                ("ANTHROPIC_API_KEY", api_key),
-            )
-        # Disabled checkboxes/textareas aren't submitted by browsers, so when the
-        # corresponding env var is set, the field is env-pinned: ignore it entirely.
-        if not os.environ.get("PINTXOS_FILTER_ADS"):
-            filter_value = "1" if filter_ads == "1" else "0"
-            conn.execute(
-                "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
-                ("PINTXOS_FILTER_ADS", filter_value),
-            )
-        if not os.environ.get("PINTXOS_AD_TITLE_PATTERNS"):
-            conn.execute(
-                "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
-                ("PINTXOS_AD_TITLE_PATTERNS", patterns),
-            )
 
     if os.environ.get("PINTXOS_NO_SCHEDULER") != "1":
         reschedule(poll_minutes_i)
