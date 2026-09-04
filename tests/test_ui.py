@@ -22,6 +22,17 @@ def test_add_feed_appears_in_list(monkeypatch):
         assert "/feeds/1.xml" in page
 
 
+def test_add_feed_triggers_exactly_one_poll(monkeypatch):
+    calls = []
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: calls.append(feed_id))
+    with TestClient(app) as c:
+        resp = c.post(
+            "/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False
+        )
+        assert resp.status_code == 303
+    assert calls == [1]
+
+
 def test_add_feed_invalid_url_rejected(monkeypatch):
     monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
     with TestClient(app) as c:
@@ -185,6 +196,15 @@ def test_feed_table_uses_fixed_layout_and_wraps_long_urls(monkeypatch):
     assert "table-layout: fixed" in page
     assert "<colgroup>" in page
     assert long_url in page
+
+
+def test_health_returns_ok_and_feed_count(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        resp = c.get("/health")
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True, "feeds": 1}
 
 
 def test_base_shell_has_wordmark_favicon_and_github_link():

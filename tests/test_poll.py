@@ -186,6 +186,73 @@ def test_poll_one_double_click_runs_once(monkeypatch):
         poll._status.pop(1, None)  # poll_feed was faked, so nobody cleared it
 
 
+def test_production_scheduler_is_single_worker():
+    """The module-level scheduler is what actually serializes polls in prod.
+
+    Fails loudly if someone bumps ThreadPoolExecutor(1) to (4) and quietly
+    reintroduces concurrent polling.
+    """
+    assert poll.scheduler._executors["default"]._pool._max_workers == 1
+
+
+def test_manual_poll_waits_for_running_poll_all(monkeypatch):
+    """A manual poll_one queued while poll_all is running must not overlap it.
+
+    poll.scheduler has a single-worker executor, so jobs are serialized by
+    construction; this asserts the manual poll actually runs *after* the
+    scheduled poll_all finishes, not concurrently with it.
+    """
+    release = threading.Event()
+    order = []
+
+    def blocking_poll_all():
+        order.append("poll_all-start")
+        release.wait(5)
+        order.append("poll_all-end")
+
+    def fake_poll_feed(fid):
+        order.append(f"feed-{fid}-start")
+        order.append(f"feed-{fid}-end")
+        return True
+
+    scheduler = BackgroundScheduler(executors={"default": ThreadPoolExecutor(1)})
+    monkeypatch.setattr(poll, "scheduler", scheduler)
+    monkeypatch.setattr(poll, "poll_feed", fake_poll_feed)
+    scheduler.start(paused=True)
+    try:
+        scheduler.add_job(blocking_poll_all, id="poll_all", misfire_grace_time=None)
+        scheduler.resume()
+
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and "poll_all-start" not in order:
+            time.sleep(0.01)
+        assert "poll_all-start" in order  # poll_all is now occupying the one worker thread
+
+        poll.poll_one(1)  # queued behind poll_all on the single-thread executor
+        assert poll._status[1] == "Queued"
+
+        release.set()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and "feed-1-end" not in order:
+            time.sleep(0.01)
+        scheduler.shutdown(wait=True)
+        assert order == ["poll_all-start", "poll_all-end", "feed-1-start", "feed-1-end"]
+    finally:
+        release.set()
+        if scheduler.running:
+            scheduler.shutdown(wait=True)
+        poll._status.pop(1, None)  # poll_feed was faked, so nobody cleared it
+
+
+def test_poll_feed_deleted_row_clears_status_without_error(feed_id):
+    """Deleting a feed while it's queued/polling must not crash poll_feed."""
+    poll._status[feed_id] = "Fetching feed…"
+    with db() as conn:
+        conn.execute("DELETE FROM feeds WHERE id = ?", (feed_id,))
+    assert poll.poll_feed(feed_id) is True
+    assert feed_id not in poll._status
+
+
 def test_status_cleared_after_poll(feed_id, calls, monkeypatch):
     seen_status = []
     real_summarize = poll.summarize
