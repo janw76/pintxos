@@ -155,7 +155,7 @@
 
     textarea[readonly], .global-box { background: var(--surface); color: var(--text-muted); }
 
-    .patterns:not(:has(input[name=ad_patterns_mode][value="1"]:checked)) textarea[name=ad_title_patterns] { opacity: 0.45; pointer-events: none; }
+    .patterns:not(:has(input[name=ad_patterns_mode][value="1"]:checked)) .field:has(textarea[name=ad_title_patterns]) { visibility: hidden; }
     .filters:has(input[name=filter_ads][value="0"]:checked) .patterns { opacity: 0.45; pointer-events: none; }
   </style>
 </head>
