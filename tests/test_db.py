@@ -149,12 +149,22 @@ def test_items_has_word_count_column(db):
     assert "word_count" in {r["name"] for r in db.execute("PRAGMA table_info(items)")}
 
 
-def test_old_items_table_gains_word_count(tmp_path, monkeypatch):
-    """A DB created before word_count existed gains the column on connect(), idempotently."""
+def test_connect_migrates_existing_db_missing_items_word_count_and_auth_columns(
+    tmp_path, monkeypatch
+):
+    """A DB created before word_count/auth existed gains both columns on connect(), twice."""
     monkeypatch.setenv("PINTXOS_DATA_DIR", str(tmp_path))
     old_conn = sqlite3.connect(db_path())
     old_conn.executescript(
         """
+        CREATE TABLE feeds (
+            id INTEGER PRIMARY KEY,
+            url TEXT UNIQUE NOT NULL,
+            title TEXT,
+            created_at TEXT,
+            last_polled_at TEXT,
+            last_error TEXT
+        );
         CREATE TABLE items (
             id INTEGER PRIMARY KEY,
             feed_id INTEGER REFERENCES feeds(id) ON DELETE CASCADE,
@@ -178,18 +188,22 @@ def test_old_items_table_gains_word_count(tmp_path, monkeypatch):
         cols = [r["name"] for r in conn.execute("PRAGMA table_info(items)")]
         assert cols.count("word_count") == 1
         assert "word_count" in cols
+        assert cols.count("auth") == 1
+        assert "auth" in cols
     finally:
         conn.close()
 
-    # Second connect() must be a no-op migration, not an error, and the column stays singular.
+    # Second connect() must be a no-op migration, not an error, and columns stay singular.
     conn2 = connect()
     try:
         cols2 = [r["name"] for r in conn2.execute("PRAGMA table_info(items)")]
         assert cols2.count("word_count") == 1
+        assert cols2.count("auth") == 1
 
         feed_id = add_feed(conn2)
         item_id = add_item(conn2, feed_id)
         row = conn2.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
         assert row["word_count"] is None  # not fetched/summarized -> no stats yet
+        assert row["auth"] is None
     finally:
         conn2.close()

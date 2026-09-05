@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import feedparser
+import pytest
 from fastapi.testclient import TestClient
 
 from pintxos.app import app
@@ -80,6 +81,58 @@ def test_feed_xml_renders_items():
             assert entry.link == "https://example.com/1"
             assert note not in entry.description
             assert "Original: Original One" in entry.description
+
+
+def _seed_auth_cases():
+    with db() as conn:
+        feed_id = conn.execute(
+            "INSERT INTO feeds(url, title, created_at) VALUES (?, ?, ?)",
+            (FEED_URL, "Example Feed", now()),
+        ).lastrowid
+        for auth in ("used", "missing", "failed"):
+            conn.execute(
+                """INSERT INTO items
+                (feed_id, guid, link, original_title, published_at, headline, summary, fallback, auth, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    feed_id, f"guid-{auth}", f"https://example.com/{auth}", f"Original {auth.title()}",
+                    "2026-09-03T12:00:00+00:00", f"Headline {auth.title()}", f"Summary {auth}.",
+                    1, auth, now(),
+                ),
+            )
+    return feed_id
+
+
+NOTES = {
+    "used": "Read with your subscription.",
+    "missing": "Login may be required; summarized from the feed excerpt.",
+    "failed": "Your saved login did not work (cookies expired?); summarized from the feed excerpt.",
+    "null_fallback": "Note: article fetch failed; summarized from feed excerpt.",
+}
+
+
+@pytest.mark.parametrize(
+    "seed_fn, feed_url, headline, expected_note_key",
+    [
+        (_seed_auth_cases, None, "Headline Used", "used"),
+        (_seed_auth_cases, None, "Headline Missing", "missing"),
+        (_seed_auth_cases, None, "Headline Failed", "failed"),
+        (_seed, "/feeds/1.xml", "Headline Two", "null_fallback"),
+        (_seed, "/feeds/1.xml", "Headline One", None),
+    ],
+)
+def test_feed_xml_note_reflects_auth_and_fallback(seed_fn, feed_url, headline, expected_note_key):
+    feed_id = seed_fn()
+    with TestClient(app) as c:
+        resp = c.get(feed_url or f"/feeds/{feed_id}.xml")
+
+    parsed = feedparser.parse(resp.content)
+    entry = next(e for e in parsed.entries if e.title == headline)
+    if expected_note_key is None:
+        for note in NOTES.values():
+            assert note not in entry.description
+    else:
+        assert NOTES[expected_note_key] in entry.description
 
 
 def test_feed_xml_404_for_missing_feed():

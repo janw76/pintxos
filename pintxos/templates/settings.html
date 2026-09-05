@@ -53,4 +53,36 @@
 
   <button type="submit" class="btn-primary">Save</button>
 </form>
+
+<h2>Subscription cookies</h2>
+<p>Pintxøs sends these cookies only to their own sites when it fetches an article, so paywalled feeds you subscribe to are summarized from the full story. Loaded from <code>{{ cookie_file }}</code>.</p>
+{% if not cookie_domains %}
+{% if cookie_file_exists %}
+<p class="muted">cookies.txt is present but contains no usable cookies (all expired?).</p>
+{% else %}
+<p class="muted">No cookies.txt found.</p>
+{% endif %}
+{% else %}
+{% for entry in cookie_domains %}
+<div class="muted">{{ entry.domain }} — {{ entry.count }} cookie{{ "s" if entry.count != 1 else "" }}, earliest expiry {{ entry.expires or "session" }}{% if entry.expires and entry.expires <= cookie_soon %} (expires soon){% endif %}</div>
+{% endfor %}
+{% endif %}
+
+<form method="post" action="/settings/cookies" enctype="multipart/form-data">
+  <div class="field">
+    <label for="cookies">cookies.txt file</label>
+    <input type="file" id="cookies" name="cookies">
+  </div>
+  <div class="field">
+    <label for="cookies_text">…or paste the exported text</label>
+    <textarea id="cookies_text" name="cookies_text" rows="4" class="mono"></textarea>
+  </div>
+  <p class="muted">Export with the Cookie-Editor browser extension (Export &rarr; Netscape) while logged in; Chrome/Firefox users can also use a "Get cookies.txt LOCALLY" extension.</p>
+  <button type="submit" class="btn-primary">Save</button>
+</form>
+{% if cookie_file_exists %}
+<form method="post" action="/settings/cookies/delete">
+  <button type="submit" class="btn-danger">Remove</button>
+</form>
+{% endif %}
 {% endblock %}

@@ -1,5 +1,10 @@
 import pytest
 
+from pintxos.config import data_dir
+
+# Well into the future so cookies are never seen as expired.
+FUTURE_EXPIRY = 4102444800  # 2100-01-01T00:00:00Z
+
 
 @pytest.fixture(autouse=True)
 def _isolated_data_dir(tmp_path, monkeypatch):
@@ -11,3 +16,10 @@ def _isolated_data_dir(tmp_path, monkeypatch):
     # (filter off, no extra patterns) aren't at the mercy of the ambient environment.
     monkeypatch.delenv("PINTXOS_FILTER_ADS", raising=False)
     monkeypatch.delenv("PINTXOS_AD_TITLE_PATTERNS", raising=False)
+
+
+def write_cookies(text: str) -> None:
+    """Write `text` to data_dir()/cookies.txt, prepending the Netscape header if missing."""
+    if "# Netscape HTTP Cookie File" not in text:
+        text = "# Netscape HTTP Cookie File\n" + text
+    (data_dir() / "cookies.txt").write_text(text)

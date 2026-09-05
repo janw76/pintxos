@@ -49,4 +49,35 @@
   <button type="submit" class="btn-primary">Save</button>
   <a href="/" class="cancel">Cancel</a>
 </form>
+{% if auth_used > 0 or auth_missing > 0 or auth_failed > 0 %}
+<h2>Login</h2>
+<p>
+{%- if auth_used > 0 -%}
+{{ auth_used }} item{{ "" if auth_used == 1 else "s" }} fetched with your subscription
+{%- endif -%}
+{%- if auth_missing > 0 -%}
+{% if auth_used > 0 %} · {% endif -%}
+{{ auth_missing }} need{{ "s" if auth_missing == 1 else "" }} a login
+{%- endif -%}
+{%- if auth_failed > 0 -%}
+{% if auth_used > 0 or auth_missing > 0 %} · {% endif -%}
+{{ auth_failed }} login failed
+{%- endif -%}
+.</p>
+{% if (auth_missing > 0 or auth_failed > 0) and not cookies_loaded_for_domain %}
+<p>Add your subscription cookies on the <a href="/settings">Settings page</a>.</p>
+{% elif auth_failed > 0 and cookies_loaded_for_domain %}
+{% if domain_expiry %}
+<p>Cookies for {{ domain }} expire {{ domain_expiry }}.</p>
+{% else %}
+<p>Cookies for {{ domain }} are session cookies.</p>
+{% endif %}
+{% endif %}
+{% endif %}
+{% if fallback_count > 0 %}
+<form method="post" action="/feeds/{{ feed.id }}/retry-fallback" class="retry-fallback">
+  <button type="submit" class="btn-tint-neutral">Retry {{ fallback_count }} fallback item{{ "s" if fallback_count != 1 else "" }}</button>
+  <div class="muted">Re-fetches and re-summarizes these items in place; each costs one summary call. Useful after adding subscription cookies.</div>
+</form>
+{% endif %}
 {% endblock %}
