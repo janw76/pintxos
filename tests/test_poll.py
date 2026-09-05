@@ -5,15 +5,20 @@ from __future__ import annotations
 import json
 import threading
 import time
+import urllib.request
 from pathlib import Path
 
+import curl_cffi.requests
 import pytest
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from pintxos import poll
+from pintxos.cookies import cookie_path
 from pintxos.db import db, now
 from pintxos.summarize import MissingApiKey, SummarizeError
+
+from conftest import FUTURE_EXPIRY, write_cookies
 
 FEED_URL = "https://example.com/feed.xml"
 SAMPLE = (Path(__file__).parent / "fixtures" / "sample.xml").read_bytes()
@@ -660,3 +665,104 @@ def test_invalid_feed_ad_pattern_warns_with_feed_id_and_still_filters_with_good_
     assert f"feed {feed_id}" in caplog.text
     assert "Big Giveaway" not in seen
     assert feed_row(feed_id)["ads_filtered"] == 1
+
+
+# --- client construction / impersonation -----------------------------------------
+
+
+@pytest.mark.parametrize(
+    "profile, expect_impersonate, expect_pintxos_ua",
+    [
+        ("safari17_0", "safari17_0", False),
+        ("", None, True),
+    ],
+)
+def test_make_client_impersonation(profile, expect_impersonate, expect_pintxos_ua):
+    client = poll._make_client(profile)
+    assert client.impersonate == expect_impersonate
+    if expect_pintxos_ua:
+        assert client.headers.get("User-Agent") == poll.USER_AGENT
+
+
+# --- _get() and cookie jar propagation -------------------------------------------
+
+
+@pytest.fixture(autouse=False)
+def _reset_client_jar(monkeypatch):
+    """Cookie-jar tests must not leak the installed jar across test order."""
+    monkeypatch.setattr(poll, "_client_jar", None)
+    poll._client.cookies = curl_cffi.requests.Cookies()
+    yield
+    poll._client_jar = None
+    poll._client.cookies = curl_cffi.requests.Cookies()
+
+
+def test_get_installs_jar_on_client_and_clears_it_when_file_removed(_reset_client_jar, monkeypatch):
+    write_cookies(f".example.com\tTRUE\t/\tFALSE\t{FUTURE_EXPIRY}\tsid\tabc")
+
+    def fake(url):
+        return FakeResponse(b"<html>ok</html>", content_type="text/html")
+
+    monkeypatch.setattr(poll._client, "get", fake)
+
+    poll._get("https://www.example.com/a")
+
+    assert poll._client.cookies.get("sid", domain=".example.com") == "abc"
+    installed_jar = poll._client.cookies.jar
+
+    # Cookies file is unchanged, so the second call must not reinstall the jar.
+    poll._get("https://www.example.com/a")
+    assert poll._client.cookies.jar is installed_jar
+
+    cookie_path().unlink()
+
+    poll._get("https://www.example.com/a")
+    assert len(poll._client.cookies) == 0
+
+
+def test_cookies_only_sent_to_matching_domain_and_zero_expiry_is_a_session_cookie():
+    # Proves domain scoping at the stdlib http.cookiejar level, which both the
+    # loader (get_jar) and curl_cffi's Cookies wrapper delegate to: a cookie
+    # jarred for .ft.com is offered on a request to www.ft.com, and withheld on
+    # a request to an unrelated domain. A "0" expiry (used by some cookies.txt
+    # exporters for session cookies) must still be sent on the wire.
+    write_cookies(
+        f".ft.com\tTRUE\t/\tFALSE\t{FUTURE_EXPIRY}\tsid\tabc123\n"
+        ".ft.com\tTRUE\t/\tFALSE\t0\tsess\tdef456\n"
+    )
+    jar = poll.get_jar()
+    assert jar is not None
+
+    ft_req = urllib.request.Request("https://www.ft.com/x")
+    jar.add_cookie_header(ft_req)
+    ft_cookie_header = ft_req.get_header("Cookie")
+    assert ft_cookie_header is not None
+    assert "sid" in ft_cookie_header
+    assert "sess" in ft_cookie_header
+
+    other_req = urllib.request.Request("https://www.example.com/x")
+    jar.add_cookie_header(other_req)
+    assert other_req.get_header("Cookie") is None
+
+
+@pytest.mark.parametrize(
+    "cookies_present, fetch_ok, expected_auth, expected_fallback",
+    [
+        (False, True, None, 0),
+        (True, True, "used", 0),
+        (True, False, "failed", 1),
+        (False, False, "missing", 1),
+    ],
+)
+def test_auth_outcome_from_cookies_presence_and_fetch_result(
+    feed_id, calls, monkeypatch, _reset_client_jar, cookies_present, fetch_ok, expected_auth, expected_fallback
+):
+    if cookies_present:
+        write_cookies(f".example.com\tTRUE\t/\tFALSE\t{FUTURE_EXPIRY}\tsid\tabc")
+    if fetch_ok:
+        monkeypatch.setattr(poll, "fetch_article", lambda link: "FULL TEXT " * 30)
+    poll.poll_all()
+    rows = items()
+    assert len(rows) == 3
+    assert all(row["auth"] == expected_auth for row in rows)
+    assert all(row["fallback"] == expected_fallback for row in rows)

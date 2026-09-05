@@ -20,6 +20,9 @@ DEFAULTS: dict[str, str | None] = {
     # pintxos/cli.py before the app/DB is touched, never via get_setting().
     "PINTXOS_HOST": "127.0.0.1",
     "PINTXOS_PORT": "8000",
+    # Environment-only: curl_cffi browser profile used for all fetches; empty disables
+    # impersonation.
+    "PINTXOS_IMPERSONATE": "safari17_0",
 }
 
 
