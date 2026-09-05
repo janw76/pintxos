@@ -6,7 +6,9 @@ from pintxos import cli
 
 
 @pytest.fixture(autouse=True)
-def _clean_host_port_env(monkeypatch):
+def _clean_host_port_env(monkeypatch, tmp_path):
+    # chdir off the repo root so a developer's repo-root .env is never loaded by these tests
+    monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("PINTXOS_HOST", raising=False)
     monkeypatch.delenv("PINTXOS_PORT", raising=False)
     # cli.main() may call dotenv.load_dotenv(), which mutates os.environ directly
