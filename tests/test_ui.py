@@ -158,6 +158,59 @@ def test_poll_button_pulse_css_and_reduced_motion():
     assert "button:disabled { opacity: .7; cursor: default; }" in page
 
 
+def test_feed_row_endpoint_returns_just_the_row(monkeypatch):
+    """GET /feeds/{id}/row renders the shared _feed_row.html partial: one bare <tr>,
+    no base layout, so the page can swap a single row in place."""
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    monkeypatch.setattr(app_module, "poll_status", {})
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        resp = c.get("/feeds/1/row")
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/html")
+    body = resp.text.strip()
+    assert body.startswith("<tr")
+    assert body.endswith("</tr>")
+    assert "<html" not in body and "<table" not in body
+    assert 'id="feed-1"' in body
+    assert "/feeds/1.xml" in body
+    assert ">Poll now<" in body
+
+
+def test_feed_row_endpoint_404_for_unknown_feed(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        assert c.get("/feeds/999/row").status_code == 404
+
+
+def test_feed_row_endpoint_reflects_poll_status(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        monkeypatch.setattr(app_module, "poll_status", {1: "Summarizing 1/2"})
+        body = c.get("/feeds/1/row").text
+
+    btn = _poll_button(body)
+    assert ">Polling…<" in btn
+    assert "disabled" in btn
+    assert 'title="Summarizing 1/2"' in btn
+    assert 'data-feed-id="1"' in btn
+
+
+def test_feed_row_endpoint_matches_the_row_on_the_index(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    monkeypatch.setattr(app_module, "poll_status", {})
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        page = c.get("/").text
+        row = c.get("/feeds/1/row").text.strip()
+
+    start = page.index('<tr id="feed-1"')
+    end = page.index("</tr>", start) + len("</tr>")
+    assert page[start:end] == row
+
+
 def test_last_error_column_shows_dash_or_message(monkeypatch):
     monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
     with TestClient(app) as c:

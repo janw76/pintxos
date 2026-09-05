@@ -38,34 +38,7 @@
     </thead>
     <tbody>
       {% for feed in feeds %}
-      <tr>
-        <td>
-          <div>{{ feed.title or feed.url }}</div>
-          <div class="muted url">{{ feed.url }}</div>
-        </td>
-        <td><span class="output-url">{{ feed.output_url }}</span></td>
-        <td class="copy"><button type="button" class="btn-tint-accent btn-copy" onclick="pintxosCopy(this, '{{ feed.output_url }}')">Copy</button></td>
-        <td>
-          <div>{{ feed.item_count }}</div>
-          <div class="muted">{% if feed.ads_filtered %}{{ feed.ads_filtered }} ad{{ "" if feed.ads_filtered == 1 else "s" }} skipped{% endif %}</div>
-        </td>
-        <td class="muted nowrap" title="{{ feed.last_polled_at or '' }}">{{ feed.last_polled_at | ago }}</td>
-        <td class="error">{% if feed.last_error %}{{ feed.last_error }}{% else %}<span class="muted">-</span>{% endif %}</td>
-        <td class="actions">
-          <form method="get" action="/feeds/{{ feed.id }}"><button type="submit" class="btn-tint-neutral">Edit filters</button></form>
-          {#- The poll button carries the poll state: idle / active (pulse, progress in tooltip) / failed (error in tooltip). #}
-          <form method="post" action="/feeds/{{ feed.id }}/poll">
-            {%- if feed.id in status -%}
-            <button type="submit" class="btn-poll btn-polling" disabled data-feed-id="{{ feed.id }}" title="{{ status[feed.id] }}">Polling…</button>
-            {%- elif feed.last_error -%}
-            <button type="submit" class="btn-poll btn-danger" title="{{ feed.last_error }}">Failed</button>
-            {%- else -%}
-            <button type="submit" class="btn-poll btn-tint-neutral">Poll now</button>
-            {%- endif -%}
-          </form>
-          <form method="post" action="/feeds/{{ feed.id }}/delete" onsubmit="return confirm('Delete feed?')"><button type="submit" class="btn-danger">Delete</button></form>
-        </td>
-      </tr>
+      {% include "_feed_row.html" %}
       {% else %}
       <tr><td colspan="7" class="empty">No feeds yet — add one above.</td></tr>
       {% endfor %}

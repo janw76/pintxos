@@ -162,22 +162,52 @@ def feed_edit_save(
     return _redirect("/", msg="Saved")
 
 
-@app.get("/")
-def index(request: Request) -> Response:
+def _load_feed_rows(request: Request, feed_id: int | None = None) -> list[dict]:
+    """Feed dicts for the index table: every feed, or just one when feed_id is given.
+
+    Shared by index() and the single-row endpoint so both render identical rows.
+    """
+    sql = (
+        "SELECT f.*, "
+        "(SELECT COUNT(*) FROM items WHERE items.feed_id = f.id) AS item_count "
+        "FROM feeds f"
+    )
+    params: tuple = ()
+    if feed_id is not None:
+        sql += " WHERE f.id = ?"
+        params = (feed_id,)
+    sql += " ORDER BY f.id"
     with db() as conn:
-        rows = conn.execute(
-            "SELECT f.*, "
-            "(SELECT COUNT(*) FROM items WHERE items.feed_id = f.id) AS item_count "
-            "FROM feeds f ORDER BY f.id"
-        ).fetchall()
+        rows = conn.execute(sql, params).fetchall()
         base_url = get_setting("PINTXOS_BASE_URL", conn) or str(request.base_url).rstrip("/")
     feeds = []
     for row in rows:
         feed = dict(row)
         feed["output_url"] = f"{base_url}/feeds/{feed['id']}.xml"
         feeds.append(feed)
+    return feeds
+
+
+@app.get("/")
+def index(request: Request) -> Response:
     return templates.TemplateResponse(
-        request, "index.html", {"feeds": feeds, "status": dict(poll_status)}
+        request,
+        "index.html",
+        {"feeds": _load_feed_rows(request), "status": dict(poll_status)},
+    )
+
+
+@app.get("/feeds/{feed_id}/row")
+def feed_row(request: Request, feed_id: int) -> Response:
+    """The single <tr> for one feed, so the page can swap a row in place."""
+    feeds = _load_feed_rows(request, feed_id)
+    if not feeds:
+        raise HTTPException(status_code=404, detail="feed not found")
+    return templates.TemplateResponse(
+        request,
+        "_feed_row.html",
+        {"feed": feeds[0], "status": dict(poll_status)},
+        media_type="text/html",
     )
 
 
