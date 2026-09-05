@@ -79,6 +79,14 @@ def test_poll_now_returns_303(monkeypatch):
         assert resp.headers["location"] == "/"
 
 
+def test_status_endpoint_returns_poll_status(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_status", {1: "Summarizing 2/5"})
+    with TestClient(app) as c:
+        resp = c.get("/status")
+        assert resp.status_code == 200
+        assert resp.json() == {"1": "Summarizing 2/5"}
+
+
 def _poll_button(page: str) -> str:
     """The <button …>…</button> inside the /feeds/1/poll form."""
     start = page.index("/feeds/1/poll")
@@ -88,8 +96,8 @@ def _poll_button(page: str) -> str:
 
 def test_poll_button_carries_poll_state_and_refresh(monkeypatch):
     """No Status column: the poll button itself reads Polling… (disabled, progress in the
-    tooltip, page auto-refreshes), Failed (danger tint, error in the tooltip, still clickable)
-    or Poll now (idle)."""
+    tooltip, page polls /status in place), Failed (danger tint, error in the tooltip, still
+    clickable) or Poll now (idle)."""
     monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
     with TestClient(app) as c:
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
@@ -97,7 +105,8 @@ def test_poll_button_carries_poll_state_and_refresh(monkeypatch):
         # active: the status text moves into the button's tooltip
         monkeypatch.setattr(app_module, "poll_status", {1: "Summarizing 2/5"})
         page = c.get("/").text
-        assert 'http-equiv="refresh"' in page
+        assert 'http-equiv="refresh"' not in page
+        assert 'fetch("/status")' in page
         btn = _poll_button(page)
         assert ">Polling…<" in btn
         assert "disabled" in btn
@@ -110,6 +119,7 @@ def test_poll_button_carries_poll_state_and_refresh(monkeypatch):
         monkeypatch.setattr(app_module, "poll_status", {})
         page = c.get("/").text
         assert 'http-equiv="refresh"' not in page
+        assert 'fetch("/status")' not in page
         btn = _poll_button(page)
         assert ">Poll now<" in btn
         assert "disabled" not in btn

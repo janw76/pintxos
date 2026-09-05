@@ -1,6 +1,5 @@
 {% extends "base.html" %}
 {% block title %}Feeds · Pintxøs{% endblock %}
-{% block head %}{% if status %}<meta http-equiv="refresh" content="3">{% endif %}{% endblock %}
 {% block content %}
 <h1>Feeds</h1>
 
@@ -57,7 +56,7 @@
           {#- The poll button carries the poll state: idle / active (pulse, progress in tooltip) / failed (error in tooltip). #}
           <form method="post" action="/feeds/{{ feed.id }}/poll">
             {%- if feed.id in status -%}
-            <button type="submit" class="btn-poll btn-polling" disabled title="{{ status[feed.id] }}">Polling…</button>
+            <button type="submit" class="btn-poll btn-polling" disabled data-feed-id="{{ feed.id }}" title="{{ status[feed.id] }}">Polling…</button>
             {%- elif feed.last_error -%}
             <button type="submit" class="btn-poll btn-danger" title="{{ feed.last_error }}">Failed</button>
             {%- else -%}
@@ -73,4 +72,24 @@
     </tbody>
   </table>
 </div>
+{% if status %}
+<script>
+  // ponytail: poll /status in place instead of reloading the whole page every 3s.
+  var pintxosPollTimer = setInterval(function () {
+    fetch("/status").then(function (resp) {
+      if (!resp.ok) { return; }
+      resp.json().then(function (data) {
+        var buttons = document.querySelectorAll("button.btn-polling[data-feed-id]");
+        var finished = false;
+        for (var i = 0; i < buttons.length; i++) {
+          var id = buttons[i].getAttribute("data-feed-id");
+          if (id in data) { buttons[i].title = data[id]; }
+          else { finished = true; }
+        }
+        if (finished) { clearInterval(pintxosPollTimer); location.reload(); }
+      });
+    }).catch(function () {});
+  }, 3000);
+</script>
+{% endif %}
 {% endblock %}

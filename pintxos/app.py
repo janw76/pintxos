@@ -181,6 +181,11 @@ def index(request: Request) -> Response:
     )
 
 
+@app.get("/status")
+def status() -> dict[str, str]:
+    return {str(feed_id): text for feed_id, text in poll_status.items()}
+
+
 @app.post("/feeds")
 def add_feed(url: str = Form(...)) -> Response:
     if not (url.startswith("http://") or url.startswith("https://")):
