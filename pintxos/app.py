@@ -246,8 +246,10 @@ def delete_feed(feed_id: int) -> Response:
 
 
 @app.post("/feeds/{feed_id}/poll")
-def poll_feed_now(feed_id: int) -> Response:
+def poll_feed_now(feed_id: int, request: Request) -> Response:
     poll_one(feed_id)
+    if request.headers.get("x-requested-with") == "fetch":
+        return Response(status_code=204)
     return _redirect("/")
 
 

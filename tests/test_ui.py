@@ -79,6 +79,21 @@ def test_poll_now_returns_303(monkeypatch):
         assert resp.headers["location"] == "/"
 
 
+def test_poll_now_via_fetch_returns_204(monkeypatch):
+    calls = []
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: calls.append(feed_id))
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        resp = c.post(
+            "/feeds/1/poll",
+            headers={"X-Requested-With": "fetch"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 204
+        assert resp.text == ""
+        assert calls == [1, 1]  # once from adding the feed, once from "Poll now"
+
+
 def test_status_endpoint_returns_poll_status(monkeypatch):
     monkeypatch.setattr(app_module, "poll_status", {1: "Summarizing 2/5"})
     with TestClient(app) as c:
@@ -106,6 +121,7 @@ def test_poll_button_carries_poll_state_and_refresh(monkeypatch):
         monkeypatch.setattr(app_module, "poll_status", {1: "Summarizing 2/5"})
         page = c.get("/").text
         assert 'http-equiv="refresh"' not in page
+        assert "location.reload" not in page
         assert 'fetch("/status")' in page
         btn = _poll_button(page)
         assert ">Polling…<" in btn
@@ -119,7 +135,8 @@ def test_poll_button_carries_poll_state_and_refresh(monkeypatch):
         monkeypatch.setattr(app_module, "poll_status", {})
         page = c.get("/").text
         assert 'http-equiv="refresh"' not in page
-        assert 'fetch("/status")' not in page
+        assert "location.reload" not in page
+        assert 'fetch("/status")' in page
         btn = _poll_button(page)
         assert ">Poll now<" in btn
         assert "disabled" not in btn

@@ -45,24 +45,57 @@
     </tbody>
   </table>
 </div>
-{% if status %}
 <script>
-  // ponytail: poll /status in place instead of reloading the whole page every 3s.
-  var pintxosPollTimer = setInterval(function () {
+  // ponytail: "Poll now" fires a fetch instead of navigating, then swaps just that row
+  // in place; a background /status poll catches rows whose poll finishes on its own.
+  var pintxosStatusSnapshot = {};
+  (function () {
+    var buttons = document.querySelectorAll("button.btn-polling[data-feed-id]");
+    for (var i = 0; i < buttons.length; i++) {
+      pintxosStatusSnapshot[buttons[i].getAttribute("data-feed-id")] = buttons[i].title;
+    }
+  })();
+
+  function pintxosRefreshRow(id) {
+    fetch("/feeds/" + id + "/row").then(function (resp) {
+      if (resp.status === 200) {
+        resp.text().then(function (html) {
+          var row = document.getElementById("feed-" + id);
+          if (row) { row.outerHTML = html; }
+        });
+      } else if (resp.status === 404) {
+        var row = document.getElementById("feed-" + id);
+        if (row) { row.parentNode.removeChild(row); }
+      }
+    }).catch(function () {});
+  }
+
+  document.addEventListener("submit", function (event) {
+    var form = event.target;
+    if (!form || form.tagName !== "FORM" || form.action.slice(-5) !== "/poll") { return; }
+    event.preventDefault();
+    var row = form.closest("tr[data-feed-id]");
+    var id = row ? row.getAttribute("data-feed-id") : null;
+    fetch(form.action, { method: "POST", headers: { "X-Requested-With": "fetch" } }).then(function () {
+      if (id) { pintxosRefreshRow(id); }
+    }).catch(function () {});
+  });
+
+  setInterval(function () {
+    if (document.visibilityState !== "visible") { return; }
     fetch("/status").then(function (resp) {
       if (!resp.ok) { return; }
       resp.json().then(function (data) {
-        var buttons = document.querySelectorAll("button.btn-polling[data-feed-id]");
-        var finished = false;
-        for (var i = 0; i < buttons.length; i++) {
-          var id = buttons[i].getAttribute("data-feed-id");
-          if (id in data) { buttons[i].title = data[id]; }
-          else { finished = true; }
+        var ids = {};
+        var id;
+        for (id in pintxosStatusSnapshot) { ids[id] = true; }
+        for (id in data) { ids[id] = true; }
+        for (id in ids) {
+          if (pintxosStatusSnapshot[id] !== data[id]) { pintxosRefreshRow(id); }
         }
-        if (finished) { clearInterval(pintxosPollTimer); location.reload(); }
+        pintxosStatusSnapshot = data;
       });
     }).catch(function () {});
   }, 3000);
 </script>
-{% endif %}
 {% endblock %}
