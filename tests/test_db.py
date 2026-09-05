@@ -143,3 +143,53 @@ def test_connect_migrates_existing_db_missing_per_feed_ad_columns(tmp_path, monk
         assert row["ad_patterns_mode"] is None  # and inherit the global title patterns
     finally:
         conn.close()
+
+
+def test_items_has_word_count_column(db):
+    assert "word_count" in {r["name"] for r in db.execute("PRAGMA table_info(items)")}
+
+
+def test_old_items_table_gains_word_count(tmp_path, monkeypatch):
+    """A DB created before word_count existed gains the column on connect(), idempotently."""
+    monkeypatch.setenv("PINTXOS_DATA_DIR", str(tmp_path))
+    old_conn = sqlite3.connect(db_path())
+    old_conn.executescript(
+        """
+        CREATE TABLE items (
+            id INTEGER PRIMARY KEY,
+            feed_id INTEGER REFERENCES feeds(id) ON DELETE CASCADE,
+            guid TEXT NOT NULL,
+            link TEXT NOT NULL,
+            original_title TEXT,
+            published_at TEXT,
+            headline TEXT,
+            summary TEXT,
+            fallback INTEGER DEFAULT 0,
+            created_at TEXT,
+            UNIQUE(feed_id, guid)
+        );
+        """
+    )
+    old_conn.commit()
+    old_conn.close()
+
+    conn = connect()
+    try:
+        cols = [r["name"] for r in conn.execute("PRAGMA table_info(items)")]
+        assert cols.count("word_count") == 1
+        assert "word_count" in cols
+    finally:
+        conn.close()
+
+    # Second connect() must be a no-op migration, not an error, and the column stays singular.
+    conn2 = connect()
+    try:
+        cols2 = [r["name"] for r in conn2.execute("PRAGMA table_info(items)")]
+        assert cols2.count("word_count") == 1
+
+        feed_id = add_feed(conn2)
+        item_id = add_item(conn2, feed_id)
+        row = conn2.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+        assert row["word_count"] is None  # not fetched/summarized -> no stats yet
+    finally:
+        conn2.close()
