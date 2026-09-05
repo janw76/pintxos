@@ -157,8 +157,8 @@ macOS), see [docs/deploy-native.md](docs/deploy-native.md).
 
 Model, poll interval, items per feed and the API key can be set via environment
 variable, or (if unset) via the Settings page in the web UI, which persists them
-to the database. `PINTXOS_BASE_URL`, `PINTXOS_DATA_DIR`, `PINTXOS_HOST` and
-`PINTXOS_PORT` are environment-only.
+to the database. `PINTXOS_BASE_URL`, `PINTXOS_DATA_DIR`, `PINTXOS_HOST`,
+`PINTXOS_PORT` and `PINTXOS_IMPERSONATE` are environment-only.
 
 | Env var | Default | Meaning |
 |---|---|---|
@@ -170,12 +170,38 @@ to the database. `PINTXOS_BASE_URL`, `PINTXOS_DATA_DIR`, `PINTXOS_HOST` and
 | `PINTXOS_AD_TITLE_PATTERNS` | *(empty)* | Extra title regexes, one per line, matched case-insensitively, in addition to the built-in ad rules. |
 | `PINTXOS_AD_KEEP_PATTERNS` | *(empty)* | Title regexes, one per line, matched case-insensitively; a match overrides every block rule, built-ins included, and the entry is kept. |
 | `PINTXOS_BASE_URL` | *(none, inferred from the request)* | Base URL used to build output feed links, e.g. `https://pintxos.example.com`. |
-| `PINTXOS_DATA_DIR` | `./data` | Directory for the SQLite database. |
+| `PINTXOS_DATA_DIR` | `./data` | Directory for the SQLite database and `cookies.txt`. |
 | `PINTXOS_HOST` | `127.0.0.1` | Host/interface the server binds to. The Docker image sets `PINTXOS_HOST=0.0.0.0`. |
 | `PINTXOS_PORT` | `8000` | Port the server binds to. |
+| `PINTXOS_IMPERSONATE` | `safari17_0` | curl_cffi browser TLS/HTTP fingerprint used for all fetches, so Cloudflare-fronted sites accept the request. Set empty to disable impersonation (uses the Pintxøs User-Agent instead). |
 | `PINTXOS_NO_SCHEDULER` | *(unset)* | Set to `1` to disable polling entirely, periodic **and** manual (Poll now queues forever). For tests and CI only. For a local run without periodic polls, set `PINTXOS_POLL_MINUTES=1440` instead. |
 
 The ad filter toggle and extra patterns can also be changed on the Settings page unless the corresponding environment variable is set.
+
+## Paywalled feeds
+
+For sites you subscribe to, Pintxøs can fetch the full article using your
+own logged-in browser cookies instead of falling back to the feed's
+summary; each site's cookies are only ever sent to that same site.
+
+To get a cookies file, install the
+[Cookie-Editor](https://cookie-editor.com) browser extension (Safari,
+Chrome, Firefox), open the site while logged in, and use Export →
+Netscape — "Netscape" is just the name of the plain-text format. Paste the
+exported text into the "Subscription cookies" box on the Settings page, or
+upload it as a file there, or copy it to `<PINTXOS_DATA_DIR>/cookies.txt`
+by hand.
+
+Cookies are picked up on the next poll, no restart needed. Use the "Retry
+N fallback items" button on the feed's page to re-summarize items already
+stored as teasers (one summary call each). The Feeds page shows "via
+login", "need login" and "login failed" counts per feed; once items start
+showing "login failed", export a fresh cookies file (Settings shows the
+earliest expiry).
+
+Fetches impersonate a real browser (`PINTXOS_IMPERSONATE`, default
+`safari17_0`), because these sites reject plain HTTP clients before ever
+looking at a cookie.
 
 ## Security warning
 
@@ -184,7 +210,11 @@ delete, or repoll feeds, and anyone who can reach an output feed URL can read
 it — this is by design, so RSS readers can fetch feeds without credentials.
 Only run Pintxøs on `localhost`, over Tailscale/a VPN, or behind a reverse
 proxy that handles authentication for you. **Do not expose it directly to the
-public internet**.
+public internet**. If you use the paywalled-feeds feature above, the cookies
+file is equivalent to being logged in to those sites and is stored
+unencrypted in the data directory, so keep it on a private machine and
+remove it from Settings once you stop using it; it's meant for reading with
+your own account, so check the publisher's terms.
 
 ## API key
 
