@@ -8,6 +8,8 @@ from collections.abc import Sequence
 from datetime import datetime
 from email.utils import format_datetime
 
+from pintxos.stats import format_stats
+
 
 def render_rss(
     feed: sqlite3.Row, items: Sequence[sqlite3.Row]
@@ -29,6 +31,9 @@ def render_rss(
         ET.SubElement(entry, "pubDate").text = pub_date
 
         description = f"<p>{item['summary']}</p>"
+        words = item["word_count"]
+        if words:
+            description += f"<p><em>{format_stats(words)}</em></p>"
         if item["fallback"]:
             description += (
                 "<p><em>Note: article fetch failed; "
