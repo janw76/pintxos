@@ -94,9 +94,6 @@ sudo systemctl status pintxos
 sudo journalctl -u pintxos -f
 ```
 
-(`systemd-analyze verify` isn't available outside Linux, so this unit was
-checked by inspection rather than run through the verifier.)
-
 ## launchd (macOS)
 
 Find the absolute path to the installed binary — you'll need it verbatim,
@@ -107,7 +104,7 @@ which pintxos
 ```
 
 Create the logs directory and the agent plist at
-`~/Library/LaunchAgents/ie.boboco.pintxos.plist` (replace `/Users/YOU` with
+`~/Library/LaunchAgents/io.github.janw76.pintxos.plist` (replace `/Users/YOU` with
 your home directory and the `ProgramArguments` path with the output of
 `which pintxos` above):
 
@@ -122,7 +119,7 @@ mkdir -p ~/Library/Logs/pintxos
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>ie.boboco.pintxos</string>
+    <string>io.github.janw76.pintxos</string>
     <key>ProgramArguments</key>
     <array>
         <string>/Users/YOU/.local/bin/pintxos</string>
@@ -155,14 +152,14 @@ mkdir -p ~/Library/Logs/pintxos
 Load and manage it:
 
 ```bash
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ie.boboco.pintxos.plist
-launchctl print gui/$(id -u)/ie.boboco.pintxos
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.github.janw76.pintxos.plist
+launchctl print gui/$(id -u)/io.github.janw76.pintxos
 
 # Stop:
-launchctl bootout gui/$(id -u)/ie.boboco.pintxos
+launchctl bootout gui/$(id -u)/io.github.janw76.pintxos
 
 # Restart after an upgrade:
-launchctl kickstart -k gui/$(id -u)/ie.boboco.pintxos
+launchctl kickstart -k gui/$(id -u)/io.github.janw76.pintxos
 ```
 
 A LaunchAgent only runs while that user is logged in. If you need Pintxøs to
@@ -195,7 +192,7 @@ Then restart the service:
 
 ```bash
 sudo systemctl restart pintxos          # systemd
-launchctl kickstart -k gui/$(id -u)/ie.boboco.pintxos   # launchd
+launchctl kickstart -k gui/$(id -u)/io.github.janw76.pintxos   # launchd
 ```
 
 The SQLite database lives under `PINTXOS_DATA_DIR` and isn't touched by the
