@@ -136,6 +136,24 @@ def test_article_text_wins_over_feed_content(feed_id, calls, monkeypatch):
     assert all(text.startswith("FULL ARTICLE TEXT") for text, _t, _u in calls)
 
 
+def test_fetched_article_stores_word_count(feed_id, calls, monkeypatch):
+    monkeypatch.setattr(poll, "fetch_article", lambda link: "one two three " * 50)
+    poll.poll_feed(feed_id)
+    with db() as conn:
+        rows = conn.execute("SELECT word_count FROM items").fetchall()
+    assert rows
+    assert all(row["word_count"] == 150 for row in rows)
+
+
+def test_fallback_item_has_null_word_count(feed_id, calls):
+    poll.poll_feed(feed_id)
+    with db() as conn:
+        rows = conn.execute("SELECT word_count, fallback FROM items").fetchall()
+    assert rows
+    assert all(row["word_count"] is None for row in rows)
+    assert all(row["fallback"] == 1 for row in rows)
+
+
 def test_prune_keeps_newest_n(feed_id, calls, monkeypatch):
     with db() as conn:
         for n in range(5):
