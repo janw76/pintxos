@@ -19,8 +19,8 @@ def _seed():
         ).lastrowid
         conn.execute(
             """INSERT INTO items
-            (feed_id, guid, link, original_title, published_at, headline, summary, fallback, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (feed_id, guid, link, original_title, published_at, headline, summary, fallback, word_count, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 feed_id,
                 "guid-1",
@@ -30,13 +30,14 @@ def _seed():
                 "Headline One",
                 "Summary one.",
                 0,
+                1200,
                 now(),
             ),
         )
         conn.execute(
             """INSERT INTO items
-            (feed_id, guid, link, original_title, published_at, headline, summary, fallback, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (feed_id, guid, link, original_title, published_at, headline, summary, fallback, word_count, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 feed_id,
                 "guid-2",
@@ -46,6 +47,7 @@ def _seed():
                 "Headline Two",
                 "Summary two.",
                 1,
+                None,
                 now(),
             ),
         )
@@ -96,3 +98,34 @@ def test_feed_xml_contains_pintxos_wordmark_utf8():
 
     xml = resp.content.decode("utf-8")
     assert "Pintxøs" in xml
+
+
+def test_feed_xml_includes_reading_time_for_fetched_article():
+    _seed()
+    with TestClient(app) as c:
+        resp = c.get("/feeds/1.xml")
+
+    parsed = feedparser.parse(resp.content)
+    entry = next(e for e in parsed.entries if e.title == "Headline One")
+    assert "About 1,200 words" in entry.description
+    assert "min read" in entry.description
+
+
+def test_feed_xml_omits_reading_time_for_fallback_item():
+    _seed()
+    with TestClient(app) as c:
+        resp = c.get("/feeds/1.xml")
+
+    parsed = feedparser.parse(resp.content)
+    entry = next(e for e in parsed.entries if e.title == "Headline Two")
+    assert "min read" not in entry.description
+
+
+def test_feed_xml_stats_line_precedes_original_line():
+    _seed()
+    with TestClient(app) as c:
+        resp = c.get("/feeds/1.xml")
+
+    parsed = feedparser.parse(resp.content)
+    entry = next(e for e in parsed.entries if e.title == "Headline One")
+    assert entry.description.index("min read") < entry.description.index("Original:")
