@@ -14,16 +14,18 @@ from pintxos.config import DEFAULTS
 
 
 def main(argv: list[str] | None = None) -> None:
-    # Load .env from the current working directory (not the package directory) before
-    # anything else, so a locally-run `pintxos` picks up the same settings docker
-    # compose would via its own .env handling. Real environment variables always win.
-    dotenv_path = dotenv.find_dotenv(usecwd=True)
-    loaded = bool(dotenv_path) and dotenv.load_dotenv(dotenv_path=dotenv_path, override=False)
+    # Load .env from the current working directory only (not the package directory or
+    # any parent directory), before anything else, so a locally-run `pintxos` picks up
+    # the same settings docker compose would via its own .env handling. Real environment
+    # variables always win.
+    found = os.path.isfile(".env")
+    if found:
+        dotenv.load_dotenv(".env", override=False)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logger = logging.getLogger(__name__)
-    if loaded:
-        logger.info("Loaded .env from %s", os.path.abspath(dotenv_path))
+    if found:
+        logger.info("Loaded .env from %s", os.path.abspath(".env"))
     else:
         logger.info("No .env file found in %s; using environment only", os.getcwd())
 

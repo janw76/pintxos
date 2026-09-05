@@ -85,3 +85,12 @@ def test_no_dotenv_falls_back_to_defaults(monkeypatch, tmp_path, recorder):
     cli.main([])
     assert recorder[0]["host"] == "127.0.0.1"
     assert recorder[0]["port"] == 8000
+
+
+def test_dotenv_in_parent_directory_is_ignored(monkeypatch, tmp_path, recorder):
+    (tmp_path / ".env").write_text("PINTXOS_PORT=9123\n")
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    monkeypatch.chdir(sub)
+    cli.main([])
+    assert recorder[0]["port"] == 8000
