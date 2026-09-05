@@ -10,6 +10,21 @@
   <td>
     <div>{{ feed.item_count }}</div>
     <div class="muted">{% if feed.ads_filtered %}{{ feed.ads_filtered }} ad{{ "" if feed.ads_filtered == 1 else "s" }} skipped{% endif %}</div>
+    {% if feed.auth_used or feed.auth_missing or feed.auth_failed %}
+    <div class="muted">
+      {%- if feed.auth_used -%}
+      <span title="Fetched with your subscription cookies">{{ feed.auth_used }} via login</span>
+      {%- endif -%}
+      {%- if feed.auth_missing -%}
+      {% if feed.auth_used %} · {% endif -%}
+      <span title="Article fetch failed and no cookies are loaded for this site; a login may be required">{{ feed.auth_missing }} need login</span>
+      {%- endif -%}
+      {%- if feed.auth_failed -%}
+      {% if feed.auth_used or feed.auth_missing %} · {% endif -%}
+      <span title="Cookies are loaded for this site but the article fetch still failed; they may have expired">{{ feed.auth_failed }} login failed</span>
+      {%- endif -%}
+    </div>
+    {% endif %}
   </td>
   <td class="muted nowrap" title="{{ feed.last_polled_at or '' }}">{{ feed.last_polled_at | ago }}</td>
   <td class="error">{% if feed.last_error %}{{ feed.last_error }}{% else %}<span class="muted">-</span>{% endif %}</td>
