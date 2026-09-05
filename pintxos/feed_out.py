@@ -10,6 +10,15 @@ from email.utils import format_datetime
 
 from pintxos.stats import format_stats
 
+_AUTH_NOTES = {
+    "used": "<p><em>Read with your subscription.</em></p>",
+    "missing": "<p><em>Login may be required; summarized from the feed excerpt.</em></p>",
+    "failed": (
+        "<p><em>Your saved login did not work (cookies expired?); "
+        "summarized from the feed excerpt.</em></p>"
+    ),
+}
+
 
 def render_rss(
     feed: sqlite3.Row, items: Sequence[sqlite3.Row]
@@ -34,10 +43,12 @@ def render_rss(
         words = item["word_count"]
         if words:
             description += f"<p><em>{format_stats(words)}</em></p>"
-        if item["fallback"]:
+        auth = item["auth"]
+        if auth in _AUTH_NOTES:
+            description += _AUTH_NOTES[auth]
+        elif auth is None and item["fallback"]:
             description += (
-                "<p><em>Note: article fetch failed; "
-                "summarized from feed excerpt.</em></p>"
+                "<p><em>Note: article fetch failed; summarized from feed excerpt.</em></p>"
             )
         description += f"<p>Original: {item['original_title']}</p>"
         ET.SubElement(entry, "description").text = description
