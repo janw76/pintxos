@@ -10,7 +10,6 @@ import anthropic
 from pintxos.config import get_setting, is_truthy
 
 MAX_INPUT_WORDS = 6000
-MAX_SUMMARY_WORDS = 100
 
 # Language rules: swapped into the system prompt and repeated in the user message
 # depending on PINTXOS_RESPECT_LANGUAGE. Kept as named constants (rather than inline
@@ -71,9 +70,7 @@ def _parse(raw: str) -> tuple[str, str]:
     summary = data.get("summary")
     if not isinstance(summary, str):
         summary = ""
-    summary_words = summary.split()
-    if len(summary_words) > MAX_SUMMARY_WORDS:
-        summary = " ".join(summary_words[:MAX_SUMMARY_WORDS]) + "…"
+    summary = " ".join(summary.split())
 
     return headline, summary
 
@@ -104,7 +101,9 @@ def summarize(
     try:
         response = client.messages.create(
             model=get_setting("PINTXOS_MODEL"),
-            max_tokens=400,
+            # 400 tokens is only ~300 words of JSON; a long summary would be cut
+            # mid-JSON and raise SummarizeError, silently re-introducing a length limit.
+            max_tokens=1024,
             system=system_prompt,
             messages=[{"role": "user", "content": user_message}],
         )

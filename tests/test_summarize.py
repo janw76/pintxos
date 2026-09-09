@@ -56,15 +56,25 @@ def test_fenced_without_json_tag(monkeypatch):
     assert headline == "Fact happened"
 
 
-def test_summary_truncated_to_100_words(monkeypatch):
-    long_summary = " ".join(f"word{i}" for i in range(150))
+def test_long_summary_passes_through_verbatim(monkeypatch):
+    words = [f"word{i}" for i in range(150)]
+    long_summary = " ".join(words)
     raw = json.dumps({"headline": "Headline", "summary": long_summary})
     _patch_client(monkeypatch, raw)
     headline, summary = summarize("text", "Title", "https://x")
-    words = summary[:-1].split()  # strip trailing ellipsis before counting
-    assert summary.endswith("…")
-    assert len(words) == 100
-    assert words == [f"word{i}" for i in range(100)]
+    assert summary == long_summary
+    assert not summary.endswith("…")
+    assert summary.split() == words
+    assert len(summary.split()) == 150
+
+
+def test_summary_whitespace_is_normalised(monkeypatch):
+    raw = json.dumps(
+        {"headline": "Headline", "summary": "First  sentence.\n\nSecond\tsentence."}
+    )
+    _patch_client(monkeypatch, raw)
+    headline, summary = summarize("text", "Title", "https://x")
+    assert summary == "First sentence. Second sentence."
 
 
 def test_garbage_raises_summarize_error(monkeypatch):
