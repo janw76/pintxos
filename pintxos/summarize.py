@@ -5,8 +5,7 @@ from __future__ import annotations
 import json
 import re
 
-import anthropic
-
+from pintxos import llm
 from pintxos.config import get_setting, is_truthy
 
 MAX_INPUT_WORDS = 6000
@@ -38,15 +37,9 @@ class SummarizeError(Exception):
     """Raised when summarization fails (API error or unparseable response)."""
 
 
-class MissingApiKey(SummarizeError):
-    """Raised when no ANTHROPIC_API_KEY is configured at all."""
-
-
-def _client() -> anthropic.Anthropic:
-    api_key = get_setting("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise MissingApiKey("ANTHROPIC_API_KEY not set")
-    return anthropic.Anthropic(api_key=api_key, max_retries=2)
+# Re-export, not a subclass: poll.py catches summarize.MissingApiKey by name and
+# pintxos.llm raises it, so both names must be the very same exception object.
+MissingApiKey = llm.MissingApiKey
 
 
 def _parse(raw: str) -> tuple[str, str]:
@@ -76,12 +69,17 @@ def _parse(raw: str) -> tuple[str, str]:
 
 
 def summarize(
-    text: str, original_title: str, url: str, respect_language: bool | None = None
+    text: str,
+    original_title: str,
+    url: str,
+    respect_language: bool | None = None,
+    model: str | None = None,
 ) -> tuple[str, str]:
     """Return (headline, summary) for the given article text.
 
     `respect_language`, when given, overrides the global PINTXOS_RESPECT_LANGUAGE
     setting (e.g. with a per-feed choice); None (the default) falls back to it.
+    `model`, when given, overrides the global PINTXOS_MODEL the same way.
     """
     if respect_language is None:
         respect_language = is_truthy(get_setting("PINTXOS_RESPECT_LANGUAGE"))
@@ -97,18 +95,14 @@ def summarize(
         f"\n\n{rule}"
     )
 
-    client = _client()
+    model = model or get_setting("PINTXOS_MODEL")
     try:
-        response = client.messages.create(
-            model=get_setting("PINTXOS_MODEL"),
-            # 400 tokens is only ~300 words of JSON; a long summary would be cut
-            # mid-JSON and raise SummarizeError, silently re-introducing a length limit.
-            max_tokens=1024,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_message}],
-        )
-    except anthropic.APIError as e:
+        # 400 tokens is only ~300 words of JSON; a long summary would be cut
+        # mid-JSON and raise SummarizeError, silently re-introducing a length limit.
+        raw = llm.complete(system_prompt, user_message, 1024, model, json=True)
+    except llm.MissingApiKey:
+        raise
+    except llm.LLMError as e:
         raise SummarizeError(str(e)) from e
 
-    raw = response.content[0].text
     return _parse(raw)

@@ -19,6 +19,7 @@ dependencies = [
     "curl_cffi>=0.16",
     "apscheduler",
     "anthropic",
+    "httpx",
     "python-dotenv",
 ]
 classifiers = [
