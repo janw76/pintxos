@@ -12,6 +12,7 @@ from pathlib import Path
 import curl_cffi.requests
 import feedparser
 import pytest
+import trafilatura
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -458,6 +459,94 @@ def test_fetch_article_stays_teaser_without_free_or_media_markers(monkeypatch):
     text, status, _labels = poll.fetch_article("https://example.com/one")
     assert status == "teaser"
     assert text is None
+
+
+# GitHub issue #9: on the teaser path (and only there) fetch_article() logs a
+# compact fingerprint line -- names and counts only, never page content -- so
+# a future positive paywall detector has data to train on. The sentinel below
+# stands in for real page content that must never end up in the logs.
+TEASER_FINGERPRINT_HTML = (
+    "<html><body><article><p>"
+    + "Short teaser. " * 4
+    + " SENTINEL-DO-NOT-LOG</p></article></body></html>"
+)
+PIANO_TEASER_FINGERPRINT_HTML = (
+    '<html><body><div class="tp-modal">Subscribe</div><article><p>'
+    + "Short teaser. " * 4
+    + " SENTINEL-DO-NOT-LOG</p></article></body></html>"
+)
+
+
+def test_fetch_article_logs_teaser_fingerprint(monkeypatch, caplog):
+    monkeypatch.setattr(
+        poll,
+        "_get",
+        lambda url: FakeResponse(
+            TEASER_FINGERPRINT_HTML.encode(), content_type="text/html; charset=utf-8"
+        ),
+    )
+    expected_chars = len(
+        trafilatura.extract(
+            TEASER_FINGERPRINT_HTML, include_comments=False, include_tables=False
+        )
+        or ""
+    )
+    with caplog.at_level("INFO"):
+        _text, status, _labels = poll.fetch_article("https://example.com/one")
+    assert status == "teaser"
+    fingerprint_lines = [
+        r.getMessage() for r in caplog.records if "teaser fingerprint" in r.getMessage()
+    ]
+    assert len(fingerprint_lines) == 1
+    line = fingerprint_lines[0]
+    assert "status=200" in line
+    assert f"chars={expected_chars}" in line
+    assert "free=None" in line
+    assert "og_type=-" in line
+    assert "jsonld=-" in line
+    assert "paywall=-" in line
+    assert "SENTINEL-DO-NOT-LOG" not in caplog.text
+
+
+def test_fetch_article_teaser_fingerprint_reports_piano_marker(monkeypatch, caplog):
+    monkeypatch.setattr(
+        poll,
+        "_get",
+        lambda url: FakeResponse(
+            PIANO_TEASER_FINGERPRINT_HTML.encode(), content_type="text/html; charset=utf-8"
+        ),
+    )
+    with caplog.at_level("INFO"):
+        _text, status, _labels = poll.fetch_article("https://example.com/one")
+    assert status == "teaser"
+    assert "paywall=piano" in caplog.text
+    assert "SENTINEL-DO-NOT-LOG" not in caplog.text
+
+
+def test_fetch_article_short_page_does_not_log_teaser_fingerprint(monkeypatch, caplog):
+    monkeypatch.setattr(
+        poll,
+        "_get",
+        lambda url: FakeResponse(
+            SHORT_FREE_HTML.encode(), content_type="text/html; charset=utf-8"
+        ),
+    )
+    with caplog.at_level("INFO"):
+        _text, status, _labels = poll.fetch_article("https://example.com/one")
+    assert status == "short"
+    assert "teaser fingerprint" not in caplog.text
+
+
+def test_fetch_article_ok_page_does_not_log_teaser_fingerprint(monkeypatch, caplog):
+    monkeypatch.setattr(
+        poll,
+        "_get",
+        lambda url: FakeResponse(ARTICLE_HTML.encode(), content_type="text/html; charset=utf-8"),
+    )
+    with caplog.at_level("INFO"):
+        _text, status, _labels = poll.fetch_article("https://example.com/one")
+    assert status == "ok"
+    assert "teaser fingerprint" not in caplog.text
 
 
 def test_fetch_article_request_failure_is_an_error(monkeypatch):

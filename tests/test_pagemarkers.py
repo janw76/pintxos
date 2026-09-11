@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from pintxos.pagemarkers import Markers, free_short_page, page_markers
+from pintxos.pagemarkers import Markers, PAYWALL_MARKERS, free_short_page, page_markers, paywall_markers
 
 # A New Yorker cartoon: an ImageObject hanging off a NewsArticle, explicitly
 # flagged free. Short by nature -- the "article" is a caption.
@@ -241,3 +241,45 @@ class TestFreeShortPage:
         </script>
         """
         assert free_short_page(html) == "media:VideoObject"
+
+
+# One minimal snippet per PAYWALL_MARKERS entry, keyed by the marker name it
+# must fire on.
+PAYWALL_SNIPPETS = {
+    "piano": '<div class="tp-modal">Continue reading</div>',
+    "paywall": '<div class="site-paywall-banner">Subscribe now</div>',
+    "subscribe-wall": '<div class="subscribe-wall">Join today</div>',
+    "subscribe-copy": "<p>Subscribe to continue reading this article.</p>",
+    "regwall": '<div id="regwall">Register to continue</div>',
+}
+
+
+class TestPaywallMarkers:
+    def test_marker_names_are_covered_by_a_snippet(self):
+        # Guards against the fixture map drifting out of sync with the marker list.
+        assert set(PAYWALL_SNIPPETS) == {name for name, _pattern in PAYWALL_MARKERS}
+
+    @pytest.mark.parametrize("name, snippet", sorted(PAYWALL_SNIPPETS.items()))
+    def test_each_marker_fires_on_its_snippet(self, name, snippet):
+        assert paywall_markers(snippet) == [name]
+
+    def test_empty_string_yields_no_markers(self):
+        assert paywall_markers("") == []
+
+    def test_clean_page_yields_no_markers(self):
+        assert paywall_markers(ARTICLE_WITH_LEAD_IMAGE) == []
+
+    def test_marker_appearing_twice_is_reported_once(self):
+        html = (
+            '<div class="paywall-top">Top</div>'
+            '<div id="paywall-bottom">Bottom</div>'
+        )
+        assert paywall_markers(html) == ["paywall"]
+
+    def test_output_follows_paywall_markers_order_regardless_of_html_order(self):
+        html = (
+            '<div id="regwall">Register</div>'
+            '<div class="tp-modal">Piano</div>'
+            '<div class="paywall">Paywall</div>'
+        )
+        assert paywall_markers(html) == ["piano", "paywall", "regwall"]
