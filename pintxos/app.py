@@ -680,7 +680,7 @@ def test_settings() -> Response:
     with db() as conn:
         model = get_setting("PINTXOS_MODEL", conn)
     try:
-        text = llm.complete("You are a health check.", "Reply with the single word OK.", 5, model)
+        text = llm.complete("You are a health check.", "Reply with the single word OK.", 50, model)
     except llm.LLMError as e:
         return _redirect("/settings", err=f"{model}: {e}")
     return _redirect("/settings", msg=f"{model} answered: {text.strip()}")

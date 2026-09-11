@@ -16,6 +16,9 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 # Generous but finite: a hung provider must not hold a poll worker forever.
 REQUEST_TIMEOUT = 60
 
+# Models that reject reasoning: {"enabled": False} with HTTP 400; learned at runtime.
+_REASONING_MANDATORY: set[str] = set()
+
 
 class LLMError(Exception):
     """Raised when a completion fails (transport, HTTP status or unusable response)."""
@@ -76,21 +79,34 @@ def _complete_openrouter(
         ],
         # Reasoning tokens are billed and eat the max_tokens budget without
         # improving a rewrite-this-headline task; keep it off.
-        "reasoning": {"enabled": False},
+        "reasoning": {"effort": "minimal"} if model in _REASONING_MANDATORY else {"enabled": False},
     }
     if json:
         body["response_format"] = {"type": "json_object"}
 
-    try:
-        # ponytail: no retry here, the poll loop re-tries un-stored items on the next poll
-        response = httpx.post(
-            OPENROUTER_URL,
-            headers={"Authorization": f"Bearer {api_key}"},
-            json=body,
-            timeout=REQUEST_TIMEOUT,
-        )
-    except httpx.HTTPError as e:
-        raise LLMError(str(e)) from e
+    def _post(body: dict) -> httpx.Response:
+        try:
+            # ponytail: no retry here, the poll loop re-tries un-stored items on the next poll
+            return httpx.post(
+                OPENROUTER_URL,
+                headers={"Authorization": f"Bearer {api_key}"},
+                json=body,
+                timeout=REQUEST_TIMEOUT,
+            )
+        except httpx.HTTPError as e:
+            raise LLMError(str(e)) from e
+
+    response = _post(body)
+
+    if (
+        response.status_code == 400
+        and "reasoning is mandatory" in response.text.lower()
+        and model not in _REASONING_MANDATORY
+    ):
+        # ponytail: learn-on-400 instead of a vendor allowlist; one extra request per model per process
+        _REASONING_MANDATORY.add(model)
+        body = {**body, "reasoning": {"effort": "minimal"}}
+        response = _post(body)
 
     if not 200 <= response.status_code < 300:
         raise LLMError(f"OpenRouter HTTP {response.status_code}: {response.text[:500]}")
