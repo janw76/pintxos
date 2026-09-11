@@ -142,6 +142,7 @@ services:
       - ./data:/data
     environment:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      # OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}  # only needed for models with a slash
       # PINTXOS_MODEL: claude-haiku-4-5-20251001
       # PINTXOS_POLL_MINUTES: 30
       # PINTXOS_ITEMS_PER_FEED: 50
@@ -221,7 +222,8 @@ to the database. `PINTXOS_BASE_URL`, `PINTXOS_DATA_DIR`, `PINTXOS_HOST`,
 | Env var | Default | Meaning |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | *(none)* | Anthropic API key. See note below. |
-| `PINTXOS_MODEL` | `claude-haiku-4-5-20251001` | Claude model used to summarize. |
+| `OPENROUTER_API_KEY` | *(none)* | OpenRouter API key. Needed only for models with a slash in the name. |
+| `PINTXOS_MODEL` | `claude-haiku-4-5-20251001` | Default model. Names with a slash go to OpenRouter, names without go to Anthropic. Feeds can override it. |
 | `PINTXOS_POLL_MINUTES` | `30` | How often feeds are polled, in minutes. |
 | `PINTXOS_ITEMS_PER_FEED` | `50` | Items kept per output feed (older ones pruned). |
 | `PINTXOS_FILTER_ADS` | `0` | Skip ad/coupon entries before fetch/summarize. Set to `1` to turn this on. |
@@ -300,7 +302,26 @@ roughly 15% of the cost of a summary call, and only runs on feeds with the
 switch on. A per-feed "Max summaries per day" budget caps the number of
 summary calls that feed can make in a day, regardless of how much it polls.
 
-Even though Haiku is the cheapest model Anthropic offers today and Pintxøs avoids repolling and processing, I still recommend watching cost on [Claude Console](https://platform.claude.com/). Cost will obviously scale with the number feeds you poll and the amount of articles published per feed.
+## Choosing a model
+
+A model name with a slash (e.g. `google/gemini-2.5-flash-lite`) is sent to OpenRouter using `OPENROUTER_API_KEY`; a name without a slash (e.g. `claude-haiku-4-5-20251001`) is sent to Anthropic using `ANTHROPIC_API_KEY`. Both providers bill per token through API keys — a ChatGPT or Claude chat subscription cannot be used.
+
+| Model | Cost per 100 articles | Notes |
+|---|---|---|
+| `claude-haiku-4-5-20251001` | ~$0.28 | Anthropic direct. Current default, strongest multilingual output. |
+| `anthropic/claude-haiku-4.5` | ~$0.28 | Same model via OpenRouter. |
+| `openai/gpt-5-mini` | ~$0.08 | Same quality tier as Haiku at a third of the price. |
+| `google/gemini-2.5-flash-lite` | ~$0.03 | Recommended starting point. Fast, reliable JSON, good in European languages. |
+
+Prices are OpenRouter's as of September 2026 and drift; see the full list at [openrouter.ai/models](https://openrouter.ai/models). The same four presets are clickable on the Settings page.
+
+Each feed can override the model on its Edit page — a premium model for one feed, the cheapest for another; leaving it blank uses the global default.
+
+Save the model on the Settings page first, then click "Test saved model" to run a tiny completion with it and the saved key — it shows the model's answer or the exact error.
+
+Cheaper models may fail the required JSON output format more often; those items are logged as summarize errors and retried on the next poll.
+
+Even though Haiku is the cheapest model Anthropic offers today and Pintxøs avoids repolling and processing, I still recommend watching cost — on [Claude Console](https://platform.claude.com/) for Anthropic models, and on [OpenRouter's activity page](https://openrouter.ai/activity) for models with a slash. Cost will obviously scale with the number feeds you poll and the amount of articles published per feed.
 
 ## Usage
 
