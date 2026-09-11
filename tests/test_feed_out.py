@@ -337,6 +337,174 @@ def test_feed_xml_full_text_keeps_first_line_when_not_a_duplicate():
     )
 
 
+def test_warning_level_boundaries():
+    from pintxos.feed_out import warning_level
+
+    assert warning_level(0) is None
+    assert warning_level(49) is None
+    assert warning_level(50) == 50
+    assert warning_level(99) == 50
+    assert warning_level(100) == 100
+    assert warning_level(250) == 100
+
+
+def test_warning_item_fields_and_escaping():
+    from pintxos.feed_out import warning_item
+
+    feed = {"id": 7, "title": "News & <Views>", "url": "https://example.com/feed.xml"}
+    item = warning_item(
+        feed,
+        level=50,
+        summaries_today=62,
+        day="2026-09-11",
+        feed_page_url="https://pintxos.example/feeds/7",
+        model="gpt-4o & friends",
+    )
+
+    assert item["guid"] == "pintxos-warning-7-50-2026-09-11"
+    assert item["title"] == "Pintxøs: this feed produced 62 summaries today"
+    assert item["link"] == "https://pintxos.example/feeds/7"
+    assert item["pub_date"].tzinfo is not None
+
+    description = item["description"]
+    assert "News &amp; &lt;Views&gt;" in description
+    assert "News & <Views>" not in description
+    assert "62 summaries today" in description
+    assert "call to gpt-4o &amp; friends." in description
+    assert 'href="https://pintxos.example/feeds/7"' in description
+    assert "Open the feed's settings" in description
+    assert "Did you know? Pintxøs can skip ads" in description
+    # Below the 100 threshold: no "far more than anyone reads" escalation sentence.
+    assert "far more than anyone reads" not in description
+
+
+def test_warning_item_level_100_adds_escalation_sentence():
+    from pintxos.feed_out import warning_item
+
+    feed = {"id": 3, "title": None, "url": "https://example.com/nofeed"}
+    item = warning_item(
+        feed,
+        level=100,
+        summaries_today=250,
+        day="2026-09-11",
+        feed_page_url="https://pintxos.example/feeds/3",
+        model="gpt-4o",
+    )
+
+    assert "far more than anyone reads in a day" in item["description"]
+    assert "paid for and never opened" in item["description"]
+    # Falls back to the feed URL when it has no title.
+    assert "https://example.com/nofeed produced 250 summaries" in item["description"]
+
+
+def test_render_rss_with_warning_prepends_warning_item():
+    from pintxos.feed_out import warning_item
+
+    feed_id = _seed()
+    feed = {"id": feed_id, "title": "Example Feed", "url": FEED_URL}
+    warning = warning_item(
+        feed,
+        level=50,
+        summaries_today=62,
+        day="2026-09-11",
+        feed_page_url="https://pintxos.example/feeds/1",
+        model="gpt-4o",
+    )
+
+    with db() as conn:
+        db_feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        items = conn.execute(
+            "SELECT * FROM items WHERE feed_id = ? ORDER BY published_at DESC, id DESC",
+            (feed_id,),
+        ).fetchall()
+
+    from pintxos.feed_out import render_rss
+
+    body = render_rss(db_feed, items, full_text=True, warning=warning)
+    parsed = feedparser.parse(body)
+
+    assert parsed.bozo == 0
+    assert len(parsed.entries) == 3
+    first = parsed.entries[0]
+    assert first.title == warning["title"]
+    assert first.link == warning["link"]
+    assert first.guid == warning["guid"]
+    titles = {e.title for e in parsed.entries[1:]}
+    assert titles == {"Headline One", "Headline Two"}
+
+    # Same shape with full_text disabled.
+    body_no_full_text = render_rss(db_feed, items, full_text=False, warning=warning)
+    parsed_no_full_text = feedparser.parse(body_no_full_text)
+    assert len(parsed_no_full_text.entries) == 3
+    assert parsed_no_full_text.entries[0].title == warning["title"]
+
+
+def test_render_rss_with_warning_still_skips_muted_items():
+    feed_id = _seed()
+    with db() as conn:
+        conn.execute(
+            """INSERT INTO items
+            (feed_id, guid, link, original_title, published_at, headline, summary,
+             fallback, word_count, created_at, topic, muted)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                feed_id,
+                "guid-3",
+                "https://example.com/3",
+                "Original Three",
+                "2026-09-03T12:00:00+00:00",
+                None,
+                None,
+                0,
+                None,
+                now(),
+                "sport",
+                1,
+            ),
+        )
+        db_feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        items = conn.execute(
+            "SELECT * FROM items WHERE feed_id = ? ORDER BY published_at DESC, id DESC",
+            (feed_id,),
+        ).fetchall()
+
+    from pintxos.feed_out import render_rss, warning_item
+
+    warning = warning_item(
+        db_feed,
+        level=50,
+        summaries_today=62,
+        day="2026-09-11",
+        feed_page_url="https://pintxos.example/feeds/1",
+        model="gpt-4o",
+    )
+    body = render_rss(db_feed, items, full_text=True, warning=warning)
+    parsed = feedparser.parse(body)
+
+    assert "guid-3" not in body.decode("utf-8")
+    assert "Original Three" not in body.decode("utf-8")
+    titles = {e.title for e in parsed.entries}
+    assert titles == {warning["title"], "Headline One", "Headline Two"}
+
+
+def test_render_rss_without_warning_is_unchanged():
+    from pintxos.feed_out import render_rss
+
+    feed_id = _seed()
+    with db() as conn:
+        db_feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        items = conn.execute(
+            "SELECT * FROM items WHERE feed_id = ? ORDER BY published_at DESC, id DESC",
+            (feed_id,),
+        ).fetchall()
+
+    body = render_rss(db_feed, items, full_text=True)
+    parsed = feedparser.parse(body)
+    assert len(parsed.entries) == 2
+    titles = {e.title for e in parsed.entries}
+    assert titles == {"Headline One", "Headline Two"}
+
+
 def test_feed_xml_omits_muted_items():
     """A muted item is stored but never published: its topic is muted for this feed."""
     feed_id = _seed()
