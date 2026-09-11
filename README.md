@@ -260,6 +260,10 @@ fallback items" re-reads articles that were stored as teasers. When the
 Feeds page shows "login failed", log in again and repeat the steps
 above: cookies expire.
 
+Short pages that declare themselves free (schema.org `isAccessibleForFree`)
+or are video/audio pages are summarized as they are and never reported as
+paywalled.
+
 Fetches impersonate a real browser (`PINTXOS_IMPERSONATE`, default
 `safari17_0`), because these sites reject plain HTTP clients before ever
 looking at a cookie. A challenged request is retried on the next
