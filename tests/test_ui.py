@@ -2209,8 +2209,8 @@ def _insert_item(
 
 
 def test_index_items_cell_no_longer_shows_login_indicator_counts(monkeypatch):
-    """The 'via login / need login / login failed' line left the Items cell for the
-    Status column; Items keeps only the count and the ads-skipped line."""
+    """The 'via login / need login / unreadable with login' line left the Items cell
+    for the Status column; Items keeps only the count and the ads-skipped line."""
     monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
     with TestClient(app) as c:
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
@@ -2228,7 +2228,7 @@ def test_index_items_cell_no_longer_shows_login_indicator_counts(monkeypatch):
     items_cell = _items_cell(page, 1)
     assert "via login" not in items_cell
     assert "need login" not in items_cell
-    assert "login failed" not in items_cell
+    assert "unreadable with login" not in items_cell
 
     # No new column: still 6 <th>s, 6 <col> widths.
     widths = re.findall(r'<col style="width: (\d+)%">', page)
@@ -2263,8 +2263,8 @@ def test_status_cell_shows_login_failed_when_cookies_loaded(monkeypatch):
 
         page = c.get("/").text
 
-    assert "login failed" in page
-    assert "check cookies" in page
+    assert "unreadable with login" in page
+    assert "check login" in page
     assert "Cookies for www.example.com are saved" in page
     assert "(earliest expiry 2100-01-01)" in page
 
@@ -2338,8 +2338,8 @@ def test_feed_edit_page_status_shows_login_failed_when_cookies_loaded(monkeypatc
 
         page = c.get("/feeds/1").text
 
-    assert "1 login failed" in page
-    assert "check cookies" in page
+    assert "1 unreadable with login" in page
+    assert "check login" in page
     assert "Cookies for www.example.com are saved" in page
     assert "(earliest expiry 2100-01-01)" in page
 
@@ -2445,7 +2445,7 @@ def test_feed_page_status_matches_feeds_table(monkeypatch):
 
     assert index_text == feed_text
     assert "paywalled" in index_text
-    assert "login failed" in index_text
+    assert "unreadable with login" in index_text
     assert "unreadable" in index_text
     assert _titles(index_status) == _titles(feed_status)
 
