@@ -10,19 +10,18 @@ Pintxøs grabs an RSS feed and republishes its articles as a new feed with neutr
 
 Article titles around the web are increasingly written just to be clicked, not read. Some egregious examples:
 
-- "*Popular Open-World Franchise Quietly Confirms Huge Upgrade After Years of Waiting*". Which tool? What is the upgrade?
-- "*Major Premier League Star Subject to ‘Unbelievable’ Bid as Huge Transfer Formally Agreed*". Who? Which teams? 
-- "*Netflix's Renewed Sci-Fi Thriller With Perfect Rotten Tomatoes Score Officially Hits A Filming Milestone*". Which show? What milestone? 
+- "*Popular Open-World Franchise Quietly Confirms Huge Upgrade After Years of Waiting*". Which franchise? What is the upgrade?
+- "*Major Premier League Star Subject to ‘Unbelievable’ Bid as Huge Transfer Formally Agreed*". Who? Which teams?
+- "*Netflix's Renewed Sci-Fi Thriller With Perfect Rotten Tomatoes Score Officially Hits A Filming Milestone*". Which show? What milestone?
 
 Argh! 🤯
 
-Pintxøs takes the original RSS feed, ingests the title and contents, and spits out a new RSS feed with a plain, useful title, a max. 100 word summary, and a link to the original post. 
+Pintxøs takes the original RSS feed, ingests the title and contents, and spits out a new RSS feed with a plain, useful title, a max. 100-word summary, and a link to the original post.
 
 Example:
 
 - Original headline: "*Netflix's Renewed Sci-Fi Thriller With Perfect Rotten Tomatoes Score Officially Hits A Filming Milestone*"
-- Pintxøs' rewritten headline: *"Netflix's Supacell completes season 2
-  filming"*
+- Pintxøs' rewritten headline: "*Netflix's Supacell completes season 2 filming*"
 
 Same story, no guessing games. Sanity restored. Point Pintxøs at a feed once, and every new item gets the same treatment automatically.
 
@@ -30,106 +29,23 @@ Same story, no guessing games. Sanity restored. Point Pintxøs at a feed once, a
 
 ### Additional features
 
-- **Ad filtering.** Skip deal posts, coupons and sponsored entries before they reach your feed. Built-in rules cover the usual "60% off" and promo-code posts. The feed's Edit page shows what the last poll dropped and why.
+- **Model choice.** Use Anthropic's Haiku or other suitable models through OpenRouter. Each feed can use a different model, to balance quality and cost.
+- **Ad filtering.** Skip deal posts, coupons and sponsored entries before they reach your feed. Built-in rules cover the usual "60% off" and promo-code posts. Each feed's Edit page shows what the last poll dropped and why.
 - **Keyword filtering.** Block or keep entries by title, globally or per feed, e.g. drop everything mentioning `cricket` or `horoscope`. Supports regular expressions.
 - **Full text inline.** The whole article is appended below the summary, so you can read it in your feed reader without opening the site.
 - **English summaries of foreign-language feeds.** By default headlines and summaries stay in the article's language. Turn that off, globally or per feed, to always get English.
 - **Paywalled sites.** Paste your browser's cookies for sites you subscribe to and Pintxøs reads the full article instead of the teaser. Each feed shows whether the login worked.
 - **Word count and reading time** on every item, so you know what you are clicking into.
-- **Topic mute.** Per feed, turn on "Classify topics" on the feed's Edit page; one small AI call per new item classifies it into one of the 17 IPTC Media Topics top-level topics (arts, sport, weather, ...); tick topics to mute; muted items never reach the output feed and cost no summary call; percentages next to each topic show the share of classified items so far; keyword patterns are free and should be tried first; the "Filtered at last poll" list has a Summarize button per row to release an item.
-- **Volume warning and daily budget.** A feed that suddenly produces far more summaries than usual gets a warning article at the top of its output feed, once per day; a per-feed "Max summaries per day" budget skips the rest before any fetch or summary call, with a Summarize button to release a skipped entry anyway.
+- **Topic mute.** Tick any of 17 media categories (arts, sport, health, weather, ...) to mute them entirely.
+- **Volume warning and daily budget.** A feed that produces an unusually high number of summaries gets a warning article in its output feed, once per day. Set a per-feed daily limit if you want a hard cap.
 
-## How it works
+## How to use it
 
-1. Poll each subscribed feed on a schedule.
-2. Optionally skip entries that look like ads or coupon posts before doing
-   anything else — see [Filtering ads, coupons and other
-   noise](#filtering-ads-coupons-and-other-noise) below.
-3. For each new item, fetch the article's own URL and extract the body text
-   with [trafilatura](https://github.com/adbar/trafilatura).
-4. If the page can't be fetched or extraction comes back too thin, fall back
-   to the feed entry's own content (or, as a last resort, its title) — a
-   `fallback` flag is kept on the item so you know which path was used.
-5. Send the text to Claude to produce a factual headline and a short summary.
-   This happens **once per item**, ever — the result is stored, and items are
-   never re-summarized.
-6. Serve the result back out as a clean RSS 2.0 feed, one output feed per
-   subscribed input feed.
+1. Add your favorite feeds to Pintxøs.
+2. Grab its output URL and read it in your RSS reader of choice.
+3. Done.
 
-## Filtering ads, coupons and other noise
-
-The ad filter is off by default; turn it on with `PINTXOS_FILTER_ADS=1` or the
-checkbox on the Settings page. When enabled, it skips entries that look like
-ads or coupon posts before fetching or summarizing them, so they cost
-nothing and never reach the output feed — detected by RSS category (e.g.
-Wired's "Gear / Deals" tag), title shape ("Groupon Promo Codes: 60% Off in
-September 2026"), or a URL slug ending in `-promo-code`/`-coupons`. The
-built-in rules also cover Tom's Guide style sale posts ("Labor Day sale",
-"save up to 50%", "44% off"). You can
-add your own regexes, one per line, via `PINTXOS_AD_TITLE_PATTERNS` or the
-same Settings textarea. Titles matching `PINTXOS_AD_KEEP_PATTERNS` (also one
-regex per line, editable on the Settings page) are never filtered, overriding
-every block rule including the built-ins. Built-in keep rules already rescue
-obvious news headlines (stock sale, for sale, lawsuits, fraud) from the block
-rules above; `PINTXOS_AD_KEEP_PATTERNS` adds to them. The filter only applies to entries
-seen after it is turned on — it never touches items already stored. The Feeds page shows "N
-filtered" under a feed's item count for its last poll. Each feed can also
-override the global switch and choose whether it inherits, extends, or
-ignores the global patterns from its Edit page. The feed's Edit page also
-lets you override its title; leave the field blank to fall back to the
-feed's own title.
-
-```
-black friday
-\bgiveaway\b
-^sponsored:
-```
-
-The filter was contributed by Eric Bowman (@ebowman) — see
-[pintxos#2](https://github.com/janw76/pintxos/pull/2).
-
-### Topic mute
-
-The ad filter is free and catches deal posts; topic mute is for muting whole
-subjects (sport, weather, arts, ...) that you never want in your feed, at
-the cost of one small AI call per new item. It's off by default, per feed:
-turn on "Classify topics" on the feed's Edit page and each new item is
-classified into one of the 17 IPTC Media Topics top-level topics, then
-matched against the topics you've ticked to mute.
-
-- Tick any of the 17 topics to mute it; a muted item is dropped before
-  summarizing, so it costs nothing and never reaches the output feed.
-- Each topic shows a running percentage — the share of classified items so
-  far that fell into it — shown once at least one item fell into that topic.
-- Keyword title patterns (above) are free and run first; reach for topic
-  mute only for what they can't catch.
-- The "Filtered at last poll" list shows every item dropped by either
-  mechanism and why. Ad-filtered and muted-topic rows carry a Summarize
-  button to release that one item into the output feed anyway.
-
-IPTC Media Topics vocabulary © IPTC (https://iptc.org/), used under CC BY 4.0.
-
-### Volume warning and daily budget
-
-A feed that starts producing an unusual number of summaries in a day is
-worth a second look — it may be an oversized feed, a misconfigured URL, or
-just a very busy news day. Once a feed reaches 50 summaries on a given day,
-Pintxøs prepends a warning article to that feed's output — a stronger one at
-100 — that explains what happened and links straight to the feed's Edit
-page. Each level fires once per day; the warning never touches the feed's
-own items.
-
-- The warning is per feed, On by default; flip it Off in the "Volume"
-  fieldset on the feed's Edit page if you'd rather not see it.
-- "Max summaries per day" sets a hard budget for the feed, blank for
-  unlimited; once the budget is reached, further entries are skipped before
-  any fetch or summary call, so they cost nothing.
-- Skipped entries show up in the "Filtered at last poll" list like any other
-  filtered item, with a Summarize button to release one anyway.
-- The feed's Edit page always shows "Summaries: N today, M total" so you can
-  see where a feed stands against its budget.
-
-## Quickstart
+## Quickstart: How to set up Pintxøs
 
 ```yaml
 services:
@@ -162,7 +78,7 @@ feed URL into your RSS reader of choice. My favorite is [NetNewsWire](https://ne
 The box above the table filters your feeds by title or URL as you type, and the Add
 button activates once you paste in a feed URL.
 
-If you run [Tailscale](https://tailscale.com), I would recommend to expose Pintxøs [as a service](https://tailscale.com/docs/features/tailscale-services), which will give you a proper URL with https you can access easily from any RSS client in your Tailnet.
+If you run [Tailscale](https://tailscale.com), I recommend exposing Pintxøs [as a service](https://tailscale.com/docs/features/tailscale-services), which gives you a proper HTTPS URL that any RSS client in your Tailnet can reach.
 
 ### Run without Docker
 
@@ -215,7 +131,7 @@ macOS), see [docs/deploy-native.md](docs/deploy-native.md).
 ## Configuration
 
 Model, poll interval, items per feed and the API keys can be set via environment
-variable, or (if unset) via the Settings page in the web UI, which persists them
+variables, or (if unset) via the Settings page in the web UI, which persists them
 to the database. `PINTXOS_BASE_URL`, `PINTXOS_DATA_DIR`, `PINTXOS_HOST`,
 `PINTXOS_PORT` and `PINTXOS_IMPERSONATE` are environment-only.
 
@@ -274,6 +190,83 @@ profile in the list, requests to one site are spaced two seconds
 apart, and each scheduled poll re-fetches up to three items that were
 blocked earlier.
 
+## Filter details
+
+### Filtering ads, coupons and other noise
+
+The ad filter is off by default; turn it on with `PINTXOS_FILTER_ADS=1` or the
+checkbox on the Settings page. When enabled, it skips entries that look like
+ads or coupon posts before fetching or summarizing them, so they cost
+nothing and never reach the output feed — detected by RSS category (e.g.
+Wired's "Gear / Deals" tag), title shape ("Groupon Promo Codes: 60% Off in
+September 2026"), or a URL slug ending in `-promo-code`/`-coupons`. The
+built-in rules also cover Tom's Guide style sale posts ("Labor Day sale",
+"save up to 50%", "44% off"). You can
+add your own regexes, one per line, via `PINTXOS_AD_TITLE_PATTERNS` or the
+same Settings textarea. Titles matching `PINTXOS_AD_KEEP_PATTERNS` (also one
+regex per line, editable on the Settings page) are never filtered, overriding
+every block rule including the built-ins. Built-in keep rules already rescue
+obvious news headlines (stock sale, for sale, lawsuits, fraud) from the block
+rules above; `PINTXOS_AD_KEEP_PATTERNS` adds to them. The filter only applies to entries
+seen after it is turned on — it never touches items already stored. The Feeds page shows "N
+filtered" under a feed's item count for its last poll. Each feed can also
+override the global switch and choose whether it inherits, extends, or
+ignores the global patterns from its Edit page. The feed's Edit page also
+lets you override its title; leave the field blank to fall back to the
+feed's own title.
+
+Example patterns, one per line:
+
+```
+black friday
+\bgiveaway\b
+^sponsored:
+```
+
+The filter was contributed by Eric Bowman (@ebowman) — see
+[pintxos#2](https://github.com/janw76/pintxos/pull/2).
+
+### Topic mute
+
+The ad filter is free and catches deal posts; topic mute is for muting whole
+subjects (sport, weather, arts, ...) that you never want in your feed, at
+the cost of one small AI call per new item. It's off by default, per feed:
+turn on "Classify topics" on the feed's Edit page and each new item is
+classified into one of the 17 IPTC Media Topics top-level topics, then
+matched against the topics you've ticked to mute.
+
+- Tick any of the 17 topics to mute it; a muted item is dropped before
+  summarizing, so it costs nothing and never reaches the output feed.
+- Each topic shows a running percentage — the share of classified items so
+  far that fell into it — shown once at least one item fell into that topic.
+- Keyword title patterns (above) are free and run first; reach for topic
+  mute only for what they can't catch.
+- The "Filtered at last poll" list shows every item dropped by either
+  mechanism and why. Ad-filtered and muted-topic rows carry a Summarize
+  button to release that one item into the output feed anyway.
+
+IPTC Media Topics vocabulary © IPTC (https://iptc.org/), used under CC BY 4.0.
+
+### Volume warning and daily budget
+
+A feed that starts producing an unusual number of summaries in a day is
+worth a second look — it may be an oversized feed, a misconfigured URL, or
+just a very busy news day. Once a feed reaches 50 summaries on a given day,
+Pintxøs prepends a warning article to that feed's output — a stronger one at
+100 — that explains what happened and links straight to the feed's Edit
+page. Each level fires once per day; the warning never touches the feed's
+own items.
+
+- The warning is per feed, On by default; flip it Off in the "Volume"
+  fieldset on the feed's Edit page if you'd rather not see it.
+- "Max summaries per day" sets a hard budget for the feed, blank for
+  unlimited; once the budget is reached, further entries are skipped before
+  any fetch or summary call, so they cost nothing.
+- Skipped entries show up in the "Filtered at last poll" list like any other
+  filtered item, with a Summarize button to release one anyway.
+- The feed's Edit page always shows "Summaries: N today, M total" so you can
+  see where a feed stands against its budget.
+
 ## Security warning
 
 **Pintxøs has no authentication.** Anyone who can reach the web UI can add,
@@ -300,25 +293,20 @@ lets you store that key in the database instead.
 
 ## Cost
 
-Pintxøs makes exactly one model call per new article, never more: items are
+* Pintxøs makes exactly **one** summary call per new article, never more: items are
 summarized once and stored, and are never re-summarized on subsequent polls.
-Feeds with "Classify topics" turned on add one more small call per new item —
+* Feeds with "Classify topics" turned on add one more small call per new item —
 the topic classification call is roughly 15% of the cost of a summary call,
-and only runs on feeds with the switch on. A per-feed "Max summaries per day"
-budget caps the number of summary calls that feed can make in a day,
+and only runs on feeds with the switch on. As a rule of thumb, topic mute pays for itself once the muted topics make up more than about 15% of a feed's items (the feed's Edit page shows the share of items in each topic).
+* A per-feed "Max summaries per day" budget caps the number of summary calls that feed can make in a day,
 regardless of how much it polls.
-
-Pintxøs avoids re-polling and re-summarizing, but I still recommend watching
-cost — on [Claude Console](https://platform.claude.com/) for Anthropic
-models, and on [OpenRouter's activity page](https://openrouter.ai/activity)
-for models with a slash. Cost scales with the number of feeds you poll and
-how many articles they publish.
+* Pintxøs avoids re-polling and re-summarizing, but I still recommend watching cost — on [Claude Console](https://platform.claude.com/) for Anthropic models, and on [OpenRouter's activity page](https://openrouter.ai/activity) for models with a slash. Cost scales with the number of feeds you poll and how many articles they publish.
 
 ## Choosing a model
 
 A model name with a slash (e.g. `google/gemini-2.5-flash-lite`) is sent to OpenRouter using `OPENROUTER_API_KEY`; a name without a slash (e.g. `claude-haiku-4-5-20251001`) is sent to Anthropic using `ANTHROPIC_API_KEY`. Both providers bill per token through API keys — a ChatGPT or Claude chat subscription cannot be used.
 
-| Model | Cost per 100 articles | Notes |
+| Model | Approx. cost per 100 articles | Notes |
 |---|---|---|
 | `claude-haiku-4-5-20251001` | ~$0.28 | Anthropic direct. Current default, strongest multilingual output. |
 | `anthropic/claude-haiku-4.5` | ~$0.28 | Same model via OpenRouter. |
@@ -327,18 +315,9 @@ A model name with a slash (e.g. `google/gemini-2.5-flash-lite`) is sent to OpenR
 
 Prices are OpenRouter's as of September 2026 and drift; see the full list at [openrouter.ai/models](https://openrouter.ai/models). The same four presets are clickable on the Settings page.
 
-Each feed can override the model on its Edit page — a premium model for one feed, the cheapest for another; leaving it blank uses the global default.
+Each feed can override the model on its Edit page — e.g., a premium model for one feed, the cheapest for another; leaving it blank uses the global default.
 
-Save the model on the Settings page first, then click "Test saved model" to run a tiny completion with it and the saved key — it shows the model's answer or the exact error.
-
-Cheaper models may fail the required JSON output format more often; those items are logged as summarize errors and retried on the next poll.
-
-## Usage
-
-1. Open the web UI and add a feed URL.
-2. Wait for the next poll (or click "poll now").
-3. Copy the feed's output URL — pattern `/feeds/<id>.xml` — into your RSS
-   reader.
+Save the model on the Settings page first, then click "Test saved model" to run a tiny completion with it and the saved key.
 
 ## Development
 
@@ -351,13 +330,7 @@ docker build -t pintxos .
 
 ## Other tools
 
-See also  [docs/prior-art.md](docs/prior-art.md) for a full survey. Many of these do amazing things but I wanted something simple that does 1-2 things I want and need very well, nothing else. 
-
-- The closest existing match seems to be [RSSbrew](https://github.com/yinan-c/RSSbrew) (Docker, web UI, persisted store, real republished feed), but it never fetches the original article page and prepends a summary rather than rewriting the
-headline.
-- Radar RSS: Real-time intelligent dynamic RSS news aggregator with Google Gemini AI curation, Windows desktop application, and native Android app support.
-- ...
-
+See also [docs/prior-art.md](docs/prior-art.md) for a full survey. Many of these do amazing things, but I wanted something simple that does the one or two things I need very well, and nothing else.
 
 
 ## License
