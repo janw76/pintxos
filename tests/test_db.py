@@ -448,3 +448,65 @@ def test_fresh_schema_has_topic_columns(db):
     assert {"classify_topics", "mute_topics", "topic_counts"} <= feed_cols
     item_cols = {r["name"] for r in db.execute("PRAGMA table_info(items)")}
     assert {"topic", "muted"} <= item_cols
+
+
+def test_connect_migrates_existing_db_missing_feed_stats(tmp_path, monkeypatch):
+    """A DB from before feed_stats gains the table and the budget columns on connect()."""
+    monkeypatch.setenv("PINTXOS_DATA_DIR", str(tmp_path))
+    old_conn = sqlite3.connect(db_path())
+    old_conn.executescript(
+        """
+        CREATE TABLE feeds (
+            id INTEGER PRIMARY KEY,
+            url TEXT UNIQUE NOT NULL,
+            title TEXT,
+            created_at TEXT,
+            last_polled_at TEXT,
+            last_error TEXT,
+            ads_filtered INTEGER NOT NULL DEFAULT 0,
+            last_filtered TEXT,
+            filter_ads INTEGER,
+            ad_title_patterns TEXT,
+            ad_patterns_mode INTEGER,
+            respect_language INTEGER,
+            classify_topics INTEGER,
+            mute_topics TEXT,
+            topic_counts TEXT
+        );
+        INSERT INTO feeds (url) VALUES ('https://example.com/feed.xml');
+        """
+    )
+    old_conn.commit()
+    old_conn.close()
+
+    conn = connect()
+    try:
+        tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        assert "feed_stats" in {r["name"] for r in tables}
+        cols = [r["name"] for r in conn.execute("PRAGMA table_info(feeds)")]
+        for name in ("warn_volume", "daily_budget"):
+            assert cols.count(name) == 1
+    finally:
+        conn.close()
+
+    # Second connect() must be a no-op migration, not an error, and columns stay singular.
+    conn2 = connect()
+    try:
+        cols2 = [r["name"] for r in conn2.execute("PRAGMA table_info(feeds)")]
+        for name in ("warn_volume", "daily_budget"):
+            assert cols2.count(name) == 1
+        row = conn2.execute("SELECT * FROM feeds").fetchone()
+        assert row["warn_volume"] is None  # existing feeds keep the default warning
+        assert row["daily_budget"] is None  # ... and stay unlimited
+        stats_cols = {r["name"] for r in conn2.execute("PRAGMA table_info(feed_stats)")}
+        assert {"feed_id", "day", "summaries", "classifications"} <= stats_cols
+    finally:
+        conn2.close()
+
+
+def test_fresh_schema_has_feed_stats_and_budget_columns(db):
+    """A DB created from the current SCHEMA already has feed_stats and the budget columns."""
+    names = {r["name"] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "feed_stats" in names
+    feed_cols = {r["name"] for r in db.execute("PRAGMA table_info(feeds)")}
+    assert {"warn_volume", "daily_budget"} <= feed_cols
