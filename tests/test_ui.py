@@ -13,7 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import pintxos.app as app_module
-from pintxos import poll, topics
+from pintxos import feedstats, poll, topics
 from pintxos.app import app
 from pintxos.config import data_dir, get_setting
 from pintxos.cookies import cookie_path, load_jar
@@ -172,11 +172,16 @@ def _status_cell(page: str, feed_id: int) -> str:
 
 def _feed_page_status(page: str) -> str:
     """The Status block (raw HTML) on the feed-edit page: after the heading, up to the
-    next <form> (the retry-fallback form when present, else the end of the page)."""
+    Summaries line (a feed-edit-only addition) or, failing that, the next <form> (the
+    retry-fallback form when present, else the end of the page)."""
     start = page.index("<h2>Status</h2>") + len("<h2>Status</h2>")
     rest = page[start:]
-    form_pos = rest.find("<form")
-    end = start + form_pos if form_pos != -1 else len(page)
+    candidates = [
+        pos
+        for pos in (rest.find('<div class="muted">Summaries:'), rest.find("<form"))
+        if pos != -1
+    ]
+    end = start + min(candidates) if candidates else len(page)
     return page[start:end]
 
 
@@ -893,9 +898,9 @@ def test_feed_edit_page_shows_radios_and_global_patterns_box(monkeypatch):
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
         page = c.get("/feeds/1").text
 
-    # eleven radios: three each for respect_language, filter_ads, ad_patterns_mode,
-    # two for classify_topics
-    assert page.count('type="radio"') == 11
+    # thirteen radios: three each for respect_language, filter_ads, ad_patterns_mode,
+    # two each for classify_topics and warn_volume
+    assert page.count('type="radio"') == 13
     assert 'name="filter_ads"' in page
     assert 'name="ad_patterns_mode"' in page
     assert 'name="ad_title_patterns"' in page
@@ -942,7 +947,7 @@ def test_feed_edit_post_off_and_patterns_saved(monkeypatch):
 
         # the edit page reflects what was just saved
         page = c.get("/feeds/1").text
-        assert page.count('type="radio"') == 11
+        assert page.count('type="radio"') == 13
         assert 'name="filter_ads" value="0" checked' in page
         assert 'name="filter_ads" value="" checked' not in page
         assert 'name="ad_patterns_mode" value="1" checked' in page
@@ -1038,6 +1043,74 @@ def test_feed_edit_page_shows_topic_percentages(monkeypatch):
     # A topic with no classified items yet shows no percentage at all.
     arts_label = page.split('value="arts"')[1].split("</label>")[0]
     assert "%" not in arts_label
+
+
+def test_feed_edit_page_shows_volume_defaults_and_summary_totals(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        page = c.get("/feeds/1").text
+
+    assert 'name="warn_volume" value="1" checked' in page
+    assert 'name="warn_volume" value="0" checked' not in page
+    assert 'name="daily_budget"' in page
+    assert 'name="daily_budget" min="0" step="1" value="">' in page
+    assert "Summaries: 0 today, 0 total" in page
+
+
+def test_feed_edit_post_saves_warn_volume_and_daily_budget(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        resp = c.post(
+            "/feeds/1",
+            data={"filter_ads": "", "ad_patterns_mode": "", "warn_volume": "0", "daily_budget": "25"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/?msg=Saved"
+
+        with db() as conn:
+            row = conn.execute(
+                "SELECT warn_volume, daily_budget FROM feeds WHERE id = 1"
+            ).fetchone()
+        assert row["warn_volume"] == 0
+        assert row["daily_budget"] == 25
+
+        page = c.get("/feeds/1").text
+        assert 'name="warn_volume" value="0" checked' in page
+        assert 'name="warn_volume" value="1" checked' not in page
+        assert 'name="daily_budget" min="0" step="1" value="25">' in page
+
+
+def test_feed_edit_post_daily_budget_invalid_values_rejected(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+
+        for bad_value in ("abc", "-1"):
+            resp = c.post(
+                "/feeds/1",
+                data={"filter_ads": "", "ad_patterns_mode": "", "daily_budget": bad_value},
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+            assert resp.headers["location"].startswith("/feeds/1?err=")
+            with db() as conn:
+                row = conn.execute("SELECT daily_budget FROM feeds WHERE id = 1").fetchone()
+            assert row["daily_budget"] is None
+
+
+def test_feed_edit_page_shows_summaries_today_and_total(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        with db() as conn:
+            feedstats.bump(conn, 1, summaries=3, day=feedstats.today())
+            feedstats.bump(conn, 1, summaries=5, day="2020-01-01")
+        page = c.get("/feeds/1").text
+
+    assert "Summaries: 3 today, 8 total" in page
 
 
 def test_feed_edit_post_patterns_mode_off_stores_zero(monkeypatch):
@@ -1447,7 +1520,7 @@ def test_feed_edit_radios_keep_their_controls(monkeypatch):
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
         page = c.get("/feeds/1").text
 
-    assert page.count('type="radio"') == 11
+    assert page.count('type="radio"') == 13
     assert ".field input, .field textarea { width: 100%; }" not in page
     assert "accent-color: var(--accent)" in page
 

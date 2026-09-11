@@ -16,7 +16,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, Response, Uploa
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from pintxos import adfilter
+from pintxos import adfilter, feedstats
 from pintxos.config import data_dir, get_setting, is_truthy
 from pintxos.cookies import cookie_path, expiry_for, get_jar, has_cookies_for, load_jar, summary
 from pintxos.db import db, init_db, now
@@ -164,6 +164,9 @@ def feed_edit_page(request: Request, feed_id: int) -> Response:
         feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
         if feed is None:
             raise HTTPException(status_code=404, detail="feed not found")
+        warn_volume = 1 if feed["warn_volume"] is None else feed["warn_volume"]
+        daily_budget = feed["daily_budget"]
+        summaries_today, summaries_total = feedstats.totals(conn, feed_id)
         global_filter_ads_on = is_truthy(get_setting("PINTXOS_FILTER_ADS", conn))
         global_patterns = get_setting("PINTXOS_AD_TITLE_PATTERNS", conn) or ""
         global_respect_language_on = is_truthy(get_setting("PINTXOS_RESPECT_LANGUAGE", conn))
@@ -243,6 +246,10 @@ def feed_edit_page(request: Request, feed_id: int) -> Response:
             "classified_total": classified_total,
             "classify_topics": feed["classify_topics"] or 0,
             "mute_topics": mute_topics,
+            "warn_volume": warn_volume,
+            "daily_budget": daily_budget,
+            "summaries_today": summaries_today,
+            "summaries_total": summaries_total,
         },
     )
 
@@ -257,6 +264,8 @@ def feed_edit_save(
     respect_language: str = Form(""),
     classify_topics: str = Form(""),
     mute_topics: list[str] = Form([]),
+    warn_volume: str = Form(""),
+    daily_budget: str = Form(""),
 ) -> Response:
     if filter_ads not in ("", "0", "1"):
         return _redirect(f"/feeds/{feed_id}", err="Invalid filter choice")
@@ -266,6 +275,19 @@ def feed_edit_save(
         return _redirect(f"/feeds/{feed_id}", err="Invalid language choice")
     if classify_topics not in ("", "0", "1"):
         return _redirect(f"/feeds/{feed_id}", err="Invalid topic choice")
+    if warn_volume not in ("", "0", "1"):
+        return _redirect(f"/feeds/{feed_id}", err="Invalid warning choice")
+
+    daily_budget_stripped = daily_budget.strip()
+    if not daily_budget_stripped:
+        daily_budget_value = None
+    else:
+        try:
+            daily_budget_value = int(daily_budget_stripped)
+        except ValueError:
+            return _redirect(f"/feeds/{feed_id}", err="Daily budget must be a whole number")
+        if daily_budget_value < 0:
+            return _redirect(f"/feeds/{feed_id}", err="Daily budget must be a whole number")
 
     title = title.strip()
     if len(title) > 200:
@@ -280,6 +302,7 @@ def feed_edit_save(
     patterns_mode_value = int(ad_patterns_mode) if ad_patterns_mode else None
     respect_language_value = int(respect_language) if respect_language else None
     classify_topics_value = int(classify_topics) if classify_topics else None
+    warn_volume_value = int(warn_volume) if warn_volume else None
 
     submitted_topics = set(mute_topics)
     mute_topics_ordered = [slug for slug, _name, _definition in TOPICS if slug in submitted_topics]
@@ -289,7 +312,7 @@ def feed_edit_save(
         cur = conn.execute(
             "UPDATE feeds SET title = ?, filter_ads = ?, ad_patterns_mode = ?, "
             "ad_title_patterns = ?, respect_language = ?, classify_topics = ?, "
-            "mute_topics = ? WHERE id = ?",
+            "mute_topics = ?, warn_volume = ?, daily_budget = ? WHERE id = ?",
             (
                 title or None,
                 filter_ads_value,
@@ -298,6 +321,8 @@ def feed_edit_save(
                 respect_language_value,
                 classify_topics_value,
                 mute_topics_value,
+                warn_volume_value,
+                daily_budget_value,
                 feed_id,
             ),
         )
