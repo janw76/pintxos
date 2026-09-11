@@ -111,7 +111,7 @@ def connect() -> sqlite3.Connection:
         # NULL = article was not fetched (fallback), so no stats.
         ("word_count", "INTEGER"),
         ("auth", "TEXT"),
-        # Why the article ended up as it did: ok / teaser / blocked / error.
+        # Why the article ended up as it did: ok / short / teaser / blocked / error.
         # NULL = written before this column existed; callers treat it as "error".
         ("fetch_status", "TEXT"),
         # The text handed to summarize(). NULL = no real text (row written before this

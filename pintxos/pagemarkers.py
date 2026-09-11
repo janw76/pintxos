@@ -30,7 +30,7 @@ import json
 import re
 from typing import Any, NamedTuple
 
-__all__ = ["Markers", "page_markers", "free_short_page"]
+__all__ = ["Markers", "page_markers", "free_short_page", "PAYWALL_MARKERS", "paywall_markers"]
 
 # <script type="application/ld+json"> ... </script>, tolerating other
 # attributes, any attribute order and unquoted/single-quoted type values.
@@ -174,3 +174,30 @@ def free_short_page(html: str) -> str | None:
             return f"media:{media_type}"
 
     return None
+
+
+# ponytail: guessed from two teaser pages (FT, Economist); extend from teaser
+# fingerprints in the logs before building Option B
+PAYWALL_MARKERS: list[tuple[str, re.Pattern[str]]] = [
+    ("piano", re.compile(r"tp-modal|tp-container|piano\.io", re.IGNORECASE)),
+    (
+        "paywall",
+        re.compile(r"""\b(?:class|id)\s*=\s*("[^"]*paywall[^"]*"|'[^']*paywall[^']*')""", re.IGNORECASE),
+    ),
+    ("subscribe-wall", re.compile(r"subscribe-wall|subscription-wall|meter-wall", re.IGNORECASE)),
+    (
+        "subscribe-copy",
+        re.compile(
+            r"subscribe to continue|subscribe to read|already a subscriber", re.IGNORECASE
+        ),
+    ),
+    ("regwall", re.compile(r"regwall|registration-wall", re.IGNORECASE)),
+]
+
+
+def paywall_markers(html: str) -> list[str]:
+    """Names of the paywall fingerprints found in `html`, in `PAYWALL_MARKERS`
+    order, each name at most once. `[]` for empty input or no match."""
+    if not html:
+        return []
+    return [name for name, pattern in PAYWALL_MARKERS if pattern.search(html)]
