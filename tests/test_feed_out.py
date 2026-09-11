@@ -210,14 +210,14 @@ def test_feed_xml_omits_reading_time_for_fallback_item():
     assert "min read" not in entry.description
 
 
-def test_feed_xml_stats_line_precedes_original_line():
+def test_feed_xml_original_line_precedes_stats_line():
     _seed()
     with TestClient(app) as c:
         resp = c.get("/feeds/1.xml")
 
     parsed = feedparser.parse(resp.content)
     entry = next(e for e in parsed.entries if e.title == "Headline One")
-    assert entry.description.index("min read") < entry.description.index("Original:")
+    assert entry.description.index("Original:") < entry.description.index("min read")
 
 
 FULL_TEXT_SAMPLE = "AT&T said 1 < 2\n\nSecond para"
@@ -503,6 +503,79 @@ def test_render_rss_without_warning_is_unchanged():
     assert len(parsed.entries) == 2
     titles = {e.title for e in parsed.entries}
     assert titles == {"Headline One", "Headline Two"}
+
+
+def _seed_with_model(model):
+    with db() as conn:
+        feed_id = conn.execute(
+            "INSERT INTO feeds(url, title, created_at) VALUES (?, ?, ?)",
+            (FEED_URL, "Example Feed", now()),
+        ).lastrowid
+        conn.execute(
+            """INSERT INTO items
+            (feed_id, guid, link, original_title, published_at, headline, summary,
+             fallback, word_count, auth, text, model, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                feed_id,
+                "guid-model",
+                "https://example.com/model",
+                "Original Model",
+                "2026-09-05T12:00:00+00:00",
+                "Headline Model",
+                "Summary model.",
+                0,
+                1200,
+                "used",
+                "Body text.",
+                model,
+                now(),
+            ),
+        )
+    return feed_id
+
+
+def _render_with_model(model, full_text=False):
+    from pintxos.feed_out import render_rss
+
+    feed_id = _seed_with_model(model)
+    with db() as conn:
+        db_feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        items = conn.execute(
+            "SELECT * FROM items WHERE feed_id = ? ORDER BY published_at DESC, id DESC",
+            (feed_id,),
+        ).fetchall()
+    body = render_rss(db_feed, items, full_text=full_text)
+    import xml.sax.saxutils
+
+    return xml.sax.saxutils.unescape(body.decode("utf-8"))
+
+
+def test_render_rss_appends_model_after_summary_in_small_gray():
+    raw = _render_with_model("google/gemini-2.5-flash-lite")
+    assert (
+        '<p>Summary model. <small style="color:#888">'
+        "(google/gemini-2.5-flash-lite)</small></p>" in raw
+    )
+
+
+def test_render_rss_omits_small_tag_when_model_is_null():
+    raw = _render_with_model(None)
+    assert "<p>Summary model.</p>" in raw
+    assert "<small" not in raw
+
+
+def test_render_rss_escapes_model_name():
+    raw = _render_with_model("a<b")
+    assert '<small style="color:#888">(a&lt;b)</small>' in raw
+
+
+def test_render_rss_description_order_is_summary_notes_original_stats_full_text():
+    raw = _render_with_model("google/gemini-2.5-flash-lite", full_text=True)
+    assert raw.index("Summary model.") < raw.index("Read with your subscription.")
+    assert raw.index("Read with your subscription.") < raw.index("Original:")
+    assert raw.index("Original:") < raw.index("About ")
+    assert raw.index("About ") < raw.index("=== FULL TEXT BELOW ===")
 
 
 def test_feed_xml_omits_muted_items():

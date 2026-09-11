@@ -442,7 +442,7 @@ def poll_feed(feed_id: int) -> bool:
         extra_ad_patterns = _extra_ad_patterns(conn, feed) if filter_ads else []
         keep_patterns = _keep_patterns(conn) if filter_ads else []
         daily_budget = feed["daily_budget"]
-        feed_model = feed["model"]
+        feed_model = feed["model"] or get_setting("PINTXOS_MODEL", conn)
         summaries_today = feedstats.totals(conn, feed_id)[0]
 
     try:
@@ -548,14 +548,14 @@ def poll_feed(feed_id: int) -> bool:
                     conn.execute(
                         "INSERT OR IGNORE INTO items(feed_id, guid, link, original_title, "
                         "published_at, headline, summary, fallback, word_count, auth, "
-                        "fetch_status, text, created_at, labels, topic, muted) "
-                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "fetch_status, text, created_at, labels, topic, muted, model) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (
                             feed_id, guid, link or "", original_title, _published_at(entry),
                             None, None, int(article.fallback), article.word_count,
                             article.auth, article.fetch_status,
                             None if article.title_only else article.text, now(), labels_json,
-                            topic, 1,
+                            topic, 1, None,
                         ),
                     )
                 filtered.append(
@@ -595,14 +595,14 @@ def poll_feed(feed_id: int) -> bool:
                 conn.execute(
                     "INSERT OR IGNORE INTO items(feed_id, guid, link, original_title, "
                     "published_at, headline, summary, fallback, word_count, auth, "
-                    "fetch_status, text, created_at, labels, topic, muted) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "fetch_status, text, created_at, labels, topic, muted, model) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         feed_id, guid, link or "", original_title, _published_at(entry),
                         headline, summary, int(article.fallback), article.word_count,
                         article.auth, article.fetch_status,
                         None if article.title_only else article.text, now(), labels_json,
-                        topic, 0,
+                        topic, 0, feed_model,
                     ),
                 )
 
@@ -718,7 +718,7 @@ def summarize_item(feed_id: int, guid: str) -> str | None:
         if feed is None:
             return "Feed not found"
         respect_language = _respect_language(conn, feed)
-        feed_model = feed["model"]
+        feed_model = feed["model"] or get_setting("PINTXOS_MODEL", conn)
         row = conn.execute(
             "SELECT * FROM items WHERE feed_id = ? AND guid = ?", (feed_id, guid)
         ).fetchone()
@@ -743,8 +743,9 @@ def summarize_item(feed_id: int, guid: str) -> str | None:
             with db() as conn:
                 # a row pruned meanwhile is a harmless no-op
                 conn.execute(
-                    "UPDATE items SET headline = ?, summary = ?, muted = 0 WHERE id = ?",
-                    (headline, summary, row["id"]),
+                    "UPDATE items SET headline = ?, summary = ?, muted = 0, model = ? "
+                    "WHERE id = ?",
+                    (headline, summary, feed_model, row["id"]),
                 )
             with db() as conn:
                 feedstats.bump(conn, feed_id, summaries=1)
@@ -782,14 +783,14 @@ def summarize_item(feed_id: int, guid: str) -> str | None:
                 conn.execute(
                     "INSERT OR IGNORE INTO items(feed_id, guid, link, original_title, "
                     "published_at, headline, summary, fallback, word_count, auth, "
-                    "fetch_status, text, created_at, labels, topic, muted) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "fetch_status, text, created_at, labels, topic, muted, model) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         feed_id, guid, article.link or "", article.title,
                         entry.get("published_at") or now(), headline, summary,
                         int(article.fallback), article.word_count, article.auth,
                         article.fetch_status, None if article.title_only else article.text,
-                        now(), labels_json, None, 0,
+                        now(), labels_json, None, 0, feed_model,
                     ),
                 )
             with db() as conn:
@@ -849,7 +850,9 @@ def retry_fallback(feed_id: int, limit: int | None = None, only_blocked: bool = 
             if override is not None
             else is_truthy(get_setting("PINTXOS_RESPECT_LANGUAGE", conn))
         )
-        feed_model = feed_row["model"] if feed_row is not None else None
+        feed_model = (feed_row["model"] if feed_row is not None else None) or get_setting(
+            "PINTXOS_MODEL", conn
+        )
 
     if only_blocked:
         candidates = [
@@ -925,10 +928,11 @@ def retry_fallback(feed_id: int, limit: int | None = None, only_blocked: bool = 
                 # a row pruned meanwhile is a harmless no-op
                 conn.execute(
                     "UPDATE items SET headline = ?, summary = ?, fallback = 0, auth = ?, "
-                    "word_count = ?, fetch_status = ?, text = ?, labels = ? WHERE id = ?",
+                    "word_count = ?, fetch_status = ?, text = ?, labels = ?, model = ? "
+                    "WHERE id = ?",
                     (
                         headline, summary, auth, words, fetch_status,
-                        stored_text, merged_labels, item_id,
+                        stored_text, merged_labels, feed_model, item_id,
                     ),
                 )
             with db() as conn:

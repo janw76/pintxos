@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.cookiejar
 import json
+import sqlite3
 import threading
 import time
 import urllib.request
@@ -17,8 +18,9 @@ from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from pintxos import feedstats, poll, topics
+from pintxos.config import DEFAULTS, db_path
 from pintxos.cookies import cookie_path
-from pintxos.db import db, now
+from pintxos.db import connect, db, now
 from pintxos.summarize import MissingApiKey, SummarizeError
 
 from conftest import FUTURE_EXPIRY, write_cookies
@@ -272,6 +274,8 @@ def test_poll_feed_passes_feed_model_to_summarize_and_classify(feed_id, monkeypa
 
     assert summarize_models and all(m == "x/y" for m in summarize_models)
     assert classify_models and all(m == "x/y" for m in classify_models)
+    rows = items()
+    assert rows and all(row["model"] == "x/y" for row in rows)
 
 
 def test_poll_feed_with_null_model_carries_global_model(feed_id, monkeypatch):
@@ -298,6 +302,71 @@ def test_poll_feed_with_null_model_carries_global_model(feed_id, monkeypatch):
     poll.poll_feed(feed_id)
 
     assert used_models and all(m == "global/model" for m in used_models)
+    rows = items()
+    assert rows and all(row["model"] == "global/model" for row in rows)
+
+
+def test_connect_migrates_existing_db_missing_items_model_column(tmp_path, monkeypatch):
+    """A DB from before the items.model column gains it on connect(), and only once."""
+    monkeypatch.setenv("PINTXOS_DATA_DIR", str(tmp_path))
+    old_conn = sqlite3.connect(db_path())
+    old_conn.executescript(
+        """
+        CREATE TABLE feeds (
+            id INTEGER PRIMARY KEY,
+            url TEXT UNIQUE NOT NULL,
+            title TEXT,
+            created_at TEXT,
+            last_polled_at TEXT,
+            last_error TEXT
+        );
+        CREATE TABLE items (
+            id INTEGER PRIMARY KEY,
+            feed_id INTEGER REFERENCES feeds(id) ON DELETE CASCADE,
+            guid TEXT NOT NULL,
+            link TEXT NOT NULL,
+            original_title TEXT,
+            published_at TEXT,
+            headline TEXT,
+            summary TEXT,
+            fallback INTEGER DEFAULT 0,
+            created_at TEXT,
+            UNIQUE(feed_id, guid)
+        );
+        """
+    )
+    old_conn.commit()
+    old_conn.close()
+
+    conn = connect()
+    try:
+        cols = [r["name"] for r in conn.execute("PRAGMA table_info(items)")]
+        assert cols.count("model") == 1
+        assert "model" in cols
+    finally:
+        conn.close()
+
+    # Second connect() must be a no-op migration, not an error, and the column stays singular.
+    conn2 = connect()
+    try:
+        cols2 = [r["name"] for r in conn2.execute("PRAGMA table_info(items)")]
+        assert cols2.count("model") == 1
+
+        cur = conn2.execute(
+            "INSERT INTO feeds(url, created_at) VALUES (?, ?)", (FEED_URL, now())
+        )
+        feed_id = cur.lastrowid
+        cur2 = conn2.execute(
+            "INSERT INTO items(feed_id, guid, link, original_title, created_at) "
+            "VALUES (?,?,?,?,?)",
+            (feed_id, "guid-1", "https://example.com/one", "A title", now()),
+        )
+        row = conn2.execute(
+            "SELECT * FROM items WHERE id = ?", (cur2.lastrowid,)
+        ).fetchone()
+        assert row["model"] is None  # pre-existing rows stay NULL
+    finally:
+        conn2.close()
 
 
 def test_summarize_error_skips_only_that_item(feed_id, calls, monkeypatch):
@@ -718,6 +787,7 @@ def test_retry_fallback_success_writes_text(feed_id, monkeypatch):
     rows = items()
     assert [row["id"] for row in rows] == [item_id]
     assert rows[0]["text"] == fetched_text
+    assert rows[0]["model"] == DEFAULTS["PINTXOS_MODEL"]  # feed has no per-feed override
 
 
 def test_retry_fallback_failure_leaves_text_unchanged(feed_id, monkeypatch):
@@ -2065,6 +2135,7 @@ def test_muted_topic_is_stored_muted_and_never_summarized(feed_id, calls, monkey
     assert muted["topic"] == "sport"
     assert muted["headline"] is None
     assert muted["summary"] is None
+    assert muted["model"] is None  # no summary was written, so no model to record
     assert muted["fallback"] == 1
     assert muted["word_count"] is None
     assert muted["fetch_status"] == "error"
@@ -2332,6 +2403,7 @@ def test_summarize_item_releases_muted_row_with_stored_text(feed_id, monkeypatch
     assert row["headline"] == "New headline"
     assert row["summary"] == "New summary"
     assert row["topic"] == "sport"  # kept, not re-classified
+    assert row["model"] == DEFAULTS["PINTXOS_MODEL"]  # feed has no per-feed override
     feed = feed_row(feed_id)
     assert json.loads(feed["last_filtered"]) == []
     assert feed["ads_filtered"] == 0
@@ -2414,6 +2486,7 @@ def test_summarize_item_releases_ad_log_entry(feed_id, monkeypatch):
     assert row["summary"] == "Ad summary"
     assert row["topic"] is None
     assert row["muted"] == 0
+    assert row["model"] == DEFAULTS["PINTXOS_MODEL"]  # feed has no per-feed override
     feed = feed_row(feed_id)
     assert json.loads(feed["last_filtered"]) == []
     assert feed["ads_filtered"] == 0

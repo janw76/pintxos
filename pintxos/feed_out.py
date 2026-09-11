@@ -146,10 +146,14 @@ def render_rss(
         pub_date = format_datetime(datetime.fromisoformat(item["published_at"]))
         ET.SubElement(entry, "pubDate").text = pub_date
 
-        description = f"<p>{item['summary']}</p>"
-        words = item["word_count"]
-        if words:
-            description += f"<p><em>{format_stats(words)}</em></p>"
+        model = item["model"] if "model" in item.keys() else None
+        if model:
+            description = (
+                f"<p>{item['summary']} "
+                f'<small style="color:#888">({html.escape(model)})</small></p>'
+            )
+        else:
+            description = f"<p>{item['summary']}</p>"
         auth = item["auth"]
         fetch_status = item["fetch_status"]
         if auth == "used":
@@ -166,6 +170,9 @@ def render_rss(
                     "<p><em>Note: article fetch failed; summarized from feed excerpt.</em></p>"
                 )
         description += f"<p>Original: {item['original_title']}</p>"
+        words = item["word_count"]
+        if words:
+            description += f"<p><em>{format_stats(words)}</em></p>"
         if full_text and item["text"]:
             description += "<p>=== FULL TEXT BELOW ===</p>"
             norm_original_title = _norm_title(item["original_title"] or "")
