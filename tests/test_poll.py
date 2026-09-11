@@ -424,6 +424,42 @@ def test_fetch_article_classifies_outcome(
         assert text is None
 
 
+# A JSON-LD block declaring the page freely accessible, wrapped around the same
+# too-short body as TEASER_HTML.
+SHORT_FREE_HTML = (
+    "<html><head><script type=\"application/ld+json\">"
+    '{"@context":"https://schema.org","@type":"NewsArticle","isAccessibleForFree":true}'
+    "</script></head><body><article><p>" + "Short teaser. " * 4 + "</p></article></body></html>"
+)
+
+
+def test_fetch_article_returns_short_for_free_marked_page(monkeypatch):
+    """A 2xx page under MIN_ARTICLE_CHARS that declares itself free (schema.org
+    isAccessibleForFree) is "short", not "teaser": the extracted text is kept
+    rather than discarded."""
+    monkeypatch.setattr(
+        poll,
+        "_get",
+        lambda url: FakeResponse(SHORT_FREE_HTML.encode(), content_type="text/html; charset=utf-8"),
+    )
+    text, status, _labels = poll.fetch_article("https://example.com/one")
+    assert status == "short"
+    assert "Short teaser." in text
+
+
+def test_fetch_article_stays_teaser_without_free_or_media_markers(monkeypatch):
+    """A short page with no free/media markup at all keeps today's "teaser"
+    behaviour -- the markerless case must not be swept into "short"."""
+    monkeypatch.setattr(
+        poll,
+        "_get",
+        lambda url: FakeResponse(TEASER_HTML.encode(), content_type="text/html; charset=utf-8"),
+    )
+    text, status, _labels = poll.fetch_article("https://example.com/one")
+    assert status == "teaser"
+    assert text is None
+
+
 def test_fetch_article_request_failure_is_an_error(monkeypatch):
     def boom(url):
         raise RuntimeError("connection reset")
@@ -593,6 +629,53 @@ def test_retry_fallback_keeps_existing_labels_when_refetch_yields_none(feed_id, 
     rows = items()
     assert [row["id"] for row in rows] == [item_id]
     assert json.loads(rows[0]["labels"]) == ["World News", "Sport"]
+
+
+def test_retry_fallback_repairs_into_short_summarizing_title_when_text_empty(feed_id, monkeypatch):
+    """A re-fetch that comes back "short" with no extracted text at all summarizes
+    the original title (not an empty string) and stores NULL text, but otherwise
+    repairs the item exactly like a normal success: fetch_status "short",
+    fallback 0."""
+    item_id = _seed_fallback_item(feed_id)
+    monkeypatch.setattr(poll, "fetch_article", lambda link: ("", "short", []))
+    seen_text = []
+
+    def fake_summarize(text, title, url, respect_language=None):
+        seen_text.append(text)
+        return "New", "New summary"
+
+    monkeypatch.setattr(poll, "summarize", fake_summarize)
+
+    poll.retry_fallback(feed_id)
+
+    rows = items()
+    assert [row["id"] for row in rows] == [item_id]
+    assert rows[0]["fetch_status"] == "short"
+    assert rows[0]["fallback"] == 0
+    assert rows[0]["text"] is None
+    assert rows[0]["headline"] == "New"
+    assert seen_text == ["A title"]  # original_title, not the empty fetched text
+
+
+def test_retry_fallback_repairs_into_short_summarizing_fetched_text_when_nonempty(
+    feed_id, monkeypatch
+):
+    """A re-fetch that comes back "short" with real extracted text summarizes and
+    stores that text as is, same as an "ok" repair."""
+    item_id = _seed_fallback_item(feed_id)
+    monkeypatch.setattr(poll, "fetch_article", lambda link: ("A cartoon caption.", "short", []))
+    monkeypatch.setattr(
+        poll, "summarize", lambda text, title, url, respect_language=None: ("New", "New summary")
+    )
+
+    poll.retry_fallback(feed_id)
+
+    rows = items()
+    assert [row["id"] for row in rows] == [item_id]
+    assert rows[0]["fetch_status"] == "short"
+    assert rows[0]["fallback"] == 0
+    assert rows[0]["text"] == "A cartoon caption."
+    assert rows[0]["headline"] == "New"
 
 
 def _seed_blocked_items(feed_id, n, start_guid=1, host="example.com"):
@@ -1464,6 +1547,28 @@ def test_auth_outcome_from_cookies_presence_and_fetch_result(
     assert all(row["fallback"] == expected_fallback for row in rows)
 
 
+@pytest.mark.parametrize(
+    "cookies_present, expected_auth",
+    [(True, "used"), (False, None)],
+)
+def test_short_empty_text_marks_auth_without_failure(
+    feed_id, calls, monkeypatch, _reset_client_jar, cookies_present, expected_auth
+):
+    """A "short" fetch with no extracted text at all (e.g. a bare video page) is
+    not a failure: auth reflects only whether cookies were sent -- never "failed"
+    or "missing" -- word_count is 0, and the item is not a fallback."""
+    if cookies_present:
+        write_cookies(f".example.com\tTRUE\t/\tFALSE\t{FUTURE_EXPIRY}\tsid\tabc")
+    monkeypatch.setattr(poll, "fetch_article", lambda link: ("", "short", []))
+    poll.poll_all()
+    rows = items()
+    assert len(rows) == 3
+    assert all(row["auth"] == expected_auth for row in rows)
+    assert all(row["fetch_status"] == "short" for row in rows)
+    assert all(row["word_count"] == 0 for row in rows)
+    assert all(row["fallback"] == 0 for row in rows)
+
+
 # --- persisting rotated cookies back to cookies.txt -------------------------------
 
 
@@ -1691,6 +1796,50 @@ def test_article_input_falls_back_to_title_when_excerpt_too_short(monkeypatch):
     assert article.fallback is True
     assert article.title_only is True
     assert article.text == "Third article with almost no body text at all"
+
+
+def test_article_input_short_empty_text_uses_feed_excerpt_not_fallback(monkeypatch):
+    """A "short" fetch (e.g. a bare video page) that extracted no text at all is
+    not a fallback -- the fetch itself succeeded -- but there is nothing to
+    summarize, so the feed's own excerpt is used instead, same as a failed fetch."""
+    entry = feedparser.parse(SAMPLE).entries[0]  # content:encoded is well over MIN_FALLBACK_CHARS
+    monkeypatch.setattr(poll, "fetch_article", lambda link: ("", "short", []))
+
+    article = poll.article_input(entry, None)
+
+    assert article.fallback is False
+    assert article.title_only is False
+    assert "ENCODED BODY" in article.text
+    assert article.fetch_status == "short"
+
+
+def test_article_input_short_empty_text_falls_back_to_title_when_excerpt_too_short(monkeypatch):
+    """Same as above, but when the feed's own excerpt is also too short, the title
+    alone is used and title_only is set -- fallback still stays False."""
+    entry = feedparser.parse(SAMPLE).entries[2]  # "tiny" description
+    monkeypatch.setattr(poll, "fetch_article", lambda link: ("", "short", []))
+
+    article = poll.article_input(entry, None)
+
+    assert article.fallback is False
+    assert article.title_only is True
+    assert article.text == "Third article with almost no body text at all"
+    assert article.fetch_status == "short"
+
+
+def test_article_input_short_nonempty_text_used_as_is(monkeypatch):
+    """A "short" fetch that did extract some text (e.g. a New Yorker cartoon
+    caption) uses that text as is -- neither a fallback nor title_only."""
+    entry = feedparser.parse(SAMPLE).entries[0]
+    monkeypatch.setattr(poll, "fetch_article", lambda link: ("A cartoon caption.", "short", ["Cartoons"]))
+
+    article = poll.article_input(entry, None)
+
+    assert article.fallback is False
+    assert article.title_only is False
+    assert article.text == "A cartoon caption."
+    assert article.fetch_status == "short"
+    assert article.labels == ["Cartoons"]
 
 
 # --- topic classification ------------------------------------------------------
@@ -2420,3 +2569,23 @@ def test_retry_fallback_bumps_summaries_on_success(feed_id, monkeypatch):
     poll.retry_fallback(feed_id)
 
     assert feed_stats_today(feed_id) == (1, 0)
+
+
+# --- feeds-page paywalled bucket -------------------------------------------------
+
+
+def test_short_item_is_never_counted_as_paywalled(feed_id, calls, monkeypatch):
+    """The feeds-page paywalled bucket only counts fetch_status IN ('teaser',
+    'blocked'): a "short" item -- even with no login cookies at all, i.e.
+    auth IS NULL -- must never land in it (GitHub issue #9, Option A)."""
+    from pintxos.app import _bucket_sql
+
+    monkeypatch.setattr(poll, "fetch_article", lambda link: ("A cartoon caption.", "short", []))
+
+    assert poll.poll_feed(feed_id) is True
+
+    with db() as conn:
+        counts = conn.execute(
+            f"SELECT {_bucket_sql('')} FROM items WHERE feed_id = ? AND muted = 0", (feed_id,)
+        ).fetchone()
+    assert counts["paywalled"] == 0

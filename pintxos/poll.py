@@ -18,7 +18,7 @@ import trafilatura
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from pintxos import adfilter, feedstats, topics
+from pintxos import adfilter, feedstats, pagemarkers, topics
 from pintxos.config import DEFAULTS, get_setting, is_truthy
 from pintxos.cookies import get_jar, has_cookies_for, save_jar
 from pintxos.db import db, now
@@ -137,10 +137,13 @@ def fetch_article(link: str) -> tuple[str | None, str, list[str]]:
     can't be read.
 
     The reason is "blocked" for HTTP 401, 403 or 429 (a paywall or a bot block),
-    "teaser" when a 2xx HTML page yields less than MIN_ARTICLE_CHARS of extracted
-    text, and "error" for everything else: a failed request, any other non-2xx
-    status, or a non-HTML content type. `labels` is the page's own metadata labels
-    (see `_page_labels`); the caller combines it with the feed entry's RSS categories.
+    "short" for a 2xx page under MIN_ARTICLE_CHARS that declares itself free
+    (schema.org isAccessibleForFree) or is non-article media -- readable, not a
+    fallback, and never counted as paywalled -- "teaser" when a 2xx HTML page yields
+    less than MIN_ARTICLE_CHARS of extracted text with no such marker, and "error"
+    for everything else: a failed request, any other non-2xx status, or a non-HTML
+    content type. `labels` is the page's own metadata labels (see `_page_labels`);
+    the caller combines it with the feed entry's RSS categories.
     """
     status = "error"
     try:
@@ -153,6 +156,12 @@ def fetch_article(link: str) -> tuple[str | None, str, list[str]]:
             raise ValueError(f"content-type {resp.headers.get('content-type')!r}")
         text = trafilatura.extract(resp.text, include_comments=False, include_tables=False)
         if not text or len(text) < MIN_ARTICLE_CHARS:
+            reason = pagemarkers.free_short_page(resp.text)
+            if reason is not None:
+                log.info(
+                    "short page (%s), keeping %d chars: %s", reason, len(text or ""), link
+                )
+                return text or "", "short", _page_labels(resp.text)
             status = "teaser"
             raise ValueError(f"extracted {len(text or '')} chars")
         page_labels = _page_labels(resp.text)
@@ -312,12 +321,15 @@ def article_input(entry, jar: MozillaCookieJar | None) -> ArticleInput:
     article, falling back to the feed's own excerpt when the fetch fails and then to
     the title alone when even that excerpt is too short, plus the labels (this
     entry's RSS categories combined with the fetched page's own metadata) and the
-    auth/fetch_status/word_count bookkeeping poll_feed stores alongside it. This is
-    the single input-construction path pintxos uses before calling `summarize()`;
-    external tools (e.g. a training-corpus capture script) that need identical
-    parsing should call this too, so their input matches pintxos's runtime input.
-    word_count is computed on the full extracted text before summarize() truncates
-    it, and stays None for fallback items.
+    auth/fetch_status/word_count bookkeeping poll_feed stores alongside it. A
+    "short" fetch with no extracted text at all (a bare video/audio page) falls
+    back the same way, to the feed excerpt or the title, but is not a fallback
+    item -- the fetch itself succeeded. This is the single input-construction path
+    pintxos uses before calling `summarize()`; external tools (e.g. a
+    training-corpus capture script) that need identical parsing should call this
+    too, so their input matches pintxos's runtime input. word_count is computed on
+    the full extracted text before summarize() truncates it, and stays None for
+    fallback items.
     """
     title = entry.get("title", "")
     # Must stay equivalent to poll_feed's (guid, link) derivation so the fetched URL
@@ -329,6 +341,14 @@ def article_input(entry, jar: MozillaCookieJar | None) -> ArticleInput:
     title_only = False
     if text is None:
         fallback = True
+        text = _entry_text(entry)
+        if len(text) < MIN_FALLBACK_CHARS:
+            text = title
+            title_only = True
+    elif fetch_status == "short" and text == "":
+        # A short page that declares itself free but yields no extracted text at
+        # all (e.g. a pure video embed): not a fallback -- the fetch succeeded --
+        # but there is nothing to summarize but the feed's own excerpt or title.
         text = _entry_text(entry)
         if len(text) < MIN_FALLBACK_CHARS:
             text = title
@@ -843,9 +863,14 @@ def retry_fallback(feed_id: int, limit: int | None = None, only_blocked: bool = 
             # fetched page labels into whatever this item already had.
             merged_labels = _merge_labels(existing_labels, page_labels)
 
+            # A "short" page with no extracted text at all (a bare video/audio page)
+            # has nothing to summarize but its own title; store NULL rather than "".
+            summarize_text = original_title if fetch_status == "short" and text == "" else text
+            stored_text = None if fetch_status == "short" and text == "" else text
+
             try:
                 headline, summary = summarize(
-                    text, original_title, link, respect_language=respect_language
+                    summarize_text, original_title, link, respect_language=respect_language
                 )
             except MissingApiKey:
                 log.error("ANTHROPIC_API_KEY not set, stopping retry")
@@ -869,7 +894,10 @@ def retry_fallback(feed_id: int, limit: int | None = None, only_blocked: bool = 
                 conn.execute(
                     "UPDATE items SET headline = ?, summary = ?, fallback = 0, auth = ?, "
                     "word_count = ?, fetch_status = ?, text = ?, labels = ? WHERE id = ?",
-                    (headline, summary, auth, words, fetch_status, text, merged_labels, item_id),
+                    (
+                        headline, summary, auth, words, fetch_status,
+                        stored_text, merged_labels, item_id,
+                    ),
                 )
             with db() as conn:
                 feedstats.bump(conn, feed_id, summaries=1)
