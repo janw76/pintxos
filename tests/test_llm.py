@@ -160,6 +160,86 @@ def test_openrouter_empty_or_missing_content_raises(monkeypatch, payload):
         llm.complete("sys", "user", 10, "openai/gpt-5")
 
 
+# --- reasoning-mandatory fallback ------------------------------------------
+
+
+def _patch_post_reasoning_aware(monkeypatch, mandatory_model="openai/gpt-5-mini"):
+    """Patch httpx.post to imitate a provider where `mandatory_model` rejects
+    reasoning:{"enabled": False} with HTTP 400, but accepts effort:minimal;
+    any other model accepts enabled:False. Records every call."""
+    calls = []
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        body = kwargs["json"]
+        reasoning = body["reasoning"]
+        if body["model"] == mandatory_model and reasoning == {"enabled": False}:
+            return FakeResponse(
+                status_code=400,
+                text=(
+                    '{"error":{"message":"Reasoning is mandatory for this endpoint '
+                    'and cannot be disabled.","code":400}}'
+                ),
+            )
+        return _ok_response("OK")
+
+    monkeypatch.setattr("pintxos.llm.httpx.post", fake_post)
+    return calls
+
+
+def test_reasoning_mandatory_model_retries_with_effort_minimal(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    monkeypatch.setattr(llm, "_REASONING_MANDATORY", set())
+    calls = _patch_post_reasoning_aware(monkeypatch)
+
+    result = llm.complete("sys", "user", 50, "openai/gpt-5-mini")
+
+    assert result == "OK"
+    assert len(calls) == 2
+    assert calls[0][1]["json"]["reasoning"] == {"enabled": False}
+    assert calls[1][1]["json"]["reasoning"] == {"effort": "minimal"}
+    assert "openai/gpt-5-mini" in llm._REASONING_MANDATORY
+
+
+def test_reasoning_mandatory_model_remembered_across_calls(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    monkeypatch.setattr(llm, "_REASONING_MANDATORY", {"openai/gpt-5-mini"})
+    calls = _patch_post_reasoning_aware(monkeypatch)
+
+    result = llm.complete("sys", "user", 50, "openai/gpt-5-mini")
+
+    assert result == "OK"
+    assert len(calls) == 1
+    assert calls[0][1]["json"]["reasoning"] == {"effort": "minimal"}
+
+
+def test_other_model_still_sends_enabled_false_after_a_mandatory_model_learned(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    monkeypatch.setattr(llm, "_REASONING_MANDATORY", {"openai/gpt-5-mini"})
+    calls = _patch_post_reasoning_aware(monkeypatch)
+
+    # google/gemini-2.5-flash-lite is not in the learned set: enabled:False
+    # is sent and succeeds (this fake only 400s the mandatory model).
+    result = llm.complete("sys", "user", 50, "google/gemini-2.5-flash-lite")
+
+    assert result == "OK"
+    assert len(calls) == 1
+    assert calls[0][1]["json"]["reasoning"] == {"enabled": False}
+    assert "google/gemini-2.5-flash-lite" not in llm._REASONING_MANDATORY
+
+
+def test_400_with_unrelated_body_raises_without_retry_or_learning(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    monkeypatch.setattr(llm, "_REASONING_MANDATORY", set())
+    calls = _patch_post(monkeypatch, FakeResponse(status_code=400, text="invalid model"))
+
+    with pytest.raises(llm.LLMError, match="400"):
+        llm.complete("sys", "user", 50, "openai/gpt-5-mini")
+
+    assert len(calls) == 1
+    assert "openai/gpt-5-mini" not in llm._REASONING_MANDATORY
+
+
 # --- Anthropic branch -----------------------------------------------------
 
 

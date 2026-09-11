@@ -535,7 +535,13 @@ def test_settings_post_empty_model_rejected():
 
 
 def test_settings_test_route_success(monkeypatch):
-    monkeypatch.setattr(llm, "complete", lambda *a, **k: "OK")
+    calls = []
+
+    def fake_complete(*args, **kwargs):
+        calls.append((args, kwargs))
+        return "OK"
+
+    monkeypatch.setattr(llm, "complete", fake_complete)
     with TestClient(app) as c:
         resp = c.post("/settings/test", follow_redirects=False)
         assert resp.status_code == 303
@@ -543,6 +549,9 @@ def test_settings_test_route_success(monkeypatch):
         assert "err=" not in location
         page = c.get(location).text
     assert "answered: OK" in page
+    (args, kwargs) = calls[0]
+    max_tokens = kwargs.get("max_tokens", args[2] if len(args) > 2 else None)
+    assert max_tokens == 50
 
 
 def test_settings_test_route_llm_error(monkeypatch):
