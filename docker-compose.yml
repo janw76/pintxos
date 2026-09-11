@@ -8,6 +8,7 @@ services:
       - ./data:/data
     environment:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      # OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}  # only needed for models with a slash
       # PINTXOS_MODEL: claude-haiku-4-5-20251001
       # PINTXOS_POLL_MINUTES: 30
       # PINTXOS_ITEMS_PER_FEED: 50
