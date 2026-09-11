@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS items (
     labels TEXT,
     topic TEXT,
     muted INTEGER NOT NULL DEFAULT 0,
+    model TEXT,
     UNIQUE(feed_id, guid)
 );
 
@@ -128,6 +129,9 @@ def connect() -> sqlite3.Connection:
         ("topic", "TEXT"),
         # 1 = the item's topic is muted for its feed, so it is hidden from the output feed.
         ("muted", "INTEGER NOT NULL DEFAULT 0"),
+        # The model used to produce this row's summary. NULL = no summary was written
+        # (title-only/muted row), or the row was written before this column existed.
+        ("model", "TEXT"),
     ):
         if name not in item_cols:
             conn.execute(f"ALTER TABLE items ADD COLUMN {name} {ddl}")
