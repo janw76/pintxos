@@ -189,6 +189,7 @@ def feed_edit_page(request: Request, feed_id: int) -> Response:
         global_filter_ads_on = is_truthy(get_setting("PINTXOS_FILTER_ADS", conn))
         global_patterns = get_setting("PINTXOS_AD_TITLE_PATTERNS", conn) or ""
         global_respect_language_on = is_truthy(get_setting("PINTXOS_RESPECT_LANGUAGE", conn))
+        global_model = get_setting("PINTXOS_MODEL", conn)
         counts = conn.execute(
             f"SELECT COUNT(*) AS total, SUM(fallback = 1) AS fallback_count, "
             f"{_bucket_sql('')} FROM items WHERE feed_id = ? AND muted = 0",
@@ -269,6 +270,7 @@ def feed_edit_page(request: Request, feed_id: int) -> Response:
             "daily_budget": daily_budget,
             "summaries_today": summaries_today,
             "summaries_total": summaries_total,
+            "global_model": global_model,
         },
     )
 
@@ -285,6 +287,7 @@ def feed_edit_save(
     mute_topics: list[str] = Form([]),
     warn_volume: str = Form(""),
     daily_budget: str = Form(""),
+    model: str = Form(""),
 ) -> Response:
     if filter_ads not in ("", "0", "1"):
         return _redirect(f"/feeds/{feed_id}", err="Invalid filter choice")
@@ -327,11 +330,26 @@ def feed_edit_save(
     mute_topics_ordered = [slug for slug, _name, _definition in TOPICS if slug in submitted_topics]
     mute_topics_value = json.dumps(mute_topics_ordered) if mute_topics_ordered else None
 
+    model_value = model.strip() or None
+
     with db() as conn:
+        if model_value is not None:
+            if llm.provider(model_value) == "openrouter":
+                if not _key_available("OPENROUTER_API_KEY", "", conn):
+                    return _redirect(
+                        f"/feeds/{feed_id}",
+                        err=f"Model {model_value} needs an OpenRouter API key (OPENROUTER_API_KEY)",
+                    )
+            elif not _key_available("ANTHROPIC_API_KEY", "", conn):
+                return _redirect(
+                    f"/feeds/{feed_id}",
+                    err=f"Model {model_value} needs an Anthropic API key (ANTHROPIC_API_KEY)",
+                )
+
         cur = conn.execute(
             "UPDATE feeds SET title = ?, filter_ads = ?, ad_patterns_mode = ?, "
             "ad_title_patterns = ?, respect_language = ?, classify_topics = ?, "
-            "mute_topics = ?, warn_volume = ?, daily_budget = ? WHERE id = ?",
+            "mute_topics = ?, warn_volume = ?, daily_budget = ?, model = ? WHERE id = ?",
             (
                 title or None,
                 filter_ads_value,
@@ -342,6 +360,7 @@ def feed_edit_save(
                 mute_topics_value,
                 warn_volume_value,
                 daily_budget_value,
+                model_value,
                 feed_id,
             ),
         )
