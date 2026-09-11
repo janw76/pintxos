@@ -1257,6 +1257,92 @@ def test_feed_edit_post_daily_budget_invalid_values_rejected(monkeypatch):
             assert row["daily_budget"] is None
 
 
+def test_feed_edit_page_shows_model_field_and_presets(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        page = c.get("/feeds/1").text
+
+    assert 'id="feed_model"' in page
+    assert 'name="model"' in page
+    assert "claude-haiku-4-5-20251001" in page
+    assert "anthropic/claude-haiku-4.5" in page
+    assert "openai/gpt-5-mini" in page
+    assert "google/gemini-2.5-flash-lite" in page
+    assert "document.getElementById('feed_model').value=this.dataset.model" in page
+
+
+def test_feed_edit_post_model_with_openrouter_key_stores_value(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        resp = c.post(
+            "/feeds/1",
+            data={
+                "filter_ads": "",
+                "ad_patterns_mode": "",
+                "model": "google/gemini-2.5-flash-lite",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/?msg=Saved"
+
+        with db() as conn:
+            row = conn.execute("SELECT model FROM feeds WHERE id = 1").fetchone()
+        assert row["model"] == "google/gemini-2.5-flash-lite"
+
+
+def test_feed_edit_post_model_without_openrouter_key_rejected_and_unchanged(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        resp = c.post(
+            "/feeds/1",
+            data={
+                "filter_ads": "",
+                "ad_patterns_mode": "",
+                "model": "google/gemini-2.5-flash-lite",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert resp.headers["location"].startswith("/feeds/1?err=")
+        assert "OPENROUTER_API_KEY" in resp.headers["location"]
+
+        with db() as conn:
+            row = conn.execute("SELECT model FROM feeds WHERE id = 1").fetchone()
+        assert row["model"] is None
+
+
+def test_feed_edit_post_blank_model_stores_null(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        c.post(
+            "/feeds/1",
+            data={
+                "filter_ads": "",
+                "ad_patterns_mode": "",
+                "model": "google/gemini-2.5-flash-lite",
+            },
+            follow_redirects=False,
+        )
+        resp = c.post(
+            "/feeds/1",
+            data={"filter_ads": "", "ad_patterns_mode": "", "model": "  "},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/?msg=Saved"
+
+        with db() as conn:
+            row = conn.execute("SELECT model FROM feeds WHERE id = 1").fetchone()
+        assert row["model"] is None
+
+
 def test_feed_edit_page_shows_summaries_today_and_total(monkeypatch):
     monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
     with TestClient(app) as c:
@@ -2481,7 +2567,7 @@ def test_retry_fallback_updates_row_in_place_on_success_or_records_auth_on_failu
         monkeypatch.setattr(
             poll,
             "summarize",
-            lambda text, original_title, url, respect_language=None: (
+            lambda text, original_title, url, respect_language=None, model=None: (
                 "New Headline",
                 "New summary",
             ),
@@ -2518,7 +2604,7 @@ def test_retry_fallback_error_paths(monkeypatch, error):
 
     calls = []
 
-    def fake_summarize(text, original_title, url, respect_language=None):
+    def fake_summarize(text, original_title, url, respect_language=None, model=None):
         calls.append(url)
         if error == "missing_api_key":
             raise MissingApiKey("ANTHROPIC_API_KEY not set")
