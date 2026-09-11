@@ -25,7 +25,9 @@ CREATE TABLE IF NOT EXISTS feeds (
     respect_language INTEGER,
     classify_topics INTEGER,
     mute_topics TEXT,
-    topic_counts TEXT
+    topic_counts TEXT,
+    warn_volume INTEGER,
+    daily_budget INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS items (
@@ -52,6 +54,15 @@ CREATE TABLE IF NOT EXISTS items (
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT
+);
+
+-- One row per feed per UTC day: how much work this feed cost us that day.
+CREATE TABLE IF NOT EXISTS feed_stats (
+    feed_id INTEGER REFERENCES feeds(id) ON DELETE CASCADE,
+    day TEXT NOT NULL,
+    summaries INTEGER NOT NULL DEFAULT 0,
+    classifications INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(feed_id, day)
 );
 """
 
@@ -86,6 +97,11 @@ def connect() -> sqlite3.Connection:
         ("mute_topics", "TEXT"),
         # JSON object {slug: count} of how often each topic was seen on this feed.
         ("topic_counts", "TEXT"),
+        # Items/day above which the output feed carries a volume warning. NULL = on
+        # (use the default threshold); 0 = warning off for this feed.
+        ("warn_volume", "INTEGER"),
+        # Max summaries per UTC day for this feed. NULL = unlimited.
+        ("daily_budget", "INTEGER"),
     ):
         if name not in cols:
             conn.execute(f"ALTER TABLE feeds ADD COLUMN {name} {ddl}")
