@@ -15,7 +15,7 @@ import pytest
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from pintxos import poll, topics
+from pintxos import feedstats, poll, topics
 from pintxos.cookies import cookie_path
 from pintxos.db import db, now
 from pintxos.summarize import MissingApiKey, SummarizeError
@@ -102,6 +102,16 @@ def items():
 def feed_row(feed_id):
     with db() as conn:
         return conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+
+
+def feed_stats_today(feed_id):
+    """(summaries, classifications) recorded for `feed_id` today; (0, 0) if no row."""
+    with db() as conn:
+        row = conn.execute(
+            "SELECT summaries, classifications FROM feed_stats WHERE feed_id = ? AND day = ?",
+            (feed_id, feedstats.today()),
+        ).fetchone()
+    return (row["summaries"], row["classifications"]) if row is not None else (0, 0)
 
 
 def set_feed(feed_id, **columns):
@@ -2252,3 +2262,161 @@ def test_summarize_one_job_logs_error_at_warning(monkeypatch, caplog):
     with caplog.at_level("WARNING"):
         poll._run_summarize_job(1, "g1")
     assert "Item not found" in caplog.text
+
+
+# --- daily budget & feed_stats counters -----------------------------------------
+
+
+def test_budget_already_reached_before_poll_logs_every_entry(feed_id, calls, monkeypatch):
+    """A feed already at (or past) its daily budget skips every entry before any
+    fetch, classify, or summarize call, logging each as a `kind: budget` entry."""
+    set_feed(feed_id, daily_budget=2, classify_topics=1)
+    with db() as conn:
+        feedstats.bump(conn, feed_id, summaries=2)
+    classify_calls = mock_classify(monkeypatch, "science")
+
+    def boom_fetch(link):
+        raise AssertionError("fetch_article should not be called when the budget is exhausted")
+
+    monkeypatch.setattr(poll, "fetch_article", boom_fetch)
+
+    assert poll.poll_feed(feed_id) is True
+
+    assert calls == []
+    assert classify_calls == []
+    assert items() == []
+    feed = feed_row(feed_id)
+    assert feed["ads_filtered"] == 3
+    entries = json.loads(feed["last_filtered"])
+    expected_titles = [
+        "First article about a rocket launch",
+        "Second article about a merger",
+        "Third article with almost no body text at all",
+    ]
+    assert [e["title"] for e in entries] == expected_titles
+    for entry in entries:
+        assert entry["kind"] == "budget"
+        assert entry["reason"] == "budget: 2/day reached"
+        assert entry["guid"] and entry["link"]
+        assert set(entry) == {"kind", "title", "reason", "guid", "link", "published_at"}
+    assert feed_stats_today(feed_id) == (2, 0)  # unchanged: nothing new was summarized
+
+
+def test_budget_reached_mid_poll_summarizes_first_n_then_logs_rest(feed_id, calls, monkeypatch):
+    set_feed(feed_id, daily_budget=2)
+
+    assert poll.poll_feed(feed_id) is True
+
+    assert len(calls) == 2
+    rows = items()
+    assert len(rows) == 2
+    assert {row["original_title"] for row in rows} == {
+        "First article about a rocket launch",
+        "Second article about a merger",
+    }
+    feed = feed_row(feed_id)
+    assert feed["ads_filtered"] == 1
+    entries = json.loads(feed["last_filtered"])
+    assert len(entries) == 1
+    assert entries[0]["kind"] == "budget"
+    assert entries[0]["title"] == "Third article with almost no body text at all"
+    assert entries[0]["reason"] == "budget: 2/day reached"
+    assert feed_stats_today(feed_id) == (2, 0)
+
+
+def test_budget_skip_logged_once_per_poll(feed_id, calls, monkeypatch, caplog):
+    set_feed(feed_id, daily_budget=1)
+    with caplog.at_level("INFO"):
+        assert poll.poll_feed(feed_id) is True
+    assert caplog.text.count("daily budget 1 reached") == 1
+    assert "skipping 2 entries" in caplog.text
+
+
+def test_budget_zero_skips_every_entry(feed_id, calls, monkeypatch):
+    set_feed(feed_id, daily_budget=0)
+
+    assert poll.poll_feed(feed_id) is True
+
+    assert calls == []
+    assert items() == []
+    feed = feed_row(feed_id)
+    assert feed["ads_filtered"] == 3
+    assert all(e["kind"] == "budget" for e in json.loads(feed["last_filtered"]))
+
+
+def test_budget_skipped_entries_are_not_seen_and_are_reevaluated_next_poll(
+    feed_id, calls, monkeypatch
+):
+    set_feed(feed_id, daily_budget=0)
+    poll.poll_feed(feed_id)
+    assert items() == []
+    calls.clear()
+
+    set_feed(feed_id, daily_budget=None)
+    poll.poll_feed(feed_id)
+
+    assert len(calls) == 3
+    assert len(items()) == 3
+
+
+def test_feed_stats_counts_summaries_and_classifications_when_classify_on(
+    feed_id, calls, monkeypatch
+):
+    set_feed(feed_id, classify_topics=1)
+    mock_classify(monkeypatch, "science")
+
+    poll.poll_feed(feed_id)
+
+    assert feed_stats_today(feed_id) == (3, 3)
+
+
+def test_feed_stats_counts_only_summaries_when_classify_off(feed_id, calls):
+    poll.poll_feed(feed_id)
+
+    assert feed_stats_today(feed_id) == (3, 0)
+
+
+def test_feed_stats_does_not_count_muted_rows_as_summaries(feed_id, calls, monkeypatch):
+    set_feed(feed_id, classify_topics=1, mute_topics=json.dumps(["sport"]))
+    mock_classify(monkeypatch, lambda title: "sport" if "rocket" in title else "economy")
+
+    poll.poll_feed(feed_id)
+
+    # All three entries are classified, but the muted one is never summarized.
+    assert feed_stats_today(feed_id) == (2, 3)
+
+
+def test_summarize_item_bumps_summaries_and_ignores_budget(feed_id, monkeypatch):
+    set_feed(feed_id, daily_budget=0)
+    _seed_muted_item(feed_id, guid="g1", link="https://example.com/m1", text="STORED TEXT")
+    _set_filtered_log(
+        feed_id,
+        [
+            {
+                "kind": "topic",
+                "title": "A muted title",
+                "guid": "g1",
+                "link": "https://example.com/m1",
+                "reason": "topic: sport",
+                "published_at": "2025-09-01T10:00:00+00:00",
+            }
+        ],
+    )
+    monkeypatch.setattr(poll, "summarize", lambda *a, **k: ("New headline", "New summary"))
+
+    error = poll.summarize_item(feed_id, "g1")
+
+    assert error is None
+    assert feed_stats_today(feed_id) == (1, 0)  # a budget of 0 never applies here
+
+
+def test_retry_fallback_bumps_summaries_on_success(feed_id, monkeypatch):
+    _seed_fallback_item(feed_id)
+    monkeypatch.setattr(poll, "fetch_article", lambda link: ("FULL ARTICLE TEXT " * 20, "ok", []))
+    monkeypatch.setattr(
+        poll, "summarize", lambda text, title, url, respect_language=None: ("New", "New summary")
+    )
+
+    poll.retry_fallback(feed_id)
+
+    assert feed_stats_today(feed_id) == (1, 0)

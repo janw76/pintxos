@@ -37,6 +37,7 @@ Same story, no guessing games. Sanity restored. Point Pintxøs at a feed once, a
 - **Paywalled sites.** Paste your browser's cookies for sites you subscribe to and Pintxøs reads the full article instead of the teaser. Each feed shows whether the login worked.
 - **Word count and reading time** on every item, so you know what you are clicking into.
 - **Topic mute.** Per feed, turn on "Classify topics" on the feed's Edit page; one small AI call per new item classifies it into one of the 17 IPTC Media Topics top-level topics (arts, sport, weather, ...); tick topics to mute; muted items never reach the output feed and cost no summary call; percentages next to each topic show the share of classified items so far; keyword patterns are free and should be tried first; the "Filtered at last poll" list has a Summarize button per row to release an item.
+- **Volume warning and daily budget.** A feed that suddenly produces far more summaries than usual gets a warning article at the top of its output feed, once per day; a per-feed "Max summaries per day" budget skips the rest before any fetch or summary call, with a Summarize button to release a skipped entry anyway.
 
 ## How it works
 
@@ -107,6 +108,26 @@ matched against the topics you've ticked to mute.
   button to release that one item into the output feed anyway.
 
 IPTC Media Topics vocabulary © IPTC (https://iptc.org/), used under CC BY 4.0.
+
+### Volume warning and daily budget
+
+A feed that starts producing an unusual number of summaries in a day is
+worth a second look — it may be an oversized feed, a misconfigured URL, or
+just a very busy news day. Once a feed reaches 50 summaries on a given day,
+Pintxøs prepends a warning article to that feed's output — a stronger one at
+100 — that explains what happened and links straight to the feed's Edit
+page. Each level fires once per day; the warning never touches the feed's
+own items.
+
+- The warning is per feed, On by default; flip it Off in the "Volume"
+  fieldset on the feed's Edit page if you'd rather not see it.
+- "Max summaries per day" sets a hard budget for the feed, blank for
+  unlimited; once the budget is reached, further entries are skipped before
+  any fetch or summary call, so they cost nothing.
+- Skipped entries show up in the "Filtered at last poll" list like any other
+  filtered item, with a Summarize button to release one anyway.
+- The feed's Edit page always shows "Summaries: N today, M total" so you can
+  see where a feed stands against its budget.
 
 ## Quickstart
 
@@ -272,7 +293,8 @@ never more: items are summarized once and stored, and are never
 re-summarized on subsequent polls. Feeds with "Classify topics" turned on
 add one more small call per new item — the topic classification call is
 roughly 15% of the cost of a summary call, and only runs on feeds with the
-switch on.
+switch on. A per-feed "Max summaries per day" budget caps the number of
+summary calls that feed can make in a day, regardless of how much it polls.
 
 Even though Haiku is the cheapest model Anthropic offers today and Pintxøs avoids repolling and processing, I still recommend watching cost on [Claude Console](https://platform.claude.com/). Cost will obviously scale with the number feeds you poll and the amount of articles published per feed.
 

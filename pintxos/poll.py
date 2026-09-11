@@ -18,7 +18,7 @@ import trafilatura
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from pintxos import adfilter, topics
+from pintxos import adfilter, feedstats, topics
 from pintxos.config import DEFAULTS, get_setting, is_truthy
 from pintxos.cookies import get_jar, has_cookies_for, save_jar
 from pintxos.db import db, now
@@ -407,6 +407,8 @@ def poll_feed(feed_id: int) -> bool:
         respect_language = _respect_language(conn, feed)
         extra_ad_patterns = _extra_ad_patterns(conn, feed) if filter_ads else []
         keep_patterns = _keep_patterns(conn) if filter_ads else []
+        daily_budget = feed["daily_budget"]
+        summaries_today = feedstats.totals(conn, feed_id)[0]
 
     try:
         try:
@@ -468,7 +470,22 @@ def poll_feed(feed_id: int) -> bool:
 
         jar = get_jar()
         total = len(kept)
+        budget_skipped = 0
         for i, (guid, link, entry) in enumerate(kept, 1):
+            if daily_budget is not None and summaries_today >= daily_budget:
+                budget_skipped += 1
+                filtered.append(
+                    {
+                        "kind": "budget",
+                        "title": entry.get("title", ""),
+                        "reason": f"budget: {daily_budget}/day reached",
+                        "guid": guid,
+                        "link": link,
+                        "published_at": _published_at(entry),
+                    }
+                )
+                continue
+
             article = article_input(entry, jar)
             original_title = article.title
             labels_json = json.dumps(article.labels) if article.labels else None
@@ -484,6 +501,8 @@ def poll_feed(feed_id: int) -> bool:
                     log.error("ANTHROPIC_API_KEY not set, stopping poll")
                     _set_error(feed_id, "ANTHROPIC_API_KEY not set", polled=False)
                     return False
+                with db() as conn:
+                    feedstats.bump(conn, feed_id, classifications=1)
 
             if topic is not None and topic in mute_topics:
                 # Muted: stored (so the next poll sees it) but never summarized, and
@@ -548,6 +567,15 @@ def poll_feed(feed_id: int) -> bool:
 
             if topic is not None:
                 _bump_topic_count(feed_id, topic)
+            with db() as conn:
+                feedstats.bump(conn, feed_id, summaries=1)
+            summaries_today += 1
+
+        if budget_skipped:
+            log.info(
+                "feed %s: daily budget %d reached, skipping %d entries",
+                feed_id, daily_budget, budget_skipped,
+            )
 
         if jar is not None:
             # ponytail: three blocked items per poll; ceiling: a site that blocks
@@ -672,6 +700,8 @@ def summarize_item(feed_id: int, guid: str) -> str | None:
                     "UPDATE items SET headline = ?, summary = ?, muted = 0 WHERE id = ?",
                     (headline, summary, row["id"]),
                 )
+            with db() as conn:
+                feedstats.bump(conn, feed_id, summaries=1)
         else:
             entry = next(
                 (e for e in filtered if isinstance(e, dict) and e.get("guid") == guid), None
@@ -715,6 +745,8 @@ def summarize_item(feed_id: int, guid: str) -> str | None:
                         now(), labels_json, None, 0,
                     ),
                 )
+            with db() as conn:
+                feedstats.bump(conn, feed_id, summaries=1)
 
         _drop_filtered_entry(feed_id, guid)
         return None
@@ -839,6 +871,8 @@ def retry_fallback(feed_id: int, limit: int | None = None, only_blocked: bool = 
                     "word_count = ?, fetch_status = ?, text = ?, labels = ? WHERE id = ?",
                     (headline, summary, auth, words, fetch_status, text, merged_labels, item_id),
                 )
+            with db() as conn:
+                feedstats.bump(conn, feed_id, summaries=1)
     finally:
         if prev is None:
             _status.pop(feed_id, None)
