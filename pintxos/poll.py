@@ -163,6 +163,20 @@ def fetch_article(link: str) -> tuple[str | None, str, list[str]]:
                 )
                 return text or "", "short", _page_labels(resp.text)
             status = "teaser"
+            m = pagemarkers.page_markers(resp.text)
+            pw = pagemarkers.paywall_markers(resp.text)
+            log.info(
+                "teaser fingerprint url=%s status=%s bytes=%d chars=%d free=%s og_type=%s "
+                "jsonld=%s paywall=%s",
+                link,
+                resp.status_code,
+                len(resp.content),
+                len(text or ""),
+                m.is_free,
+                m.og_type or "-",
+                ",".join(sorted(m.jsonld_types)) or "-",
+                ",".join(pw) or "-",
+            )
             raise ValueError(f"extracted {len(text or '')} chars")
         page_labels = _page_labels(resp.text)
     except Exception as e:
