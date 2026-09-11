@@ -1,0 +1,32 @@
+{% set target = model_input_id|default("model") %}
+<div class="muted">
+  <p>Names with a slash (vendor/model) go to OpenRouter, names without go to Anthropic.</p>
+  <table>
+    <thead>
+      <tr><th>Model</th><th>Cost / 100 articles</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><button type="button" class="preset" data-model="claude-haiku-4-5-20251001" onclick="document.getElementById('{{ target }}').value=this.dataset.model">Use</button> <code>claude-haiku-4-5-20251001</code></td>
+        <td>~$0.28</td>
+        <td>Anthropic direct. Current default, strongest multilingual output.</td>
+      </tr>
+      <tr>
+        <td><button type="button" class="preset" data-model="anthropic/claude-haiku-4.5" onclick="document.getElementById('{{ target }}').value=this.dataset.model">Use</button> <code>anthropic/claude-haiku-4.5</code></td>
+        <td>~$0.28</td>
+        <td>Same model via OpenRouter.</td>
+      </tr>
+      <tr>
+        <td><button type="button" class="preset" data-model="openai/gpt-5-mini" onclick="document.getElementById('{{ target }}').value=this.dataset.model">Use</button> <code>openai/gpt-5-mini</code></td>
+        <td>~$0.08</td>
+        <td>Same quality tier as Haiku at a third of the price.</td>
+      </tr>
+      <tr>
+        <td><button type="button" class="preset" data-model="google/gemini-2.5-flash-lite" onclick="document.getElementById('{{ target }}').value=this.dataset.model">Use</button> <code>google/gemini-2.5-flash-lite</code></td>
+        <td>~$0.03</td>
+        <td>Recommended starting point. Fast, reliable JSON, good in European languages.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>Prices from OpenRouter, September 2026. Full list at <a href="https://openrouter.ai/models" target="_blank" rel="noopener">openrouter.ai/models</a>.</p>
+</div>
