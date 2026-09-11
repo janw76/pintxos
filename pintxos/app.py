@@ -16,7 +16,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, Response, Uploa
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from pintxos import adfilter, feedstats
+from pintxos import adfilter, feed_out, feedstats
 from pintxos.config import data_dir, get_setting, is_truthy
 from pintxos.cookies import cookie_path, expiry_for, get_jar, has_cookies_for, load_jar, summary
 from pintxos.db import db, init_db, now
@@ -115,7 +115,7 @@ def health() -> dict:
 
 
 @app.get("/feeds/{feed_id}.xml")
-def feed_xml(feed_id: int) -> Response:
+def feed_xml(request: Request, feed_id: int) -> Response:
     with db() as conn:
         feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
         if feed is None:
@@ -125,7 +125,26 @@ def feed_xml(feed_id: int) -> Response:
             (feed_id,),
         ).fetchall()
         full_text = is_truthy(get_setting("PINTXOS_FULL_TEXT", conn))
-        body = render_rss(feed, items, full_text=full_text)
+
+        warn_on = feed["warn_volume"] is None or feed["warn_volume"] == 1
+        summaries_today = feedstats.totals(conn, feed_id)[0]
+        level = feed_out.warning_level(summaries_today)
+        if warn_on and level is not None:
+            base_url = get_setting("PINTXOS_BASE_URL", conn) or str(request.base_url).rstrip("/")
+            feed_page_url = f"{base_url}/feeds/{feed_id}"
+            model = get_setting("PINTXOS_MODEL", conn)
+            warning = feed_out.warning_item(
+                feed,
+                level=level,
+                summaries_today=summaries_today,
+                day=feedstats.today(),
+                feed_page_url=feed_page_url,
+                model=model,
+            )
+        else:
+            warning = None
+
+        body = render_rss(feed, items, full_text=full_text, warning=warning)
     return Response(content=body, media_type="application/rss+xml; charset=utf-8")
 
 

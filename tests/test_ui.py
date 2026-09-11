@@ -1113,6 +1113,80 @@ def test_feed_edit_page_shows_summaries_today_and_total(monkeypatch):
     assert "Summaries: 3 today, 8 total" in page
 
 
+def _first_item_block(xml_text: str) -> str:
+    start = xml_text.index("<item>")
+    end = xml_text.index("</item>", start) + len("</item>")
+    return xml_text[start:end]
+
+
+def test_feed_xml_no_warning_below_threshold(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        with db() as conn:
+            feedstats.bump(conn, 1, summaries=49, day=feedstats.today())
+        body = c.get("/feeds/1.xml").text
+
+    assert "pintxos-warning" not in body
+
+
+def test_feed_xml_warning_at_50_is_first_item(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        with db() as conn:
+            feedstats.bump(conn, 1, summaries=50, day=feedstats.today())
+        body = c.get("/feeds/1.xml").text
+
+    today = feedstats.today()
+    guid = f"pintxos-warning-1-50-{today}"
+    first_item = _first_item_block(body)
+    assert guid in first_item
+    link = first_item[first_item.index("<link>") + len("<link>") : first_item.index("</link>")]
+    assert "/feeds/1" in link
+    assert ".xml" not in link
+
+
+def test_feed_xml_warning_at_120_uses_100_level(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        with db() as conn:
+            feedstats.bump(conn, 1, summaries=120, day=feedstats.today())
+        body = c.get("/feeds/1.xml").text
+
+    today = feedstats.today()
+    guid = f"pintxos-warning-1-100-{today}"
+    first_item = _first_item_block(body)
+    assert guid in first_item
+
+
+def test_feed_xml_warn_volume_off_suppresses_warning(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        with db() as conn:
+            conn.execute("UPDATE feeds SET warn_volume = 0 WHERE id = 1")
+            feedstats.bump(conn, 1, summaries=120, day=feedstats.today())
+        body = c.get("/feeds/1.xml").text
+
+    assert "pintxos-warning" not in body
+
+
+def test_feed_xml_warning_link_uses_base_url_setting(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    monkeypatch.setenv("PINTXOS_BASE_URL", "https://example.test")
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        with db() as conn:
+            feedstats.bump(conn, 1, summaries=50, day=feedstats.today())
+        body = c.get("/feeds/1.xml").text
+
+    first_item = _first_item_block(body)
+    link = first_item[first_item.index("<link>") + len("<link>") : first_item.index("</link>")]
+    assert link.startswith("https://example.test")
+
+
 def test_feed_edit_post_patterns_mode_off_stores_zero(monkeypatch):
     monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
     with TestClient(app) as c:
