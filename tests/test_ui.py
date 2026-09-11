@@ -13,7 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import pintxos.app as app_module
-from pintxos import feedstats, poll, topics
+from pintxos import feedstats, llm, poll, topics
 from pintxos.app import app
 from pintxos.config import data_dir, get_setting
 from pintxos.cookies import cookie_path, load_jar
@@ -343,7 +343,7 @@ def test_settings_post_persists():
                 "model": "claude-haiku-4-5-20251001",
                 "poll_minutes": "15",
                 "items_per_feed": "10",
-                "api_key": "",
+                "api_key": "sk-test-1234",
             },
             follow_redirects=False,
         )
@@ -417,6 +417,162 @@ def test_settings_env_key_set_shows_env_message_and_ignores_submission(monkeypat
     assert row is None
 
 
+def test_settings_page_shows_model_presets_and_key_fields():
+    with TestClient(app) as c:
+        page = c.get("/settings").text
+
+    assert "claude-haiku-4-5-20251001" in page
+    assert "anthropic/claude-haiku-4.5" in page
+    assert "openai/gpt-5-mini" in page
+    assert "google/gemini-2.5-flash-lite" in page
+    assert "Names with a slash (vendor/model) go to OpenRouter, names without go to Anthropic." in page
+    assert 'name="api_key"' in page
+    assert 'name="openrouter_api_key"' in page
+
+
+def test_settings_post_openrouter_model_without_key_rejected_and_model_unchanged():
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "google/gemini-2.5-flash-lite",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "",
+                "openrouter_api_key": "",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        location = resp.headers["location"]
+        assert location.startswith("/settings?err=")
+        assert "OPENROUTER_API_KEY" in location
+
+    assert get_setting("PINTXOS_MODEL") != "google/gemini-2.5-flash-lite"
+
+
+def test_settings_post_openrouter_model_with_key_stores_both():
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "google/gemini-2.5-flash-lite",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "",
+                "openrouter_api_key": "sk-or-test",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "err=" not in resp.headers["location"]
+
+    assert get_setting("PINTXOS_MODEL") == "google/gemini-2.5-flash-lite"
+    assert get_setting("OPENROUTER_API_KEY") == "sk-or-test"
+
+
+def test_settings_post_openrouter_env_pinned_form_value_not_stored(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-envkey")
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "google/gemini-2.5-flash-lite",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "",
+                "openrouter_api_key": "sk-or-submitted-should-not-be-stored",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "err=" not in resp.headers["location"]
+
+    monkeypatch.delenv("OPENROUTER_API_KEY")
+    from pintxos.db import db
+
+    with db() as conn:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key = ?", ("OPENROUTER_API_KEY",)
+        ).fetchone()
+    assert row is None
+
+
+def test_settings_post_anthropic_model_without_key_rejected():
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "claude-haiku-4-5-20251001",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        location = resp.headers["location"]
+        assert location.startswith("/settings?err=")
+        assert "ANTHROPIC_API_KEY" in location
+
+
+def test_settings_post_empty_model_rejected():
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "   ",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "sk-test-1234",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        location = resp.headers["location"]
+        assert location.startswith("/settings?err=")
+        assert "Model+is+required" in location or "Model%20is%20required" in location
+
+
+def test_settings_test_route_success(monkeypatch):
+    monkeypatch.setattr(llm, "complete", lambda *a, **k: "OK")
+    with TestClient(app) as c:
+        resp = c.post("/settings/test", follow_redirects=False)
+        assert resp.status_code == 303
+        location = resp.headers["location"]
+        assert "err=" not in location
+        page = c.get(location).text
+    assert "answered: OK" in page
+
+
+def test_settings_test_route_llm_error(monkeypatch):
+    def _raise(*a, **k):
+        raise llm.LLMError("boom")
+
+    monkeypatch.setattr(llm, "complete", _raise)
+    with TestClient(app) as c:
+        resp = c.post("/settings/test", follow_redirects=False)
+        assert resp.status_code == 303
+        location = resp.headers["location"]
+        assert "err=" in location
+        page = c.get(location).text
+    assert "boom" in page
+
+
+def test_settings_test_route_missing_api_key(monkeypatch):
+    def _raise(*a, **k):
+        raise llm.MissingApiKey("OPENROUTER_API_KEY not set")
+
+    monkeypatch.setattr(llm, "complete", _raise)
+    with TestClient(app) as c:
+        resp = c.post("/settings/test", follow_redirects=False)
+        assert resp.status_code == 303
+        location = resp.headers["location"]
+        assert "err=" in location
+        page = c.get(location).text
+    assert "OPENROUTER_API_KEY not set" in page
+
+
 def test_feed_table_uses_fixed_layout_and_wraps_long_urls(monkeypatch):
     monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
     long_url = "https://example.com/" + "a" * 100 + "/feed.xml"
@@ -470,7 +626,7 @@ def test_settings_post_without_filter_ads_stores_off():
                 "model": "m",
                 "poll_minutes": "30",
                 "items_per_feed": "50",
-                "api_key": "",
+                "api_key": "sk-test-1234",
             },
             follow_redirects=False,
         )
@@ -489,7 +645,7 @@ def test_settings_post_with_filter_ads_stores_on():
                 "model": "m",
                 "poll_minutes": "30",
                 "items_per_feed": "50",
-                "api_key": "",
+                "api_key": "sk-test-1234",
                 "filter_ads": "1",
             },
             follow_redirects=False,
@@ -534,7 +690,7 @@ def test_settings_post_ad_patterns_roundtrip():
                 "model": "m",
                 "poll_minutes": "30",
                 "items_per_feed": "50",
-                "api_key": "",
+                "api_key": "sk-test-1234",
                 "ad_title_patterns": "best .* deals\nfree shipping",
             },
             follow_redirects=False,
@@ -580,7 +736,7 @@ def test_settings_post_keep_patterns_roundtrip():
                 "model": "m",
                 "poll_minutes": "30",
                 "items_per_feed": "50",
-                "api_key": "",
+                "api_key": "sk-test-1234",
                 "ad_keep_patterns": "fraud\nnot a scam",
             },
             follow_redirects=False,
@@ -606,7 +762,7 @@ def test_settings_keep_patterns_env_pinned_disables_control_and_ignores_submissi
                 "model": "m",
                 "poll_minutes": "30",
                 "items_per_feed": "50",
-                "api_key": "",
+                "api_key": "sk-test-1234",
                 "ad_keep_patterns": "should not be saved",
             },
             follow_redirects=False,
@@ -636,7 +792,7 @@ def test_settings_filter_ads_env_pinned_disables_control_and_ignores_submission(
                 "model": "m",
                 "poll_minutes": "30",
                 "items_per_feed": "50",
-                "api_key": "",
+                "api_key": "sk-test-1234",
                 "filter_ads": "1",
             },
             follow_redirects=False,
@@ -667,7 +823,7 @@ def test_settings_post_without_full_text_stores_off():
                 "model": "m",
                 "poll_minutes": "30",
                 "items_per_feed": "50",
-                "api_key": "",
+                "api_key": "sk-test-1234",
             },
             follow_redirects=False,
         )
@@ -686,7 +842,7 @@ def test_settings_post_with_full_text_stores_on():
                 "model": "m",
                 "poll_minutes": "30",
                 "items_per_feed": "50",
-                "api_key": "",
+                "api_key": "sk-test-1234",
                 "full_text": "1",
             },
             follow_redirects=False,
@@ -712,7 +868,7 @@ def test_settings_full_text_env_pinned_disables_control_and_ignores_submission(m
                 "model": "m",
                 "poll_minutes": "30",
                 "items_per_feed": "50",
-                "api_key": "",
+                "api_key": "sk-test-1234",
                 "full_text": "1",
             },
             follow_redirects=False,
@@ -743,7 +899,7 @@ def test_settings_post_without_respect_language_stores_off():
                 "model": "m",
                 "poll_minutes": "30",
                 "items_per_feed": "50",
-                "api_key": "",
+                "api_key": "sk-test-1234",
             },
             follow_redirects=False,
         )
@@ -762,7 +918,7 @@ def test_settings_post_with_respect_language_stores_on():
                 "model": "m",
                 "poll_minutes": "30",
                 "items_per_feed": "50",
-                "api_key": "",
+                "api_key": "sk-test-1234",
                 "respect_language": "1",
             },
             follow_redirects=False,
@@ -790,7 +946,7 @@ def test_settings_respect_language_env_pinned_disables_control_and_ignores_submi
                 "model": "m",
                 "poll_minutes": "30",
                 "items_per_feed": "50",
-                "api_key": "",
+                "api_key": "sk-test-1234",
                 "respect_language": "1",
             },
             follow_redirects=False,
@@ -841,7 +997,7 @@ def test_empty_env_var_does_not_pin_filter_setting(monkeypatch):
         c.post(
             "/settings",
             data={"model": "m", "poll_minutes": "30", "items_per_feed": "50",
-                  "api_key": "", "filter_ads": "1", "ad_title_patterns": ""},
+                  "api_key": "sk-test-1234", "filter_ads": "1", "ad_title_patterns": ""},
             follow_redirects=False,
         )
     assert get_setting("PINTXOS_FILTER_ADS") == "1"
@@ -890,7 +1046,7 @@ def test_feed_edit_page_shows_radios_and_global_patterns_box(monkeypatch):
                 "model": "m",
                 "poll_minutes": "30",
                 "items_per_feed": "50",
-                "api_key": "",
+                "api_key": "sk-test-1234",
                 "ad_title_patterns": "black friday\n\\bgiveaway\\b",
             },
             follow_redirects=False,
