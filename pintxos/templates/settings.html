@@ -8,6 +8,7 @@
     <label for="model">Model</label>
     <input type="text" id="model" name="model" value="{{ model }}">
   </div>
+  {% include "_model_presets.html" %}
   <div class="field">
     <label for="api_key">Anthropic API key</label>
     {% if env_key_set %}
@@ -16,6 +17,16 @@
     {% else %}
       <input type="password" id="api_key" name="api_key" value="" placeholder="{% if key_last4 %}unchanged{% else %}sk-...{% endif %}">
       {% if key_last4 %}<div class="muted">Set (••••{{ key_last4 }})</div>{% endif %}
+    {% endif %}
+  </div>
+  <div class="field">
+    <label for="openrouter_api_key">OpenRouter API key</label>
+    {% if openrouter_env_key_set %}
+      <input type="password" id="openrouter_api_key" name="openrouter_api_key" value="" disabled>
+      <div class="muted">Set via OPENROUTER_API_KEY environment variable (recommended)</div>
+    {% else %}
+      <input type="password" id="openrouter_api_key" name="openrouter_api_key" value="" placeholder="{% if openrouter_key_last4 %}unchanged{% else %}sk-or-...{% endif %}">
+      {% if openrouter_key_last4 %}<div class="muted">Set (••••{{ openrouter_key_last4 }})</div>{% endif %}
     {% endif %}
   </div>
 
@@ -62,6 +73,8 @@
   </div>
 
   <button type="submit" class="btn-primary">Save</button>
+  <button type="submit" formaction="/settings/test" formmethod="post" formnovalidate>Test saved model</button>
+  <div class="muted">Tests the saved model and key; save first.</div>
 </form>
 
 <h2 id="paywall">Accessing Pay-Walled Content</h2>

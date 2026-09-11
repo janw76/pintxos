@@ -16,7 +16,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, Response, Uploa
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from pintxos import adfilter, feed_out, feedstats
+from pintxos import adfilter, feed_out, feedstats, llm
 from pintxos.config import data_dir, get_setting, is_truthy
 from pintxos.cookies import cookie_path, expiry_for, get_jar, has_cookies_for, load_jar, summary
 from pintxos.db import db, init_db, now
@@ -189,6 +189,7 @@ def feed_edit_page(request: Request, feed_id: int) -> Response:
         global_filter_ads_on = is_truthy(get_setting("PINTXOS_FILTER_ADS", conn))
         global_patterns = get_setting("PINTXOS_AD_TITLE_PATTERNS", conn) or ""
         global_respect_language_on = is_truthy(get_setting("PINTXOS_RESPECT_LANGUAGE", conn))
+        global_model = get_setting("PINTXOS_MODEL", conn)
         counts = conn.execute(
             f"SELECT COUNT(*) AS total, SUM(fallback = 1) AS fallback_count, "
             f"{_bucket_sql('')} FROM items WHERE feed_id = ? AND muted = 0",
@@ -269,6 +270,7 @@ def feed_edit_page(request: Request, feed_id: int) -> Response:
             "daily_budget": daily_budget,
             "summaries_today": summaries_today,
             "summaries_total": summaries_total,
+            "global_model": global_model,
         },
     )
 
@@ -285,6 +287,7 @@ def feed_edit_save(
     mute_topics: list[str] = Form([]),
     warn_volume: str = Form(""),
     daily_budget: str = Form(""),
+    model: str = Form(""),
 ) -> Response:
     if filter_ads not in ("", "0", "1"):
         return _redirect(f"/feeds/{feed_id}", err="Invalid filter choice")
@@ -327,11 +330,26 @@ def feed_edit_save(
     mute_topics_ordered = [slug for slug, _name, _definition in TOPICS if slug in submitted_topics]
     mute_topics_value = json.dumps(mute_topics_ordered) if mute_topics_ordered else None
 
+    model_value = model.strip() or None
+
     with db() as conn:
+        if model_value is not None:
+            if llm.provider(model_value) == "openrouter":
+                if not _key_available("OPENROUTER_API_KEY", "", conn):
+                    return _redirect(
+                        f"/feeds/{feed_id}",
+                        err=f"Model {model_value} needs an OpenRouter API key (OPENROUTER_API_KEY)",
+                    )
+            elif not _key_available("ANTHROPIC_API_KEY", "", conn):
+                return _redirect(
+                    f"/feeds/{feed_id}",
+                    err=f"Model {model_value} needs an Anthropic API key (ANTHROPIC_API_KEY)",
+                )
+
         cur = conn.execute(
             "UPDATE feeds SET title = ?, filter_ads = ?, ad_patterns_mode = ?, "
             "ad_title_patterns = ?, respect_language = ?, classify_topics = ?, "
-            "mute_topics = ?, warn_volume = ?, daily_budget = ? WHERE id = ?",
+            "mute_topics = ?, warn_volume = ?, daily_budget = ?, model = ? WHERE id = ?",
             (
                 title or None,
                 filter_ads_value,
@@ -342,6 +360,7 @@ def feed_edit_save(
                 mute_topics_value,
                 warn_volume_value,
                 daily_budget_value,
+                model_value,
                 feed_id,
             ),
         )
@@ -495,6 +514,16 @@ def env_pinned(key: str) -> bool:
     return bool(os.environ.get(key))
 
 
+def _key_available(key_name: str, submitted: str, conn: sqlite3.Connection) -> bool:
+    """True if `submitted` is non-empty, the key is env-pinned, or one is already stored."""
+    if submitted:
+        return True
+    if env_pinned(key_name):
+        return True
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (key_name,)).fetchone()
+    return bool(row and row["value"])
+
+
 @app.get("/settings")
 def settings_page(request: Request) -> Response:
     with db() as conn:
@@ -507,8 +536,15 @@ def settings_page(request: Request) -> Response:
         ad_title_patterns = get_setting("PINTXOS_AD_TITLE_PATTERNS", conn) or ""
         ad_keep_patterns = get_setting("PINTXOS_AD_KEEP_PATTERNS", conn) or ""
         row = conn.execute("SELECT value FROM settings WHERE key = ?", ("ANTHROPIC_API_KEY",)).fetchone()
+        openrouter_row = conn.execute(
+            "SELECT value FROM settings WHERE key = ?", ("OPENROUTER_API_KEY",)
+        ).fetchone()
     env_key_set = env_pinned("ANTHROPIC_API_KEY")
     key_last4 = row["value"][-4:] if row and row["value"] else None
+    openrouter_env_key_set = env_pinned("OPENROUTER_API_KEY")
+    openrouter_key_last4 = (
+        openrouter_row["value"][-4:] if openrouter_row and openrouter_row["value"] else None
+    )
     filter_ads_on = is_truthy(filter_ads)
     filter_ads_env = env_pinned("PINTXOS_FILTER_ADS")
     full_text_on = is_truthy(full_text)
@@ -535,6 +571,8 @@ def settings_page(request: Request) -> Response:
             "items_per_feed": items_per_feed,
             "env_key_set": env_key_set,
             "key_last4": key_last4,
+            "openrouter_env_key_set": openrouter_env_key_set,
+            "openrouter_key_last4": openrouter_key_last4,
             "filter_ads_on": filter_ads_on,
             "filter_ads_env": filter_ads_env,
             "full_text_on": full_text_on,
@@ -560,6 +598,7 @@ def save_settings(
     poll_minutes: str = Form(...),
     items_per_feed: str = Form(...),
     api_key: str = Form(""),
+    openrouter_api_key: str = Form(""),
     filter_ads: str = Form(""),
     ad_title_patterns: str = Form(""),
     ad_keep_patterns: str = Form(""),
@@ -586,6 +625,23 @@ def save_settings(
     except ValueError as e:
         return _redirect("/settings", err=f"Invalid keep pattern: {e}")
 
+    model = model.strip()
+    if not model:
+        return _redirect("/settings", err="Model is required")
+
+    with db() as conn:
+        if llm.provider(model) == "openrouter":
+            if not _key_available("OPENROUTER_API_KEY", openrouter_api_key, conn):
+                return _redirect(
+                    "/settings",
+                    err=f"Model {model} needs an OpenRouter API key (OPENROUTER_API_KEY)",
+                )
+        elif not _key_available("ANTHROPIC_API_KEY", api_key, conn):
+            return _redirect(
+                "/settings",
+                err=f"Model {model} needs an Anthropic API key (ANTHROPIC_API_KEY)",
+            )
+
     pairs = [
         ("PINTXOS_MODEL", model),
         ("PINTXOS_POLL_MINUTES", str(poll_minutes_i)),
@@ -593,6 +649,8 @@ def save_settings(
     ]
     if api_key and not env_pinned("ANTHROPIC_API_KEY"):
         pairs.append(("ANTHROPIC_API_KEY", api_key))
+    if openrouter_api_key and not env_pinned("OPENROUTER_API_KEY"):
+        pairs.append(("OPENROUTER_API_KEY", openrouter_api_key))
     # Disabled checkboxes/textareas aren't submitted by browsers, so when the
     # corresponding env var is set, the field is env-pinned: ignore it entirely.
     if not env_pinned("PINTXOS_FILTER_ADS"):
@@ -615,6 +673,17 @@ def save_settings(
         reschedule(poll_minutes_i)
 
     return _redirect("/settings", msg="Saved")
+
+
+@app.post("/settings/test")
+def test_settings() -> Response:
+    with db() as conn:
+        model = get_setting("PINTXOS_MODEL", conn)
+    try:
+        text = llm.complete("You are a health check.", "Reply with the single word OK.", 5, model)
+    except llm.LLMError as e:
+        return _redirect("/settings", err=f"{model}: {e}")
+    return _redirect("/settings", msg=f"{model} answered: {text.strip()}")
 
 
 @app.post("/settings/cookies")

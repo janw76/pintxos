@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS feeds (
     mute_topics TEXT,
     topic_counts TEXT,
     warn_volume INTEGER,
-    daily_budget INTEGER
+    daily_budget INTEGER,
+    model TEXT
 );
 
 CREATE TABLE IF NOT EXISTS items (
@@ -102,6 +103,8 @@ def connect() -> sqlite3.Connection:
         ("warn_volume", "INTEGER"),
         # Max summaries per UTC day for this feed. NULL = unlimited.
         ("daily_budget", "INTEGER"),
+        # NULL = follow the global PINTXOS_MODEL setting; otherwise an explicit per-feed model.
+        ("model", "TEXT"),
     ):
         if name not in cols:
             conn.execute(f"ALTER TABLE feeds ADD COLUMN {name} {ddl}")

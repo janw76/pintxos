@@ -16,6 +16,12 @@
   </div>
   <div class="muted" id="feed-title-note" hidden>Leave blank to use the feed's own title.</div>
   <div class="muted url">{{ feed.url }}</div>
+  <div class="field">
+    <label for="feed_model">Model</label>
+    <input type="text" id="feed_model" name="model" value="{{ feed.model or '' }}" placeholder="Global default ({{ global_model }})">
+    <div class="muted">Leave blank to use the global model from <a href="/settings">Settings</a>.</div>
+    {% with model_input_id="feed_model" %}{% include "_model_presets.html" %}{% endwith %}
+  </div>
   <fieldset class="field">
     <legend>Language</legend>
     <div class="radios">

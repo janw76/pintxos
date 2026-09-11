@@ -442,6 +442,7 @@ def poll_feed(feed_id: int) -> bool:
         extra_ad_patterns = _extra_ad_patterns(conn, feed) if filter_ads else []
         keep_patterns = _keep_patterns(conn) if filter_ads else []
         daily_budget = feed["daily_budget"]
+        feed_model = feed["model"]
         summaries_today = feedstats.totals(conn, feed_id)[0]
 
     try:
@@ -530,10 +531,12 @@ def poll_feed(feed_id: int) -> bool:
                 # body to quote, so they are classified from title and labels alone.
                 lead = "" if article.title_only else " ".join(article.text.split()[:80])
                 try:
-                    topic = topics.classify_topic(article.title, article.labels, lead)
-                except MissingApiKey:
-                    log.error("ANTHROPIC_API_KEY not set, stopping poll")
-                    _set_error(feed_id, "ANTHROPIC_API_KEY not set", polled=False)
+                    topic = topics.classify_topic(
+                        article.title, article.labels, lead, model=feed_model
+                    )
+                except MissingApiKey as e:
+                    log.error("%s, stopping poll", e)
+                    _set_error(feed_id, str(e), polled=False)
                     return False
                 with db() as conn:
                     feedstats.bump(conn, feed_id, classifications=1)
@@ -574,11 +577,15 @@ def poll_feed(feed_id: int) -> bool:
             _status[feed_id] = f"Summarizing {i}/{total}"
             try:
                 headline, summary = summarize(
-                    article.text, original_title, link, respect_language=respect_language
+                    article.text,
+                    original_title,
+                    link,
+                    respect_language=respect_language,
+                    model=feed_model,
                 )
-            except MissingApiKey:
-                log.error("ANTHROPIC_API_KEY not set, stopping poll")
-                _set_error(feed_id, "ANTHROPIC_API_KEY not set", polled=False)
+            except MissingApiKey as e:
+                log.error("%s, stopping poll", e)
+                _set_error(feed_id, str(e), polled=False)
                 return False
             except SummarizeError as e:
                 log.warning("summarize failed for %s: %s", link, e)
@@ -711,6 +718,7 @@ def summarize_item(feed_id: int, guid: str) -> str | None:
         if feed is None:
             return "Feed not found"
         respect_language = _respect_language(conn, feed)
+        feed_model = feed["model"]
         row = conn.execute(
             "SELECT * FROM items WHERE feed_id = ? AND guid = ?", (feed_id, guid)
         ).fetchone()
@@ -722,10 +730,14 @@ def summarize_item(feed_id: int, guid: str) -> str | None:
             text = row["text"] if row["text"] is not None else row["original_title"]
             try:
                 headline, summary = summarize(
-                    text, row["original_title"], row["link"], respect_language=respect_language
+                    text,
+                    row["original_title"],
+                    row["link"],
+                    respect_language=respect_language,
+                    model=feed_model,
                 )
-            except MissingApiKey:
-                return "ANTHROPIC_API_KEY not set"
+            except MissingApiKey as e:
+                return str(e)
             except SummarizeError as e:
                 return str(e)
             with db() as conn:
@@ -760,9 +772,10 @@ def summarize_item(feed_id: int, guid: str) -> str | None:
                 headline, summary = summarize(
                     article.text, article.title, article.link,
                     respect_language=respect_language,
+                    model=feed_model,
                 )
-            except MissingApiKey:
-                return "ANTHROPIC_API_KEY not set"
+            except MissingApiKey as e:
+                return str(e)
             except SummarizeError as e:
                 return str(e)
             with db() as conn:
@@ -828,7 +841,7 @@ def retry_fallback(feed_id: int, limit: int | None = None, only_blocked: bool = 
     with db() as conn:
         rows = conn.execute(sql, params).fetchall()
         feed_row = conn.execute(
-            "SELECT respect_language FROM feeds WHERE id = ?", (feed_id,)
+            "SELECT respect_language, model FROM feeds WHERE id = ?", (feed_id,)
         ).fetchone()
         override = feed_row["respect_language"] if feed_row is not None else None
         respect_language = (
@@ -836,6 +849,7 @@ def retry_fallback(feed_id: int, limit: int | None = None, only_blocked: bool = 
             if override is not None
             else is_truthy(get_setting("PINTXOS_RESPECT_LANGUAGE", conn))
         )
+        feed_model = feed_row["model"] if feed_row is not None else None
 
     if only_blocked:
         candidates = [
@@ -884,11 +898,15 @@ def retry_fallback(feed_id: int, limit: int | None = None, only_blocked: bool = 
 
             try:
                 headline, summary = summarize(
-                    summarize_text, original_title, link, respect_language=respect_language
+                    summarize_text,
+                    original_title,
+                    link,
+                    respect_language=respect_language,
+                    model=feed_model,
                 )
-            except MissingApiKey:
-                log.error("ANTHROPIC_API_KEY not set, stopping retry")
-                _set_error(feed_id, "ANTHROPIC_API_KEY not set", polled=False)
+            except MissingApiKey as e:
+                log.error("%s, stopping retry", e)
+                _set_error(feed_id, str(e), polled=False)
                 return
             except SummarizeError as e:
                 log.warning("summarize failed for %s: %s", link, e)

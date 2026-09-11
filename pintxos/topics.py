@@ -9,10 +9,8 @@ from __future__ import annotations
 
 import logging
 
-import anthropic
-
+from pintxos import llm
 from pintxos.config import get_setting
-from pintxos.summarize import _client
 
 log = logging.getLogger("pintxos")
 
@@ -157,7 +155,9 @@ def parse_topic(raw: str) -> str | None:
     return candidate if candidate in TOPIC_SLUGS else None
 
 
-def classify_topic(title: str, labels: list[str], lead: str) -> str | None:
+def classify_topic(
+    title: str, labels: list[str], lead: str, model: str | None = None
+) -> str | None:
     """Return the IPTC topic slug for an article, or None when classification fails.
 
     Fails open: an API error or an answer that is not one of the known slugs yields
@@ -166,22 +166,15 @@ def classify_topic(title: str, labels: list[str], lead: str) -> str | None:
     """
     system, user_message = build_prompt(title, labels, lead)
 
-    client = _client()
+    model = model or get_setting("PINTXOS_MODEL")
     try:
-        response = client.messages.create(
-            model=get_setting("PINTXOS_MODEL"),
-            max_tokens=20,
-            system=system,
-            messages=[{"role": "user", "content": user_message}],
-        )
-    except anthropic.APIError as e:
+        # 200 is a cap, not a spend: the answer is one slug, but a reasoning model
+        # needs room to think before it emits that slug or it returns nothing.
+        raw = llm.complete(system, user_message, 200, model)
+    except llm.MissingApiKey:
+        raise
+    except llm.LLMError as e:
         log.warning("topic classification failed for %r: %s", title, e)
-        return None
-
-    try:
-        raw = response.content[0].text
-    except (AttributeError, IndexError, TypeError) as e:
-        log.warning("topic classification returned no usable content for %r: %s", title, e)
         return None
 
     topic = parse_topic(raw)

@@ -1,8 +1,6 @@
-from types import SimpleNamespace
-
-import anthropic
 import pytest
 
+from pintxos import llm
 from pintxos.topics import TOPICS, build_prompt, classify_topic, parse_topic
 
 EXPECTED_SLUGS = [
@@ -26,36 +24,39 @@ EXPECTED_SLUGS = [
 ]
 
 
-class FakeMessages:
-    """Stands in for client.messages: returns `text`, or raises `error` if given."""
+class FakeComplete:
+    """Stands in for llm.complete: returns `text`, or raises `error` if given."""
 
     def __init__(self, text=None, error=None):
         self._text = text
         self._error = error
         self.calls = []
 
-    def create(self, **kwargs):
-        self.calls.append(kwargs)
+    def __call__(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
         if self._error is not None:
             raise self._error
-        return SimpleNamespace(content=[SimpleNamespace(text=self._text)])
+        return self._text
 
 
-class FakeClient:
-    def __init__(self, text=None, error=None):
-        self.messages = FakeMessages(text, error)
-
-
-def _patch_client(monkeypatch, text=None, error=None):
-    fake = FakeClient(text, error)
-    # classify_topic() calls the _client imported into pintxos.topics, so patch it there.
-    monkeypatch.setattr("pintxos.topics._client", lambda: fake)
+def _patch_complete(monkeypatch, text=None, error=None):
+    fake = FakeComplete(text, error)
+    # classify_topic() calls llm.complete through the module object; patch it at the source.
+    monkeypatch.setattr("pintxos.llm.complete", fake)
     return fake
 
 
-def _api_error():
-    """An anthropic.APIError instance, built without touching the network."""
-    return anthropic.APIError("boom", request=None, body=None)
+def _one_call(fake):
+    """The single recorded complete() call, as a keyword-style dict."""
+    ((args, kwargs),) = fake.calls
+    system, user, max_tokens, model = args
+    return {
+        "system": system,
+        "user": user,
+        "max_tokens": max_tokens,
+        "model": model,
+        **kwargs,
+    }
 
 
 # --- TOPICS ---------------------------------------------------------------
@@ -123,28 +124,39 @@ def test_build_prompt_is_deterministic():
 
 
 def test_classify_topic_returns_slug(monkeypatch):
-    fake = _patch_client(monkeypatch, text="sport")
+    monkeypatch.setenv("PINTXOS_MODEL", "claude-test-model")
+    fake = _patch_complete(monkeypatch, text="sport")
     assert classify_topic("Big match", ["football"], "Lead") == "sport"
-    (call,) = fake.messages.calls
-    assert call["max_tokens"] == 20
-    _system, user = build_prompt("Big match", ["football"], "Lead")
-    assert call["messages"] == [{"role": "user", "content": user}]
+    call = _one_call(fake)
+    # A cap, not a spend: reasoning models need room before emitting the slug.
+    assert call["max_tokens"] == 200
+    assert call["model"] == "claude-test-model"
+    system, user = build_prompt("Big match", ["football"], "Lead")
+    assert call["system"] == system
+    assert call["user"] == user
+
+
+def test_classify_topic_explicit_model_overrides_the_setting(monkeypatch):
+    monkeypatch.setenv("PINTXOS_MODEL", "claude-test-model")
+    fake = _patch_complete(monkeypatch, text="sport")
+    assert classify_topic("Big match", [], "", model="x/y") == "sport"
+    assert _one_call(fake)["model"] == "x/y"
 
 
 def test_classify_topic_tolerates_a_decorated_reply(monkeypatch):
-    _patch_client(monkeypatch, text=' "weather".\n')
+    _patch_complete(monkeypatch, text=' "weather".\n')
     assert classify_topic("Storm", [], "") == "weather"
 
 
 def test_classify_topic_returns_none_on_api_error(monkeypatch, caplog):
-    _patch_client(monkeypatch, error=_api_error())
+    _patch_complete(monkeypatch, error=llm.LLMError("boom"))
     with caplog.at_level("WARNING", logger="pintxos"):
         assert classify_topic("Big match", [], "") is None
     assert caplog.records
 
 
 def test_classify_topic_returns_none_on_garbage(monkeypatch, caplog):
-    _patch_client(monkeypatch, text="probably something about sports, hard to say")
+    _patch_complete(monkeypatch, text="probably something about sports, hard to say")
     with caplog.at_level("WARNING", logger="pintxos"):
         assert classify_topic("Big match", [], "") is None
     assert caplog.records
