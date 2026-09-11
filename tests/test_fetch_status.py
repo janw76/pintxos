@@ -71,13 +71,14 @@ def test_login_failed_bucket_with_cookie_expiry():
     )
     assert entries == [
         {
-            "text": "2 login failed",
+            "text": "2 unreadable with login",
             "tooltip": (
                 "Cookies for ft.com are saved but 2 articles still came back as "
-                "a teaser or blocked; they may have expired (earliest expiry "
-                "2100-01-01)."
+                "a teaser or blocked. Either the cookies expired (earliest "
+                "expiry 2100-01-01) or those articles are not part of your "
+                "subscription."
             ),
-            "link": {"href": "/settings#paywall", "label": "check cookies"},
+            "link": {"href": "/settings#paywall", "label": "check login"},
             "ok": False,
         }
     ]
@@ -89,7 +90,8 @@ def test_login_failed_bucket_without_cookie_expiry_says_unknown():
     )
     assert entries[0]["tooltip"] == (
         "Cookies for ft.com are saved but 2 articles still came back as a "
-        "teaser or blocked; they may have expired (earliest expiry unknown)."
+        "teaser or blocked. Either the cookies expired (earliest expiry "
+        "unknown) or those articles are not part of your subscription."
     )
 
 
@@ -119,7 +121,11 @@ def test_ordering_when_all_three_buckets_nonzero():
         {"paywalled": 1, "login_failed": 2, "unreadable": 3},
         **_base_kwargs(total=10),
     )
-    assert [e["text"] for e in entries] == ["1 paywalled", "2 login failed", "3 unreadable"]
+    assert [e["text"] for e in entries] == [
+        "1 paywalled",
+        "2 unreadable with login",
+        "3 unreadable",
+    ]
     assert [e["ok"] for e in entries] == [False, False, False]
 
 

@@ -21,7 +21,7 @@ def summarize(
 
     counts keys (missing keys count as 0):
       - "paywalled": teaser or blocked items with no login cookies saved for the site.
-      - "login_failed": teaser or blocked items while cookies ARE saved (auth failed).
+      - "login_failed": teaser or blocked items while cookies ARE saved (expired cookies or articles outside the subscription).
       - "unreadable": fetch_status "error" or NULL among fallback items.
       - "used": items fetched using saved login cookies (auth "used").
 
@@ -67,13 +67,14 @@ def summarize(
         expiry = cookie_expiry or "unknown"
         entries.append(
             {
-                "text": f"{login_failed} login failed",
+                "text": f"{login_failed} unreadable with login",
                 "tooltip": (
                     f"Cookies for {domain} are saved but {login_failed} articles "
-                    "still came back as a teaser or blocked; they may have expired "
-                    f"(earliest expiry {expiry})."
+                    "still came back as a teaser or blocked. Either the cookies "
+                    f"expired (earliest expiry {expiry}) or those articles are not "
+                    "part of your subscription."
                 ),
-                "link": {"href": _PAYWALL_HREF, "label": "check cookies"},
+                "link": {"href": _PAYWALL_HREF, "label": "check login"},
                 "ok": False,
             }
         )

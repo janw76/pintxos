@@ -259,8 +259,9 @@ back to that same site.
 
 Pintxøs uses the new cookies on the next poll. On a feed's page, "Retry
 fallback items" re-reads articles that were stored as teasers. When the
-Feeds page shows "login failed", log in again and repeat the steps
-above: cookies expire.
+Feeds page shows "unreadable with login", it means either your cookies
+expired or those articles are outside your subscription; cookies only
+need re-exporting in the first case.
 
 Short pages that declare themselves free (schema.org `isAccessibleForFree`)
 or are video/audio pages are summarized as they are and never reported as
