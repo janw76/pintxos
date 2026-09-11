@@ -214,7 +214,7 @@ macOS), see [docs/deploy-native.md](docs/deploy-native.md).
 
 ## Configuration
 
-Model, poll interval, items per feed and the API key can be set via environment
+Model, poll interval, items per feed and the API keys can be set via environment
 variable, or (if unset) via the Settings page in the web UI, which persists them
 to the database. `PINTXOS_BASE_URL`, `PINTXOS_DATA_DIR`, `PINTXOS_HOST`,
 `PINTXOS_PORT` and `PINTXOS_IMPERSONATE` are environment-only.
@@ -286,21 +286,32 @@ unencrypted in the data directory, so keep it on a private machine and
 remove it from Settings once you stop using it; it's meant for reading with
 your own account, so check the publisher's terms.
 
-## API key
+## API keys
 
-The primary way to configure `ANTHROPIC_API_KEY` is the environment variable
-(shown in the Quickstart above). If — and only if — the environment variable
-is not set, the Settings page lets you store a key in the database instead.
+There are two API keys: `ANTHROPIC_API_KEY` and `OPENROUTER_API_KEY`. Which
+one you need depends on the model name — a name with a slash uses OpenRouter,
+a name without one uses Anthropic (see
+[Choosing a model](#choosing-a-model) below) — so you only need the key(s)
+for the provider(s) you actually use. For both keys, the primary way to
+configure them is the environment variable (shown in the Quickstart above);
+if — and only if — the environment variable is not set, the Settings page
+lets you store that key in the database instead.
 
 ## Cost
 
-Pintxøs uses Claude Haiku and makes exactly one API call per new article,
-never more: items are summarized once and stored, and are never
-re-summarized on subsequent polls. Feeds with "Classify topics" turned on
-add one more small call per new item — the topic classification call is
-roughly 15% of the cost of a summary call, and only runs on feeds with the
-switch on. A per-feed "Max summaries per day" budget caps the number of
-summary calls that feed can make in a day, regardless of how much it polls.
+Pintxøs makes exactly one model call per new article, never more: items are
+summarized once and stored, and are never re-summarized on subsequent polls.
+Feeds with "Classify topics" turned on add one more small call per new item —
+the topic classification call is roughly 15% of the cost of a summary call,
+and only runs on feeds with the switch on. A per-feed "Max summaries per day"
+budget caps the number of summary calls that feed can make in a day,
+regardless of how much it polls.
+
+Pintxøs avoids re-polling and re-summarizing, but I still recommend watching
+cost — on [Claude Console](https://platform.claude.com/) for Anthropic
+models, and on [OpenRouter's activity page](https://openrouter.ai/activity)
+for models with a slash. Cost scales with the number of feeds you poll and
+how many articles they publish.
 
 ## Choosing a model
 
@@ -320,8 +331,6 @@ Each feed can override the model on its Edit page — a premium model for one fe
 Save the model on the Settings page first, then click "Test saved model" to run a tiny completion with it and the saved key — it shows the model's answer or the exact error.
 
 Cheaper models may fail the required JSON output format more often; those items are logged as summarize errors and retried on the next poll.
-
-Even though Haiku is the cheapest model Anthropic offers today and Pintxøs avoids repolling and processing, I still recommend watching cost — on [Claude Console](https://platform.claude.com/) for Anthropic models, and on [OpenRouter's activity page](https://openrouter.ai/activity) for models with a slash. Cost will obviously scale with the number feeds you poll and the amount of articles published per feed.
 
 ## Usage
 
