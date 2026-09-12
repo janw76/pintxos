@@ -435,6 +435,10 @@ def poll_feed(feed_id: int) -> bool:
             return True
         url, feed_title = feed["url"], feed["title"]
         limit = int(get_setting("PINTXOS_ITEMS_PER_FEED", conn))
+        # Storage is FIFO: `keep` rows survive, pruned by insertion order (id), not
+        # by date. Clamped so keep >= limit, hence a poll can never prune a row it
+        # just inserted -- which would re-summarize that entry on every poll.
+        keep = max(int(get_setting("PINTXOS_KEEP_PER_FEED", conn)), limit)
         filter_ads = _filter_ads_enabled(conn, feed)
         classify_topics = bool(feed["classify_topics"])
         mute_topics = json.loads(feed["mute_topics"] or "[]")
@@ -626,9 +630,8 @@ def poll_feed(feed_id: int) -> bool:
         with db() as conn:
             conn.execute(
                 "DELETE FROM items WHERE feed_id = ? AND id NOT IN "
-                "(SELECT id FROM items WHERE feed_id = ? ORDER BY published_at DESC, id DESC "
-                "LIMIT ?)",
-                (feed_id, feed_id, limit),
+                "(SELECT id FROM items WHERE feed_id = ? ORDER BY id DESC LIMIT ?)",
+                (feed_id, feed_id, keep),
             )
             conn.execute(
                 "UPDATE feeds SET last_polled_at = ?, last_error = NULL, ads_filtered = ?, "
