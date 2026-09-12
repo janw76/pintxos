@@ -120,7 +120,7 @@
 </div>
 <h2>Status</h2>
 <p>{% with fetch_status=fetch_status %}{% include "_fetch_status.html" %}{% endwith %}</p>
-<div class="muted">Summaries: {{ summaries_today }} today, {{ summaries_total }} total</div>
+<div class="muted">Summaries: {{ summaries_today }} paid today, {{ kept_today }} new items kept, {{ summaries_total }} total</div>
 {% if fallback_count > 0 %}
 <form method="post" action="/feeds/{{ feed.id }}/retry-fallback" class="retry-fallback">
   <button type="submit" class="btn-tint-neutral">Retry {{ fallback_count }} fallback item{{ "s" if fallback_count != 1 else "" }}</button>

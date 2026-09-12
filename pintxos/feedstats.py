@@ -39,6 +39,20 @@ def bump(
     )
 
 
+def kept_today(conn: sqlite3.Connection, feed_id: int) -> int:
+    """Rows inserted today for this feed, any muted/fallback state.
+
+    Compare with `totals()[0]` (summaries today) to spot paid-and-discarded work: a
+    feed that pays for many summaries but keeps few rows is likely stuck re-summarizing
+    items it then drops.
+    """
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM items WHERE feed_id = ? AND substr(created_at, 1, 10) = ?",
+        (feed_id, today()),
+    ).fetchone()
+    return int(row[0])
+
+
 def totals(conn: sqlite3.Connection, feed_id: int) -> tuple[int, int]:
     """Return (summaries today, summaries over all days) for a feed. No rows = (0, 0)."""
     row = conn.execute(

@@ -1,7 +1,7 @@
 import pytest
 
 from pintxos.db import connect, init_db, now
-from pintxos.feedstats import bump, today, totals
+from pintxos.feedstats import bump, kept_today, today, totals
 
 
 @pytest.fixture
@@ -80,6 +80,28 @@ def test_totals_ignores_other_feeds(db):
 def test_totals_for_feed_without_rows_is_zero(db):
     feed_id = add_feed(db)
     assert totals(db, feed_id) == (0, 0)
+
+
+def add_item(conn, feed_id, guid, created_at):
+    conn.execute(
+        "INSERT INTO items (feed_id, guid, link, created_at) VALUES (?, ?, ?, ?)",
+        (feed_id, guid, f"https://example.com/{guid}", created_at),
+    )
+    conn.commit()
+
+
+def test_kept_today_counts_only_todays_rows_for_this_feed(db):
+    a = add_feed(db, "https://example.com/a.xml")
+    b = add_feed(db, "https://example.com/b.xml")
+    add_item(db, a, "guid-today", now())
+    add_item(db, a, "guid-yesterday", "2020-01-01T00:00:00.000000+00:00")
+    add_item(db, b, "guid-other-feed-today", now())
+    assert kept_today(db, a) == 1
+
+
+def test_kept_today_for_feed_without_rows_is_zero(db):
+    feed_id = add_feed(db)
+    assert kept_today(db, feed_id) == 0
 
 
 def test_no_op_bump_writes_no_row(db):
