@@ -120,9 +120,13 @@ def feed_xml(request: Request, feed_id: int) -> Response:
         feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
         if feed is None:
             raise HTTPException(status_code=404, detail="feed not found")
+        # The DB keeps more rows than the output feed shows (FIFO storage, see
+        # poll.poll_feed): the feed itself is capped at the newest ITEMS_PER_FEED
+        # unmuted rows, so growing the retained history never grows the RSS body.
         items = conn.execute(
-            "SELECT * FROM items WHERE feed_id = ? ORDER BY published_at DESC, id DESC",
-            (feed_id,),
+            "SELECT * FROM items WHERE feed_id = ? AND muted = 0 "
+            "ORDER BY published_at DESC, id DESC LIMIT ?",
+            (feed_id, int(get_setting("PINTXOS_ITEMS_PER_FEED", conn))),
         ).fetchall()
         full_text = is_truthy(get_setting("PINTXOS_FULL_TEXT", conn))
 
@@ -132,7 +136,7 @@ def feed_xml(request: Request, feed_id: int) -> Response:
         if warn_on and level is not None:
             base_url = get_setting("PINTXOS_BASE_URL", conn) or str(request.base_url).rstrip("/")
             feed_page_url = f"{base_url}/feeds/{feed_id}"
-            model = get_setting("PINTXOS_MODEL", conn)
+            model = feed["model"] or get_setting("PINTXOS_MODEL", conn)
             warning = feed_out.warning_item(
                 feed,
                 level=level,
@@ -140,6 +144,7 @@ def feed_xml(request: Request, feed_id: int) -> Response:
                 day=feedstats.today(),
                 feed_page_url=feed_page_url,
                 model=model,
+                kept_today=feedstats.kept_today(conn, feed_id),
             )
         else:
             warning = None
@@ -186,6 +191,7 @@ def feed_edit_page(request: Request, feed_id: int) -> Response:
         warn_volume = 1 if feed["warn_volume"] is None else feed["warn_volume"]
         daily_budget = feed["daily_budget"]
         summaries_today, summaries_total = feedstats.totals(conn, feed_id)
+        kept_today = feedstats.kept_today(conn, feed_id)
         global_filter_ads_on = is_truthy(get_setting("PINTXOS_FILTER_ADS", conn))
         global_patterns = get_setting("PINTXOS_AD_TITLE_PATTERNS", conn) or ""
         global_respect_language_on = is_truthy(get_setting("PINTXOS_RESPECT_LANGUAGE", conn))
@@ -270,6 +276,7 @@ def feed_edit_page(request: Request, feed_id: int) -> Response:
             "daily_budget": daily_budget,
             "summaries_today": summaries_today,
             "summaries_total": summaries_total,
+            "kept_today": kept_today,
             "global_model": global_model,
         },
     )

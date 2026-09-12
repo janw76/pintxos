@@ -359,6 +359,7 @@ def test_warning_item_fields_and_escaping():
         day="2026-09-11",
         feed_page_url="https://pintxos.example/feeds/7",
         model="gpt-4o & friends",
+        kept_today=40,
     )
 
     assert item["guid"] == "pintxos-warning-7-50-2026-09-11"
@@ -370,12 +371,14 @@ def test_warning_item_fields_and_escaping():
     assert "News &amp; &lt;Views&gt;" in description
     assert "News & <Views>" not in description
     assert "62 summaries today" in description
-    assert "call to gpt-4o &amp; friends." in description
+    assert "call to gpt-4o &amp; friends; 40 of them became new items." in description
     assert 'href="https://pintxos.example/feeds/7"' in description
     assert "Open the feed's settings" in description
     assert "Did you know? Pintxøs can skip ads" in description
     # Below the 100 threshold: no "far more than anyone reads" escalation sentence.
     assert "far more than anyone reads" not in description
+    # 40 * 2 = 80 >= 62: not a discard loop, no warning sentence.
+    assert "re-summarize loop" not in description
 
 
 def test_warning_item_level_100_adds_escalation_sentence():
@@ -389,12 +392,55 @@ def test_warning_item_level_100_adds_escalation_sentence():
         day="2026-09-11",
         feed_page_url="https://pintxos.example/feeds/3",
         model="gpt-4o",
+        kept_today=200,
     )
 
     assert "far more than anyone reads in a day" in item["description"]
     assert "paid for and never opened" in item["description"]
     # Falls back to the feed URL when it has no title.
     assert "https://example.com/nofeed produced 250 summaries" in item["description"]
+
+
+def test_warning_item_loop_sentence_appears_when_mostly_discarded():
+    from pintxos.feed_out import warning_item
+
+    feed = {"id": 9, "title": "Discardy", "url": "https://example.com/discardy"}
+    item = warning_item(
+        feed,
+        level=50,
+        summaries_today=60,
+        day="2026-09-11",
+        feed_page_url="https://pintxos.example/feeds/9",
+        model="gpt-4o",
+        kept_today=1,
+    )
+
+    description = item["description"]
+    assert "1 of them became new items." in description
+    assert (
+        "Paying for summaries that are then discarded usually means a "
+        "re-summarize loop: check this feed's Filtered list and the container log."
+        in description
+    )
+
+
+def test_warning_item_loop_sentence_absent_when_mostly_kept():
+    from pintxos.feed_out import warning_item
+
+    feed = {"id": 9, "title": "Keepy", "url": "https://example.com/keepy"}
+    item = warning_item(
+        feed,
+        level=50,
+        summaries_today=60,
+        day="2026-09-11",
+        feed_page_url="https://pintxos.example/feeds/9",
+        model="gpt-4o",
+        kept_today=40,
+    )
+
+    description = item["description"]
+    assert "40 of them became new items." in description
+    assert "re-summarize loop" not in description
 
 
 def test_render_rss_with_warning_prepends_warning_item():
@@ -409,6 +455,7 @@ def test_render_rss_with_warning_prepends_warning_item():
         day="2026-09-11",
         feed_page_url="https://pintxos.example/feeds/1",
         model="gpt-4o",
+        kept_today=40,
     )
 
     with db() as conn:
@@ -477,6 +524,7 @@ def test_render_rss_with_warning_still_skips_muted_items():
         day="2026-09-11",
         feed_page_url="https://pintxos.example/feeds/1",
         model="gpt-4o",
+        kept_today=40,
     )
     body = render_rss(db_feed, items, full_text=True, warning=warning)
     parsed = feedparser.parse(body)

@@ -80,6 +80,7 @@ def warning_item(
     day: str,
     feed_page_url: str,
     model: str,
+    kept_today: int,
 ) -> dict:
     """Build the warning article for a feed that produced many summaries today."""
     title_esc = html.escape(str(feed["title"] or feed["url"]))
@@ -88,12 +89,17 @@ def warning_item(
 
     sentence = (
         f"{title_esc} produced {summaries_today} summaries today, "
-        f"each one a call to {model_esc}."
+        f"each one a call to {model_esc}; {kept_today} of them became new items."
     )
     if level >= 100:
         sentence += (
             " That is far more than anyone reads in a day; "
             "most of these summaries are paid for and never opened."
+        )
+    if kept_today * 2 < summaries_today:
+        sentence += (
+            " Paying for summaries that are then discarded usually means a "
+            "re-summarize loop: check this feed's Filtered list and the container log."
         )
     description = (
         f"<p>{sentence}</p>"

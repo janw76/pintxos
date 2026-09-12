@@ -141,7 +141,9 @@ to the database. `PINTXOS_BASE_URL`, `PINTXOS_DATA_DIR`, `PINTXOS_HOST`,
 | `OPENROUTER_API_KEY` | *(none)* | OpenRouter API key. Needed only for models with a slash in the name. |
 | `PINTXOS_MODEL` | `claude-haiku-4-5-20251001` | Default model. Names with a slash go to OpenRouter, names without go to Anthropic. Feeds can override it. |
 | `PINTXOS_POLL_MINUTES` | `30` | How often feeds are polled, in minutes. |
-| `PINTXOS_ITEMS_PER_FEED` | `50` | Items kept per output feed (older ones pruned). |
+| `PINTXOS_ITEMS_PER_FEED` | `50` | Items in each output feed, and the most feed entries considered per poll. |
+| `PINTXOS_KEEP_PER_FEED` | `1000` | Rows stored per feed; the oldest-inserted are pruned first. Keeps history well beyond the output feed so an entry that leaves and re-enters a publisher's feed is never summarized again. Roughly 5 KB per row with full text. No UI field. |
+| `PINTXOS_DAILY_BUDGET` | `200` | Default "Max summaries per day" for feeds whose own budget is blank. A per-feed value always wins; set it very high to effectively remove the cap. |
 | `PINTXOS_FILTER_ADS` | `0` | Skip ad/coupon entries before fetch/summarize. Set to `1` to turn this on. |
 | `PINTXOS_FULL_TEXT` | `1` | Append the extracted article text after each summary in the output feed, below the Original line. Set to `0` to turn this off. |
 | `PINTXOS_RESPECT_LANGUAGE` | `1` | Write headline and summary in the article's language. Set to `0` to always summarize in English. Appended full text is never translated. Each feed can override this on its Edit page. |
@@ -259,13 +261,17 @@ own items.
 
 - The warning is per feed, On by default; flip it Off in the "Volume"
   fieldset on the feed's Edit page if you'd rather not see it.
-- "Max summaries per day" sets a hard budget for the feed, blank for
-  unlimited; once the budget is reached, further entries are skipped before
-  any fetch or summary call, so they cost nothing.
+- "Max summaries per day" sets a hard budget for the feed; blank falls back
+  to the default `PINTXOS_DAILY_BUDGET` (200), not unlimited — set it very
+  high on a feed if you want to effectively remove its cap. Once the budget
+  is reached, further entries are skipped before any fetch or summary call,
+  so they cost nothing.
 - Skipped entries show up in the "Filtered at last poll" list like any other
   filtered item, with a Summarize button to release one anyway.
-- The feed's Edit page always shows "Summaries: N today, M total" so you can
-  see where a feed stands against its budget.
+- The feed's Edit page always shows "Summaries: N paid today, K new items
+  kept, M total". Paid vs. kept tells you whether summaries are being paid
+  for and then discarded; the warning article itself states both numbers and
+  calls out a likely re-summarize loop when fewer than half were kept.
 
 ## Security warning
 
@@ -294,7 +300,14 @@ lets you store that key in the database instead.
 ## Cost
 
 * Pintxøs makes exactly **one** summary call per new article, never more: items are
-summarized once and stored, and are never re-summarized on subsequent polls.
+stored (up to `PINTXOS_KEEP_PER_FEED` per feed) and never re-summarized while
+they remain stored. A failed summary call — unparsable model output, a
+transport error — is stored as a fallback item instead, using the article's
+own title and first 80 words, so it is never retried on later polls; only the
+feed's "Retry fallback" button re-summarizes it.
+* The database grows to about 5 MB per feed at the default retention.
+Pintxøs never runs `VACUUM`, so deleting a feed shrinks the file only after
+running `sqlite3 pintxos.db 'VACUUM'` by hand.
 * Feeds with "Classify topics" turned on add one more small call per new item —
 the topic classification call is roughly 15% of the cost of a summary call,
 and only runs on feeds with the switch on. As a rule of thumb, topic mute pays for itself once the muted topics make up more than about 15% of a feed's items (the feed's Edit page shows the share of items in each topic).

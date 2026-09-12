@@ -1220,7 +1220,7 @@ def test_feed_edit_page_shows_volume_defaults_and_summary_totals(monkeypatch):
     assert 'name="warn_volume" value="0" checked' not in page
     assert 'name="daily_budget"' in page
     assert 'name="daily_budget" min="0" step="1" value="">' in page
-    assert "Summaries: 0 today, 0 total" in page
+    assert "Summaries: 0 paid today, 0 new items kept, 0 total" in page
 
 
 def test_feed_edit_post_saves_warn_volume_and_daily_budget(monkeypatch):
@@ -1359,9 +1359,17 @@ def test_feed_edit_page_shows_summaries_today_and_total(monkeypatch):
         with db() as conn:
             feedstats.bump(conn, 1, summaries=3, day=feedstats.today())
             feedstats.bump(conn, 1, summaries=5, day="2020-01-01")
+            conn.execute(
+                "INSERT INTO items (feed_id, guid, link, created_at) VALUES (?, ?, ?, ?)",
+                (1, "guid-kept-1", "https://example.com/kept-1", db_now()),
+            )
+            conn.execute(
+                "INSERT INTO items (feed_id, guid, link, created_at) VALUES (?, ?, ?, ?)",
+                (1, "guid-kept-2", "https://example.com/kept-2", db_now()),
+            )
         page = c.get("/feeds/1").text
 
-    assert "Summaries: 3 today, 8 total" in page
+    assert "Summaries: 3 paid today, 2 new items kept, 8 total" in page
 
 
 def _first_item_block(xml_text: str) -> str:
@@ -1410,6 +1418,21 @@ def test_feed_xml_warning_at_120_uses_100_level(monkeypatch):
     guid = f"pintxos-warning-1-100-{today}"
     first_item = _first_item_block(body)
     assert guid in first_item
+
+
+def test_feed_xml_warning_names_the_feeds_own_model(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        with db() as conn:
+            conn.execute("UPDATE feeds SET model = ? WHERE id = 1", ("openai/gpt-5-mini",))
+            feedstats.bump(conn, 1, summaries=50, day=feedstats.today())
+        body = c.get("/feeds/1.xml").text
+        global_model = get_setting("PINTXOS_MODEL")
+
+    first_item = _first_item_block(body)
+    assert "openai/gpt-5-mini" in first_item
+    assert global_model not in first_item
 
 
 def test_feed_xml_warn_volume_off_suppresses_warning(monkeypatch):
@@ -2698,3 +2721,22 @@ def test_summarize_route_queues_summarize_one_and_redirects_with_msg(monkeypatch
     assert location.startswith("/feeds/1?")
     assert "msg=" in location
     assert calls == [(1, "guid-1")]
+
+
+def test_feed_xml_caps_items_at_items_per_feed(monkeypatch):
+    """The DB keeps more rows than the output feed shows: the RSS body is capped at
+    PINTXOS_ITEMS_PER_FEED, dropping the oldest-dated rows beyond it."""
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    monkeypatch.setenv("PINTXOS_ITEMS_PER_FEED", "3")
+    per_feed = int(get_setting("PINTXOS_ITEMS_PER_FEED"))
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        base = datetime(2026, 1, 1, tzinfo=UTC)
+        for n in range(per_feed + 1):  # oldest first, so guid-0 is the one that drops
+            _insert_item(1, f"guid-{n}", published_at=(base + timedelta(days=n)).isoformat())
+        body = c.get("/feeds/1.xml").text
+
+    assert body.count("<item>") == per_feed
+    assert "guid-0" not in body
+    for n in range(1, per_feed + 1):
+        assert f"guid-{n}" in body

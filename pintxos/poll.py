@@ -424,6 +424,41 @@ def _set_error(feed_id: int, message: str, polled: bool = True) -> None:
             )
 
 
+def _insert_item(
+    conn,
+    feed_id: int,
+    guid: str,
+    link: str,
+    original_title: str,
+    entry,
+    headline: str | None,
+    summary: str | None,
+    fallback: bool,
+    article: ArticleInput,
+    labels_json: str | None,
+    topic: str | None,
+    model: str | None,
+) -> None:
+    """Insert one item row for poll_feed's main loop: the normal successful-summarize
+    path and the persistent-summarize-failure fallback path share this single
+    17-column INSERT so the two never drift apart. Always muted=0 here -- a muted
+    entry is inserted by its own branch above, before summarize is ever attempted.
+    """
+    conn.execute(
+        "INSERT OR IGNORE INTO items(feed_id, guid, link, original_title, "
+        "published_at, headline, summary, fallback, word_count, auth, "
+        "fetch_status, text, created_at, labels, topic, muted, model) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            feed_id, guid, link or "", original_title, _published_at(entry),
+            headline, summary, int(fallback), article.word_count,
+            article.auth, article.fetch_status,
+            None if article.title_only else article.text, now(), labels_json,
+            topic, 0, model,
+        ),
+    )
+
+
 def poll_feed(feed_id: int) -> bool:
     """Poll one feed. Returns False if the whole run should stop (no API key)."""
     # Every DB connection below is short-lived: never hold a write transaction across a
@@ -435,6 +470,10 @@ def poll_feed(feed_id: int) -> bool:
             return True
         url, feed_title = feed["url"], feed["title"]
         limit = int(get_setting("PINTXOS_ITEMS_PER_FEED", conn))
+        # Storage is FIFO: `keep` rows survive, pruned by insertion order (id), not
+        # by date. Clamped so keep >= limit, hence a poll can never prune a row it
+        # just inserted -- which would re-summarize that entry on every poll.
+        keep = max(int(get_setting("PINTXOS_KEEP_PER_FEED", conn)), limit)
         filter_ads = _filter_ads_enabled(conn, feed)
         classify_topics = bool(feed["classify_topics"])
         mute_topics = json.loads(feed["mute_topics"] or "[]")
@@ -442,6 +481,8 @@ def poll_feed(feed_id: int) -> bool:
         extra_ad_patterns = _extra_ad_patterns(conn, feed) if filter_ads else []
         keep_patterns = _keep_patterns(conn) if filter_ads else []
         daily_budget = feed["daily_budget"]
+        if daily_budget is None:
+            daily_budget = int(get_setting("PINTXOS_DAILY_BUDGET", conn))
         feed_model = feed["model"] or get_setting("PINTXOS_MODEL", conn)
         summaries_today = feedstats.totals(conn, feed_id)[0]
 
@@ -589,21 +630,37 @@ def poll_feed(feed_id: int) -> bool:
                 return False
             except SummarizeError as e:
                 log.warning("summarize failed for %s: %s", link, e)
-                continue  # not inserted: the next poll retries it
+                # Some failures are deterministic (e.g. a page whose extracted text
+                # never yields parseable JSON) and would otherwise pay for the same
+                # summarize call on every poll forever. Store the row as a fallback
+                # item instead -- headline/summary come from the article itself, not
+                # the LLM -- and never auto-retry it; only the manual
+                # retry-fallback button re-summarizes it.
+                fallback_summary = (
+                    original_title
+                    if article.title_only
+                    else " ".join(article.text.split()[:80])
+                )
+                with db() as conn:  # commit per item: a crash keeps what we already paid for
+                    _insert_item(
+                        conn, feed_id, guid, link, original_title, entry,
+                        original_title, fallback_summary, True, article, labels_json,
+                        topic, None,
+                    )
+                if topic is not None:
+                    _bump_topic_count(feed_id, topic)
+                # The call was made and paid for even though it failed -- unlike the
+                # "not inserted" case this replaces, today's budget/stats must count it.
+                with db() as conn:
+                    feedstats.bump(conn, feed_id, summaries=1)
+                summaries_today += 1
+                continue
 
             with db() as conn:  # commit per item: a crash keeps what we already paid for
-                conn.execute(
-                    "INSERT OR IGNORE INTO items(feed_id, guid, link, original_title, "
-                    "published_at, headline, summary, fallback, word_count, auth, "
-                    "fetch_status, text, created_at, labels, topic, muted, model) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (
-                        feed_id, guid, link or "", original_title, _published_at(entry),
-                        headline, summary, int(article.fallback), article.word_count,
-                        article.auth, article.fetch_status,
-                        None if article.title_only else article.text, now(), labels_json,
-                        topic, 0, feed_model,
-                    ),
+                _insert_item(
+                    conn, feed_id, guid, link, original_title, entry,
+                    headline, summary, article.fallback, article, labels_json,
+                    topic, feed_model,
                 )
 
             if topic is not None:
@@ -626,9 +683,8 @@ def poll_feed(feed_id: int) -> bool:
         with db() as conn:
             conn.execute(
                 "DELETE FROM items WHERE feed_id = ? AND id NOT IN "
-                "(SELECT id FROM items WHERE feed_id = ? ORDER BY published_at DESC, id DESC "
-                "LIMIT ?)",
-                (feed_id, feed_id, limit),
+                "(SELECT id FROM items WHERE feed_id = ? ORDER BY id DESC LIMIT ?)",
+                (feed_id, feed_id, keep),
             )
             conn.execute(
                 "UPDATE feeds SET last_polled_at = ?, last_error = NULL, ads_filtered = ?, "

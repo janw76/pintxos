@@ -20,6 +20,10 @@ def _isolated_data_dir(tmp_path, monkeypatch):
     monkeypatch.delenv("PINTXOS_AD_TITLE_PATTERNS", raising=False)
     monkeypatch.delenv("PINTXOS_FULL_TEXT", raising=False)
     monkeypatch.delenv("PINTXOS_RESPECT_LANGUAGE", raising=False)
+    # Cost/retention knobs added by pintxos-dg1: an ambient value would change how
+    # many entries a poll summarizes or keeps.
+    monkeypatch.delenv("PINTXOS_DAILY_BUDGET", raising=False)
+    monkeypatch.delenv("PINTXOS_KEEP_PER_FEED", raising=False)
 
 
 def write_cookies(text: str) -> None:

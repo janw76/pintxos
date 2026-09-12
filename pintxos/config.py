@@ -13,6 +13,11 @@ DEFAULTS: dict[str, str | None] = {
     "PINTXOS_MODEL": "claude-haiku-4-5-20251001",
     "PINTXOS_POLL_MINUTES": "30",
     "PINTXOS_ITEMS_PER_FEED": "50",
+    # Rows kept in the DB per feed; the oldest-inserted are pruned first. No UI field.
+    "PINTXOS_KEEP_PER_FEED": "1000",
+    # Default max summaries per feed per day for feeds without a budget of their own;
+    # a per-feed value always wins; set it very high to effectively remove the cap.
+    "PINTXOS_DAILY_BUDGET": "200",
     "PINTXOS_BASE_URL": None,
     "PINTXOS_FILTER_ADS": "0",
     "PINTXOS_AD_TITLE_PATTERNS": "",
