@@ -481,6 +481,8 @@ def poll_feed(feed_id: int) -> bool:
         extra_ad_patterns = _extra_ad_patterns(conn, feed) if filter_ads else []
         keep_patterns = _keep_patterns(conn) if filter_ads else []
         daily_budget = feed["daily_budget"]
+        if daily_budget is None:
+            daily_budget = int(get_setting("PINTXOS_DAILY_BUDGET", conn))
         feed_model = feed["model"] or get_setting("PINTXOS_MODEL", conn)
         summaries_today = feedstats.totals(conn, feed_id)[0]
 
