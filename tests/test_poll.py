@@ -2356,8 +2356,9 @@ def test_topic_counts_accumulate_across_polls(feed_id, calls, monkeypatch):
 def test_summarize_error_stores_fallback_and_is_not_reclassified_on_retry(feed_id, monkeypatch):
     """A summarize failure stores the item as a fallback row on the first poll, with
     its classified topic -- and because it is then "seen", it is never reclassified
-    or re-summarized on a later poll. topic_counts is only bumped for an item that
-    was actually paid for with a real summary, so a failed call must not touch it."""
+    or re-summarized on a later poll. A classified row is counted once in
+    topic_counts whether or not its summarize call succeeded, so the failure still
+    bumps the count -- but the later poll neither reclassifies nor recounts it."""
     link = "https://example.com/cricket"
     feed_xml = _label_feed_xml(link, [])
 
@@ -2387,13 +2388,13 @@ def test_summarize_error_stores_fallback_and_is_not_reclassified_on_retry(feed_i
     assert rows[0]["fallback"] == 1
     assert len(classify_calls) == 1
     assert summarize_calls["n"] == 1
-    assert feed_row(feed_id)["topic_counts"] is None
+    assert json.loads(feed_row(feed_id)["topic_counts"]) == {"science": 1}
 
     assert poll.poll_feed(feed_id) is True  # second poll: already seen, never retried
     assert len(items()) == 1
     assert len(classify_calls) == 1  # not reclassified
     assert summarize_calls["n"] == 1  # not re-summarized
-    assert feed_row(feed_id)["topic_counts"] is None
+    assert json.loads(feed_row(feed_id)["topic_counts"]) == {"science": 1}  # not recounted
 
 
 def test_failed_classification_fails_open_and_is_never_counted(feed_id, calls, monkeypatch):
