@@ -647,6 +647,8 @@ def poll_feed(feed_id: int) -> bool:
                         original_title, fallback_summary, True, article, labels_json,
                         topic, None,
                     )
+                if topic is not None:
+                    _bump_topic_count(feed_id, topic)
                 # The call was made and paid for even though it failed -- unlike the
                 # "not inserted" case this replaces, today's budget/stats must count it.
                 with db() as conn:
