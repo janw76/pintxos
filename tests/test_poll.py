@@ -75,18 +75,23 @@ def calls(monkeypatch):
 @pytest.fixture
 def serve_feed(monkeypatch):
     """Like `calls`, but for an arbitrary feed body: call the returned `serve(body)`
-    to install the fakes, and read the summarize() calls off the list it returns."""
+    to install the fakes, and read the summarize() calls off the list it returns.
+    `fails=True` makes every summarize() call raise SummarizeError after being
+    recorded (like a real call that was made and paid for but failed), for
+    exercising the persistent-failure fallback path."""
     seen: list[tuple[str, str, str]] = []
 
-    def fake_summarize(text, original_title, url, respect_language=None, model=None):
-        seen.append((text, original_title, url))
-        return f"HEADLINE {len(seen)}", f"summary of {original_title}"
-
-    def serve(body: bytes) -> list[tuple[str, str, str]]:
+    def serve(body: bytes, fails: bool = False) -> list[tuple[str, str, str]]:
         def fake_get(url):
             if url == FEED_URL:
                 return FakeResponse(body)
             raise AssertionError(f"unexpected GET {url}")
+
+        def fake_summarize(text, original_title, url, respect_language=None, model=None):
+            seen.append((text, original_title, url))
+            if fails:
+                raise SummarizeError("boom")
+            return f"HEADLINE {len(seen)}", f"summary of {original_title}"
 
         monkeypatch.setattr(poll, "_get", fake_get)
         monkeypatch.setattr(poll, "fetch_article", lambda link: (None, "error", []))
@@ -263,32 +268,45 @@ def test_prune_keeps_newest_n(feed_id, calls, monkeypatch):
 
 
 # (body, env settings, rows pre-seeded with a 2030 date, summaries expected on poll 1,
-# seeded rows expected to survive the prune).
+# seeded rows expected to survive the prune, always_fails: every summarize() call
+# raises SummarizeError instead of succeeding).
 # Append new cases here; the test below is generic over them.
 IDEMPOTENCE_CASES = [
-    pytest.param(SAMPLE, {"PINTXOS_ITEMS_PER_FEED": "2"}, 0, 2, 0, id="feed-larger-than-cap"),
+    pytest.param(
+        SAMPLE, {"PINTXOS_ITEMS_PER_FEED": "2"}, 0, 2, 0, False, id="feed-larger-than-cap"
+    ),
     # The production loop, with keep small enough that the prune actually binds: every
     # stored row is dated 2030, newer than every entry, so a prune by date would keep
     # the three seeds and delete exactly the three rows this poll just paid for -- and
     # the next poll would pay for them again. FIFO keeps the freshly inserted rows and
     # drops the seeds instead.
     pytest.param(
-        TAGESSCHAU, {"PINTXOS_ITEMS_PER_FEED": "3", "PINTXOS_KEEP_PER_FEED": "3"}, 3, 3, 0,
+        TAGESSCHAU, {"PINTXOS_ITEMS_PER_FEED": "3", "PINTXOS_KEEP_PER_FEED": "3"}, 3, 3, 0, False,
         id="stored-rows-newer-than-every-entry",
     ),
-    pytest.param(TAGESSCHAU, {}, 0, 5, 0, id="updated-only-dates-plus-one-undated"),
-    pytest.param(SAMPLE, {"PINTXOS_KEEP_PER_FEED": "1"}, 0, 3, 0, id="keep-clamped-to-cap"),
+    pytest.param(TAGESSCHAU, {}, 0, 5, 0, False, id="updated-only-dates-plus-one-undated"),
+    pytest.param(SAMPLE, {"PINTXOS_KEEP_PER_FEED": "1"}, 0, 3, 0, False, id="keep-clamped-to-cap"),
+    # A summarizer that fails deterministically on every entry (e.g. a page whose
+    # extracted text never yields parseable JSON): each entry is still stored, as a
+    # fallback row, on the first poll -- and, because it is then "seen", a second poll
+    # must not call summarize() again for it.
+    pytest.param(
+        SAMPLE, {}, 0, 3, 0, True, id="persistent-summarize-error-stores-fallback-once"
+    ),
 ]
 
 
 @pytest.mark.parametrize(
-    ("body", "settings", "seeded", "expected_calls", "seeds_kept"), IDEMPOTENCE_CASES
+    ("body", "settings", "seeded", "expected_calls", "seeds_kept", "always_fails"),
+    IDEMPOTENCE_CASES,
 )
 def test_poll_is_idempotent(
-    feed_id, serve_feed, monkeypatch, body, settings, seeded, expected_calls, seeds_kept
+    feed_id, serve_feed, monkeypatch, body, settings, seeded, expected_calls, seeds_kept,
+    always_fails,
 ):
     """Polling the same unchanged feed twice costs nothing the second time: an entry
-    that was summarized is still stored afterwards, so it is never paid for again."""
+    that was summarized (successfully or not) is still stored afterwards, so it is
+    never paid for again."""
     for key, value in settings.items():
         monkeypatch.setenv(key, value)
     with db() as conn:
@@ -299,7 +317,7 @@ def test_poll_is_idempotent(
                 (feed_id, f"seed-{n}", "https://example.com/seed", "seeded",
                  "2030-01-0%d" % (n + 1), "seeded headline", "seeded summary", 1, now()),
             )
-    calls = serve_feed(body)
+    calls = serve_feed(body, fails=always_fails)
 
     poll.poll_all()
     first_calls = len(calls)
@@ -465,6 +483,9 @@ def test_connect_migrates_existing_db_missing_items_model_column(tmp_path, monke
 
 
 def test_summarize_error_skips_only_that_item(feed_id, calls, monkeypatch):
+    """A summarize failure on one entry doesn't block the others -- and the failed
+    entry is stored too, as a fallback row, not skipped: it is never inserted a
+    second time, so it must not be silently dropped either."""
     def flaky(text, original_title, url, respect_language=None, model=None):
         if url == "https://example.com/two":
             raise SummarizeError("API said no")
@@ -472,8 +493,52 @@ def test_summarize_error_skips_only_that_item(feed_id, calls, monkeypatch):
 
     monkeypatch.setattr(poll, "summarize", flaky)
     poll.poll_all()
-    links = [row["link"] for row in items()]
-    assert links == ["https://example.com/one", "https://example.com/three"]
+    rows = {row["link"]: row for row in items()}
+    assert set(rows) == {
+        "https://example.com/one", "https://example.com/two", "https://example.com/three",
+    }
+    failed = rows["https://example.com/two"]
+    assert failed["fallback"] == 1
+    assert failed["headline"] == "Second article about a merger"  # original title, not the LLM's
+    assert failed["model"] is None
+    # calls (fetch_article always fails) makes fallback=1 true for every row here
+    # regardless of summarize outcome, so the distinguishing signal is headline/model:
+    # the two entries that summarized fine got the LLM's headline and a model.
+    for link in ("https://example.com/one", "https://example.com/three"):
+        assert rows[link]["headline"] == "HEADLINE"
+        assert rows[link]["model"] is not None
+
+
+def test_persistent_summarize_error_stores_fallback_row(feed_id, monkeypatch):
+    """A summarizer that fails deterministically on every entry still gets each
+    entry stored, as a fallback row: headline is the original title, summary is a
+    short lead from the article text (at most 80 words), fallback=1, model=None,
+    muted=0 -- and the call is still counted against feedstats even though it
+    failed, since it was made and paid for."""
+    calls = {"n": 0}
+
+    def always_fails(text, original_title, url, respect_language=None, model=None):
+        calls["n"] += 1
+        raise SummarizeError("could not parse response as JSON")
+
+    monkeypatch.setattr(poll, "_get", lambda url: FakeResponse(SAMPLE))
+    monkeypatch.setattr(poll, "fetch_article", lambda link: (None, "error", []))
+    monkeypatch.setattr(poll, "summarize", always_fails)
+
+    poll.poll_all()
+
+    rows = items()
+    assert len(rows) == 3
+    assert calls["n"] == 3
+    for row in rows:
+        assert row["fallback"] == 1
+        assert row["muted"] == 0
+        assert row["headline"] == row["original_title"]
+        assert row["model"] is None
+        assert row["summary"]
+        assert len(row["summary"].split()) <= 80
+    with db() as conn:
+        assert feedstats.totals(conn, feed_id)[0] == calls["n"]
 
 
 def test_feed_http_error_sets_last_error(feed_id, monkeypatch):
@@ -2288,10 +2353,11 @@ def test_topic_counts_accumulate_across_polls(feed_id, calls, monkeypatch):
     assert json.loads(feed_row(feed_id)["topic_counts"]) == {"science": 8}
 
 
-def test_summarize_error_does_not_double_count_topic_on_retry(feed_id, monkeypatch):
-    """A permanently-retried item is reclassified every poll (it is never inserted,
-    so it never becomes "seen"), but it must only be counted once summarize() finally
-    succeeds and the item is actually stored -- not once per classify call."""
+def test_summarize_error_stores_fallback_and_is_not_reclassified_on_retry(feed_id, monkeypatch):
+    """A summarize failure stores the item as a fallback row on the first poll, with
+    its classified topic -- and because it is then "seen", it is never reclassified
+    or re-summarized on a later poll. topic_counts is only bumped for an item that
+    was actually paid for with a real summary, so a failed call must not touch it."""
     link = "https://example.com/cricket"
     feed_xml = _label_feed_xml(link, [])
 
@@ -2304,27 +2370,30 @@ def test_summarize_error_does_not_double_count_topic_on_retry(feed_id, monkeypat
     monkeypatch.setattr(poll, "fetch_article", lambda link: (None, "error", []))
 
     set_feed(feed_id, classify_topics=1)
-    mock_classify(monkeypatch, "science")
+    classify_calls = mock_classify(monkeypatch, "science")
 
     summarize_calls = {"n": 0}
 
-    def flaky_summarize(text, original_title, url, respect_language=None, model=None):
+    def always_fails(text, original_title, url, respect_language=None, model=None):
         summarize_calls["n"] += 1
-        if summarize_calls["n"] == 1:
-            raise SummarizeError("boom")
-        return "HEADLINE", "summary"
+        raise SummarizeError("boom")
 
-    monkeypatch.setattr(poll, "summarize", flaky_summarize)
+    monkeypatch.setattr(poll, "summarize", always_fails)
 
-    assert poll.poll_feed(feed_id) is True  # first poll: summarize fails, nothing stored
-    assert items() == []
-    assert feed_row(feed_id)["topic_counts"] is None
-
-    assert poll.poll_feed(feed_id) is True  # second poll: summarize succeeds
+    assert poll.poll_feed(feed_id) is True  # first poll: summarize fails, stored as fallback
     rows = items()
     assert len(rows) == 1
-    assert rows[0]["headline"] == "HEADLINE"
-    assert json.loads(feed_row(feed_id)["topic_counts"]) == {"science": 1}
+    assert rows[0]["topic"] == "science"
+    assert rows[0]["fallback"] == 1
+    assert len(classify_calls) == 1
+    assert summarize_calls["n"] == 1
+    assert feed_row(feed_id)["topic_counts"] is None
+
+    assert poll.poll_feed(feed_id) is True  # second poll: already seen, never retried
+    assert len(items()) == 1
+    assert len(classify_calls) == 1  # not reclassified
+    assert summarize_calls["n"] == 1  # not re-summarized
+    assert feed_row(feed_id)["topic_counts"] is None
 
 
 def test_failed_classification_fails_open_and_is_never_counted(feed_id, calls, monkeypatch):
