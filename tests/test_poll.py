@@ -29,6 +29,7 @@ FEED_URL = "https://example.com/feed.xml"
 SAMPLE = (Path(__file__).parent / "fixtures" / "sample.xml").read_bytes()
 SAMPLE_WITH_AD = (Path(__file__).parent / "fixtures" / "sample_with_ad.xml").read_bytes()
 WIRED = (Path(__file__).parent / "fixtures" / "wired.xml").read_bytes()
+TAGESSCHAU = (Path(__file__).parent / "fixtures" / "tagesschau_atom.xml").read_bytes()
 
 
 class FakeResponse:
@@ -69,6 +70,30 @@ def calls(monkeypatch):
     monkeypatch.setattr(poll, "fetch_article", lambda link: (None, "error", []))
     monkeypatch.setattr(poll, "summarize", fake_summarize)
     return seen
+
+
+@pytest.fixture
+def serve_feed(monkeypatch):
+    """Like `calls`, but for an arbitrary feed body: call the returned `serve(body)`
+    to install the fakes, and read the summarize() calls off the list it returns."""
+    seen: list[tuple[str, str, str]] = []
+
+    def fake_summarize(text, original_title, url, respect_language=None, model=None):
+        seen.append((text, original_title, url))
+        return f"HEADLINE {len(seen)}", f"summary of {original_title}"
+
+    def serve(body: bytes) -> list[tuple[str, str, str]]:
+        def fake_get(url):
+            if url == FEED_URL:
+                return FakeResponse(body)
+            raise AssertionError(f"unexpected GET {url}")
+
+        monkeypatch.setattr(poll, "_get", fake_get)
+        monkeypatch.setattr(poll, "fetch_article", lambda link: (None, "error", []))
+        monkeypatch.setattr(poll, "summarize", fake_summarize)
+        return seen
+
+    return serve
 
 
 @pytest.fixture
@@ -211,20 +236,90 @@ def test_fallback_excerpt_below_min_chars_stores_null_text(feed_id, calls):
 
 
 def test_prune_keeps_newest_n(feed_id, calls, monkeypatch):
+    """Storage is FIFO: the prune drops the oldest-inserted rows (lowest id), not the
+    oldest-dated ones, so a freshly inserted entry is never pruned by its own poll."""
     with db() as conn:
+        # The dates run backwards against insertion order (old-0 is the newest-dated,
+        # old-4 the oldest), so the two orders disagree: a prune by date would keep
+        # old-0..old-2, while the required insertion-ordered prune keeps old-2..old-4.
         for n in range(5):
             conn.execute(
                 "INSERT INTO items(feed_id, guid, link, original_title, published_at, "
                 "headline, summary, fallback, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
-                (feed_id, f"old-{n}", "https://example.com/old", "old", "2020-01-0%d" % (n + 1),
+                (feed_id, f"old-{n}", "https://example.com/old", "old", "2020-01-0%d" % (5 - n),
                  "old headline", "old summary", 1, now()),
             )
+    monkeypatch.setenv("PINTXOS_KEEP_PER_FEED", "5")
     monkeypatch.setenv("PINTXOS_ITEMS_PER_FEED", "2")
     poll.poll_all()
     rows = items()
-    assert len(rows) == 2
-    assert [row["link"] for row in rows] == ["https://example.com/one", "https://example.com/two"]
+    assert len(rows) == 5
+    # The 2 rows this poll inserted, plus the 3 most recently inserted old rows --
+    # not old-0..old-2, which are the three newest-dated ones.
+    assert {row["guid"] for row in rows} == {
+        "https://example.com/one", "https://example.com/two", "old-2", "old-3", "old-4",
+    }
     assert len(calls) == 2  # only the newest 2 entries were considered
+
+
+# (body, env settings, rows pre-seeded with a 2030 date, summaries expected on poll 1,
+# seeded rows expected to survive the prune).
+# Append new cases here; the test below is generic over them.
+IDEMPOTENCE_CASES = [
+    pytest.param(SAMPLE, {"PINTXOS_ITEMS_PER_FEED": "2"}, 0, 2, 0, id="feed-larger-than-cap"),
+    # The production loop, with keep small enough that the prune actually binds: every
+    # stored row is dated 2030, newer than every entry, so a prune by date would keep
+    # the three seeds and delete exactly the three rows this poll just paid for -- and
+    # the next poll would pay for them again. FIFO keeps the freshly inserted rows and
+    # drops the seeds instead.
+    pytest.param(
+        TAGESSCHAU, {"PINTXOS_ITEMS_PER_FEED": "3", "PINTXOS_KEEP_PER_FEED": "3"}, 3, 3, 0,
+        id="stored-rows-newer-than-every-entry",
+    ),
+    pytest.param(TAGESSCHAU, {}, 0, 5, 0, id="updated-only-dates-plus-one-undated"),
+    pytest.param(SAMPLE, {"PINTXOS_KEEP_PER_FEED": "1"}, 0, 3, 0, id="keep-clamped-to-cap"),
+]
+
+
+@pytest.mark.parametrize(
+    ("body", "settings", "seeded", "expected_calls", "seeds_kept"), IDEMPOTENCE_CASES
+)
+def test_poll_is_idempotent(
+    feed_id, serve_feed, monkeypatch, body, settings, seeded, expected_calls, seeds_kept
+):
+    """Polling the same unchanged feed twice costs nothing the second time: an entry
+    that was summarized is still stored afterwards, so it is never paid for again."""
+    for key, value in settings.items():
+        monkeypatch.setenv(key, value)
+    with db() as conn:
+        for n in range(seeded):
+            conn.execute(
+                "INSERT INTO items(feed_id, guid, link, original_title, published_at, "
+                "headline, summary, fallback, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                (feed_id, f"seed-{n}", "https://example.com/seed", "seeded",
+                 "2030-01-0%d" % (n + 1), "seeded headline", "seeded summary", 1, now()),
+            )
+    calls = serve_feed(body)
+
+    poll.poll_all()
+    first_calls = len(calls)
+    rows = items()
+    stored = {row["guid"] for row in rows}
+    assert first_calls == expected_calls
+    assert len(stored) == seeds_kept + expected_calls
+    assert len({guid for guid in stored if guid.startswith("seed-")}) == seeds_kept
+    # Everything we paid a summary for is still stored -- otherwise the next poll
+    # would treat it as new again -- and every stored row has a date (an undated
+    # entry is kept with published_at = now, not dropped).
+    titles = {row["original_title"] for row in rows}
+    assert {original_title for _text, original_title, _url in calls} <= titles
+    assert all(row["published_at"] for row in rows)
+    with db() as conn:
+        assert feedstats.totals(conn, feed_id)[0] == first_calls
+
+    poll.poll_all()
+    assert len(calls) == first_calls
+    assert {row["guid"] for row in items()} == stored
 
 
 def test_missing_api_key_aborts_without_inserting(feed_id, calls, monkeypatch):

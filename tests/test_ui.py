@@ -2698,3 +2698,22 @@ def test_summarize_route_queues_summarize_one_and_redirects_with_msg(monkeypatch
     assert location.startswith("/feeds/1?")
     assert "msg=" in location
     assert calls == [(1, "guid-1")]
+
+
+def test_feed_xml_caps_items_at_items_per_feed(monkeypatch):
+    """The DB keeps more rows than the output feed shows: the RSS body is capped at
+    PINTXOS_ITEMS_PER_FEED, dropping the oldest-dated rows beyond it."""
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    monkeypatch.setenv("PINTXOS_ITEMS_PER_FEED", "3")
+    per_feed = int(get_setting("PINTXOS_ITEMS_PER_FEED"))
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        base = datetime(2026, 1, 1, tzinfo=UTC)
+        for n in range(per_feed + 1):  # oldest first, so guid-0 is the one that drops
+            _insert_item(1, f"guid-{n}", published_at=(base + timedelta(days=n)).isoformat())
+        body = c.get("/feeds/1.xml").text
+
+    assert body.count("<item>") == per_feed
+    assert "guid-0" not in body
+    for n in range(1, per_feed + 1):
+        assert f"guid-{n}" in body

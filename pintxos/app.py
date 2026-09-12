@@ -120,9 +120,13 @@ def feed_xml(request: Request, feed_id: int) -> Response:
         feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
         if feed is None:
             raise HTTPException(status_code=404, detail="feed not found")
+        # The DB keeps more rows than the output feed shows (FIFO storage, see
+        # poll.poll_feed): the feed itself is capped at the newest ITEMS_PER_FEED
+        # unmuted rows, so growing the retained history never grows the RSS body.
         items = conn.execute(
-            "SELECT * FROM items WHERE feed_id = ? ORDER BY published_at DESC, id DESC",
-            (feed_id,),
+            "SELECT * FROM items WHERE feed_id = ? AND muted = 0 "
+            "ORDER BY published_at DESC, id DESC LIMIT ?",
+            (feed_id, int(get_setting("PINTXOS_ITEMS_PER_FEED", conn))),
         ).fetchall()
         full_text = is_truthy(get_setting("PINTXOS_FULL_TEXT", conn))
 
