@@ -2805,6 +2805,38 @@ def test_summarize_one_job_logs_error_at_warning(monkeypatch, caplog):
 # --- daily budget & feed_stats counters -----------------------------------------
 
 
+@pytest.mark.parametrize(
+    "env, feed_budget, expected_calls",
+    [
+        ("1", None, 1),  # NULL feed budget falls back to PINTXOS_DAILY_BUDGET
+        ("1", 2, 2),  # a non-NULL feed budget always wins over the env default
+        ("3", None, 3),  # default == fixture size: all entries summarized, none skipped
+        ("5", 0, 0),  # an explicit feed budget of 0 stays 0, not "unset"
+    ],
+)
+def test_daily_budget_resolution(feed_id, calls, monkeypatch, env, feed_budget, expected_calls):
+    """NULL feeds.daily_budget resolves to PINTXOS_DAILY_BUDGET; a non-NULL feed
+    budget (including 0) always overrides the env default."""
+    monkeypatch.setenv("PINTXOS_DAILY_BUDGET", env)
+    if feed_budget is not None:
+        set_feed(feed_id, daily_budget=feed_budget)
+
+    assert poll.poll_feed(feed_id) is True
+
+    assert len(calls) == expected_calls
+    if env == "1" and feed_budget is None:
+        feed = feed_row(feed_id)
+        entries = json.loads(feed["last_filtered"])
+        skipped = [e for e in entries if e["kind"] == "budget"]
+        assert len(skipped) == 2
+        assert all(e["reason"] == "budget: 1/day reached" for e in skipped)
+    if env == "3" and feed_budget is None:
+        feed = feed_row(feed_id)
+        entries = json.loads(feed["last_filtered"])
+        skipped = [e for e in entries if e["kind"] == "budget"]
+        assert skipped == []
+
+
 def test_budget_already_reached_before_poll_logs_every_entry(feed_id, calls, monkeypatch):
     """A feed already at (or past) its daily budget skips every entry before any
     fetch, classify, or summarize call, logging each as a `kind: budget` entry."""
