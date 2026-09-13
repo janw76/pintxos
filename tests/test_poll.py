@@ -812,6 +812,37 @@ def test_retry_fallback_restores_callers_status_instead_of_popping(feed_id, monk
     assert feed_id not in poll._status
 
 
+def test_retry_fallback_pops_queued_sentinel(feed_id, monkeypatch):
+    """When retry_one has already stamped the feed with the Queued sentinel before
+    scheduling retry_fallback, that sentinel must be popped afterwards, not restored,
+    or the feed would show 'Queued' forever."""
+    _seed_blocked_items(feed_id, 1)
+    monkeypatch.setattr(poll, "fetch_article", lambda link: ("FULL ARTICLE TEXT " * 20, "ok", []))
+    monkeypatch.setattr(poll, "summarize", lambda text, title, url, **kwargs: ("H", "S"))
+
+    poll._status[feed_id] = poll._QUEUED
+    poll.retry_fallback(feed_id)
+    assert feed_id not in poll._status
+
+
+def test_retry_fallback_pops_queued_sentinel_on_error(feed_id, monkeypatch):
+    """Same as above, but when fetch_article raises: the exception propagates out of
+    retry_fallback (nothing catches it), and the Queued sentinel must still be popped
+    by the finally block rather than left behind."""
+    _seed_blocked_items(feed_id, 1)
+
+    def boom(link):
+        raise RuntimeError("connection reset")
+
+    monkeypatch.setattr(poll, "fetch_article", boom)
+    monkeypatch.setattr(poll, "summarize", lambda text, title, url, **kwargs: ("H", "S"))
+
+    poll._status[feed_id] = poll._QUEUED
+    with pytest.raises(RuntimeError):
+        poll.retry_fallback(feed_id)
+    assert feed_id not in poll._status
+
+
 def test_ui_can_write_while_polling(feed_id, calls, monkeypatch):
     """A second writer (the web UI) must not hit 'database is locked' mid-poll."""
     import sqlite3

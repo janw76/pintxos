@@ -68,6 +68,10 @@ _client_jar: MozillaCookieJar | None = None
 # What each feed is doing right now, for the UI. In-memory: single process, dies with it.
 _status: dict[int, str] = {}
 
+# Sentinel written by retry_one/summarize_one/poll_one while a manual job is queued
+# but hasn't started running yet.
+_QUEUED = "Queued"
+
 # ponytail: per-feed offset into the id-DESC candidate list for retry_fallback's
 # only_blocked rotation, so each poll advances past the rows it already retried
 # instead of always retrying the newest ones. In-memory: resets on restart, and the
@@ -731,7 +735,7 @@ def _run_summarize_job(feed_id: int, guid: str) -> None:
 
 def summarize_one(feed_id: int, guid: str) -> None:
     """Queue a manual release of one filtered/muted item."""
-    _status.setdefault(feed_id, "Queued")
+    _status.setdefault(feed_id, _QUEUED)
     scheduler.add_job(
         _run_summarize_job,
         args=[feed_id, guid],
@@ -792,6 +796,10 @@ def retry_fallback(feed_id: int, limit: int | None = None, only_blocked: bool = 
 
     total = len(rows)
     prev = _status.get(feed_id)
+    # The sentinel is retry_one's queue marker, not a caller's progress label, so it
+    # must be popped rather than restored.
+    if prev == _QUEUED:
+        prev = None
     try:
         for i, row in enumerate(rows, 1):
             item_id, link, original_title, existing_labels = (
@@ -848,7 +856,7 @@ def retry_fallback(feed_id: int, limit: int | None = None, only_blocked: bool = 
 
 def retry_one(feed_id: int) -> None:
     """Queue a manual retry of one feed's fallback items."""
-    _status.setdefault(feed_id, "Queued")
+    _status.setdefault(feed_id, _QUEUED)
     scheduler.add_job(
         retry_fallback,
         args=[feed_id],
@@ -860,7 +868,7 @@ def retry_one(feed_id: int) -> None:
 
 def poll_one(feed_id: int) -> None:
     """Queue a manual poll; a second click before it runs is a no-op."""
-    _status.setdefault(feed_id, "Queued")
+    _status.setdefault(feed_id, _QUEUED)
     scheduler.add_job(
         poll_feed,
         args=[feed_id],
