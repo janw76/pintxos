@@ -425,6 +425,7 @@ def test_settings_page_shows_model_presets_and_key_fields():
     assert "anthropic/claude-haiku-4.5" in page
     assert "openai/gpt-5-mini" in page
     assert "google/gemini-2.5-flash-lite" in page
+    assert "deepseek/deepseek-v4-flash-0731" in page
     assert "Names with a slash (vendor/model) go to OpenRouter, names without go to Anthropic." in page
     assert 'name="api_key"' in page
     assert 'name="openrouter_api_key"' in page

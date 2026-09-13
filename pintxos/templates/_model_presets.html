@@ -2,6 +2,7 @@
 <div class="muted">
   <p>Names with a slash (vendor/model) go to OpenRouter, names without go to Anthropic.</p>
   <table>
+    <colgroup><col style="width:44%"><col style="width:7.5rem"><col></colgroup>
     <thead>
       <tr><th>Model</th><th>Cost / 100 articles</th><th>Notes</th></tr>
     </thead>
@@ -25,6 +26,11 @@
         <td><button type="button" class="preset" data-model="google/gemini-2.5-flash-lite" onclick="document.getElementById('{{ target }}').value=this.dataset.model">Use</button> <code>google/gemini-2.5-flash-lite</code></td>
         <td>~$0.03</td>
         <td>Recommended starting point. Fast, reliable JSON, good in European languages.</td>
+      </tr>
+      <tr>
+        <td><button type="button" class="preset" data-model="deepseek/deepseek-v4-flash-0731" onclick="document.getElementById('{{ target }}').value=this.dataset.model">Use</button> <code>deepseek/deepseek-v4-flash-0731</code></td>
+        <td>~$0.01</td>
+        <td>Cheapest of the set, a third of Flash Lite. Large context, solid summaries; newer and less proven than the others.</td>
       </tr>
     </tbody>
   </table>
