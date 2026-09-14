@@ -75,7 +75,7 @@ def _topic_name(item: sqlite3.Row) -> str | None:
     return TOPIC_NAMES.get(slug)
 
 
-def _positive_int_setting(key: str, conn=None) -> int:
+def positive_int_setting(key: str, conn=None) -> int:
     """The int value of setting `key`, falling back to its DEFAULTS value.
 
     Falls back silently (no raise) when the stored value is missing, non-numeric,
@@ -101,8 +101,8 @@ def warn_levels(conn=None) -> tuple[int, int]:
     missing, non-numeric, or less than 1. If the hard threshold ends up below the
     warn threshold, it is raised to match the warn threshold.
     """
-    warn = _positive_int_setting("PINTXOS_WARN_AT", conn)
-    hard = _positive_int_setting("PINTXOS_WARN_HARD_AT", conn)
+    warn = positive_int_setting("PINTXOS_WARN_AT", conn)
+    hard = positive_int_setting("PINTXOS_WARN_HARD_AT", conn)
     if hard < warn:
         hard = warn
     return (warn, hard)

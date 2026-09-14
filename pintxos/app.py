@@ -637,14 +637,14 @@ def save_settings(
     warn_at_pinned = env_pinned("PINTXOS_WARN_AT")
     warn_hard_at_pinned = env_pinned("PINTXOS_WARN_HARD_AT")
     with db() as conn:
-        warn_at_current = get_setting("PINTXOS_WARN_AT", conn)
-        warn_hard_at_current = get_setting("PINTXOS_WARN_HARD_AT", conn)
+        warn_at_default = feed_out.positive_int_setting("PINTXOS_WARN_AT", conn)
+        warn_hard_at_default = feed_out.positive_int_setting("PINTXOS_WARN_HARD_AT", conn)
     try:
-        warn_at_i = int(warn_at) if (warn_at and not warn_at_pinned) else int(warn_at_current)
+        warn_at_i = int(warn_at) if (warn_at and not warn_at_pinned) else warn_at_default
         warn_hard_at_i = (
             int(warn_hard_at)
             if (warn_hard_at and not warn_hard_at_pinned)
-            else int(warn_hard_at_current)
+            else warn_hard_at_default
         )
     except ValueError:
         return _redirect("/settings", err="Warning thresholds must be numbers")
