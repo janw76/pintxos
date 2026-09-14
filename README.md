@@ -144,6 +144,8 @@ to the database. `PINTXOS_BASE_URL`, `PINTXOS_DATA_DIR`, `PINTXOS_HOST`,
 | `PINTXOS_ITEMS_PER_FEED` | `50` | Items in each output feed, and the most feed entries considered per poll. |
 | `PINTXOS_KEEP_PER_FEED` | `1000` | Rows stored per feed; the oldest-inserted are pruned first. Keeps history well beyond the output feed so an entry that leaves and re-enters a publisher's feed is never summarized again. Roughly 5 KB per row with full text. No UI field. |
 | `PINTXOS_DAILY_BUDGET` | `200` | Default "Max summaries per day" for feeds whose own budget is blank. A per-feed value always wins; set it very high to effectively remove the cap. |
+| `PINTXOS_WARN_AT` | `100` | Summaries per feed per day after which the output feed carries a warning item. Per-feed "Warn on volume" turns the warning off for that feed. |
+| `PINTXOS_WARN_HARD_AT` | `180` | From this many summaries the warning uses stronger wording. Must be at least `PINTXOS_WARN_AT`. |
 | `PINTXOS_FILTER_ADS` | `0` | Skip ad/coupon entries before fetch/summarize. Set to `1` to turn this on. |
 | `PINTXOS_FULL_TEXT` | `1` | Append the extracted article text after each summary in the output feed, below the Original line. Set to `0` to turn this off. |
 | `PINTXOS_RESPECT_LANGUAGE` | `1` | Write headline and summary in the article's language. Set to `0` to always summarize in English. Appended full text is never translated. Each feed can override this on its Edit page. |
@@ -253,11 +255,13 @@ IPTC Media Topics vocabulary © IPTC (https://iptc.org/), used under CC BY 4.0.
 
 A feed that starts producing an unusual number of summaries in a day is
 worth a second look — it may be an oversized feed, a misconfigured URL, or
-just a very busy news day. Once a feed reaches 50 summaries on a given day,
-Pintxøs prepends a warning article to that feed's output — a stronger one at
-100 — that explains what happened and links straight to the feed's Edit
-page. Each level fires once per day; the warning never touches the feed's
-own items.
+just a very busy news day. Once a feed reaches `PINTXOS_WARN_AT` summaries
+on a given day (default 100), Pintxøs prepends a warning article to that
+feed's output — a stronger one at `PINTXOS_WARN_HARD_AT` (default 180) —
+that explains what happened and links straight to the feed's Edit page.
+Both thresholds can be changed on the Settings page unless the
+corresponding environment variable is set. Each level fires once per day;
+the warning never touches the feed's own items.
 
 - The warning is per feed, On by default; flip it Off in the "Volume"
   fieldset on the feed's Edit page if you'd rather not see it.

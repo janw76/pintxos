@@ -544,6 +544,8 @@ def settings_page(request: Request) -> Response:
         respect_language = get_setting("PINTXOS_RESPECT_LANGUAGE", conn)
         ad_title_patterns = get_setting("PINTXOS_AD_TITLE_PATTERNS", conn) or ""
         ad_keep_patterns = get_setting("PINTXOS_AD_KEEP_PATTERNS", conn) or ""
+        warn_at = get_setting("PINTXOS_WARN_AT", conn)
+        warn_hard_at = get_setting("PINTXOS_WARN_HARD_AT", conn)
         row = conn.execute("SELECT value FROM settings WHERE key = ?", ("ANTHROPIC_API_KEY",)).fetchone()
         openrouter_row = conn.execute(
             "SELECT value FROM settings WHERE key = ?", ("OPENROUTER_API_KEY",)
@@ -562,6 +564,8 @@ def settings_page(request: Request) -> Response:
     respect_language_env = env_pinned("PINTXOS_RESPECT_LANGUAGE")
     patterns_env = env_pinned("PINTXOS_AD_TITLE_PATTERNS")
     keep_patterns_env = env_pinned("PINTXOS_AD_KEEP_PATTERNS")
+    warn_env = env_pinned("PINTXOS_WARN_AT")
+    warn_hard_env = env_pinned("PINTXOS_WARN_HARD_AT")
     jar = get_jar()
     cookie_domains = summary(jar) if jar else []
     cookie_file = str(cookie_path())
@@ -592,6 +596,10 @@ def settings_page(request: Request) -> Response:
             "patterns_env": patterns_env,
             "ad_keep_patterns": ad_keep_patterns,
             "keep_patterns_env": keep_patterns_env,
+            "warn_at": warn_at,
+            "warn_env": warn_env,
+            "warn_hard_at": warn_hard_at,
+            "warn_hard_env": warn_hard_env,
             "cookie_domains": cookie_domains,
             "cookie_file": cookie_file,
             "cookie_file_exists": cookie_file_exists,
@@ -613,6 +621,8 @@ def save_settings(
     ad_keep_patterns: str = Form(""),
     full_text: str = Form(""),
     respect_language: str = Form(""),
+    warn_at: str = Form(""),
+    warn_hard_at: str = Form(""),
 ) -> Response:
     try:
         poll_minutes_i = int(poll_minutes)
@@ -623,6 +633,28 @@ def save_settings(
         return _redirect("/settings", err="Poll interval must be between 1 and 1440 minutes")
     if not (1 <= items_per_feed_i <= 500):
         return _redirect("/settings", err="Items per feed must be between 1 and 500")
+
+    warn_at_pinned = env_pinned("PINTXOS_WARN_AT")
+    warn_hard_at_pinned = env_pinned("PINTXOS_WARN_HARD_AT")
+    with db() as conn:
+        warn_at_current = get_setting("PINTXOS_WARN_AT", conn)
+        warn_hard_at_current = get_setting("PINTXOS_WARN_HARD_AT", conn)
+    try:
+        warn_at_i = int(warn_at) if (warn_at and not warn_at_pinned) else int(warn_at_current)
+        warn_hard_at_i = (
+            int(warn_hard_at)
+            if (warn_hard_at and not warn_hard_at_pinned)
+            else int(warn_hard_at_current)
+        )
+    except ValueError:
+        return _redirect("/settings", err="Warning thresholds must be numbers")
+    if warn_at_i < 1 or warn_hard_at_i < 1:
+        return _redirect("/settings", err="Warning thresholds must be at least 1")
+    if warn_hard_at_i < warn_at_i:
+        return _redirect(
+            "/settings",
+            err="Strong warning threshold must not be below the first warning threshold",
+        )
 
     try:
         adfilter.compile_patterns(ad_title_patterns)
@@ -672,6 +704,10 @@ def save_settings(
         pairs.append(("PINTXOS_FULL_TEXT", "1" if full_text == "1" else "0"))
     if not env_pinned("PINTXOS_RESPECT_LANGUAGE"):
         pairs.append(("PINTXOS_RESPECT_LANGUAGE", "1" if respect_language == "1" else "0"))
+    if not warn_at_pinned:
+        pairs.append(("PINTXOS_WARN_AT", str(warn_at_i)))
+    if not warn_hard_at_pinned:
+        pairs.append(("PINTXOS_WARN_HARD_AT", str(warn_hard_at_i)))
 
     with db() as conn:
         conn.executemany(
