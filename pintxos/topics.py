@@ -120,6 +120,8 @@ TOPICS: list[tuple[str, str, str]] = [
 
 TOPIC_SLUGS: frozenset[str] = frozenset(slug for slug, _name, _definition in TOPICS)
 
+TOPIC_NAMES: dict[str, str] = {slug: name for slug, name, _definition in TOPICS}
+
 # Characters a model likes to wrap or end its one-word answer with.
 _STRIP_CHARS = " \t\r\n\"'`“”‘’.,;:!?*_()[]<>"
 
