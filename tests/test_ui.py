@@ -1649,7 +1649,7 @@ def test_feed_xml_no_warning_below_threshold(monkeypatch):
     with TestClient(app) as c:
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
         with db() as conn:
-            feedstats.bump(conn, 1, summaries=49, day=feedstats.today())
+            feedstats.bump(conn, 1, summaries=99, day=feedstats.today())
         body = c.get("/feeds/1.xml").text
 
     assert "pintxos-warning" not in body
@@ -1664,7 +1664,7 @@ def test_feed_xml_warning_at_100_is_first_item(monkeypatch):
         body = c.get("/feeds/1.xml").text
 
     today = feedstats.today()
-    guid = f"pintxos-warning-1-100-{today}"
+    guid = f"pintxos-warning-1-warn-{today}"
     first_item = _first_item_block(body)
     assert guid in first_item
     link = first_item[first_item.index("<link>") + len("<link>") : first_item.index("</link>")]
@@ -1681,9 +1681,24 @@ def test_feed_xml_warning_at_120_uses_100_level(monkeypatch):
         body = c.get("/feeds/1.xml").text
 
     today = feedstats.today()
-    guid = f"pintxos-warning-1-100-{today}"
+    guid = f"pintxos-warning-1-warn-{today}"
     first_item = _first_item_block(body)
     assert guid in first_item
+
+
+def test_feed_xml_warning_at_200_is_hard_tier(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        with db() as conn:
+            feedstats.bump(conn, 1, summaries=200, day=feedstats.today())
+        body = c.get("/feeds/1.xml").text
+
+    today = feedstats.today()
+    guid = f"pintxos-warning-1-hard-{today}"
+    first_item = _first_item_block(body)
+    assert guid in first_item
+    assert "far more than anyone reads" in first_item
 
 
 def test_feed_xml_warning_names_the_feeds_own_model(monkeypatch):

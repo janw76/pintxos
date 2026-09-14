@@ -129,7 +129,12 @@ def warning_item(
     model: str,
     kept_today: int,
 ) -> dict:
-    """Build the warning article for a feed that produced many summaries today."""
+    """Build the warning article for a feed that produced many summaries today.
+
+    The guid encodes the tier ("warn" or "hard") reached, not the raw threshold
+    value, so editing a threshold mid-day does not mint a new guid and re-fire
+    the warning for the same feed and day.
+    """
     title_esc = html.escape(str(feed["title"] or feed["url"]))
     model_esc = html.escape(str(model))
     url_esc = html.escape(str(feed_page_url))
@@ -156,8 +161,9 @@ def warning_item(
         "and mute whole topics per feed, before any summary is paid for.</em></p>"
     )
 
+    tier = "hard" if level >= hard_level else "warn"
     return {
-        "guid": f"pintxos-warning-{feed['id']}-{level}-{day}",
+        "guid": f"pintxos-warning-{feed['id']}-{tier}-{day}",
         "title": f"Pintxøs: this feed produced {summaries_today} summaries today",
         "link": feed_page_url,
         "pub_date": datetime.now(UTC),
