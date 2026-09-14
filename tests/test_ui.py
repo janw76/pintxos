@@ -506,9 +506,13 @@ def test_settings_warn_at_env_pinned_junk_value_does_not_block_save(monkeypatch)
     assert get_setting("PINTXOS_WARN_HARD_AT") == "200"
 
 
-def test_settings_warn_at_env_pinned_junk_value_falls_back_to_default_for_comparison(
+def test_settings_warn_at_env_pinned_skips_cross_check_even_when_hard_looks_low(
     monkeypatch,
 ):
+    # PINTXOS_WARN_AT is env-pinned, so save_settings can no longer see it and must
+    # skip the hard >= warn cross-check entirely (warn_levels() clamps at read time
+    # instead). Previously this saved warn_hard_at=50 was rejected because the code
+    # fell back to the DEFAULTS value (100) for the pinned key when comparing.
     monkeypatch.setenv("PINTXOS_WARN_AT", "abc")
     with TestClient(app) as c:
         resp = c.post(
@@ -523,13 +527,90 @@ def test_settings_warn_at_env_pinned_junk_value_falls_back_to_default_for_compar
             follow_redirects=False,
         )
         assert resp.status_code == 303
-        assert "err=" in resp.headers["location"]
-        assert (
-            "Strong warning threshold must not be below the first warning threshold"
-            in unquote(resp.headers["location"])
-        )
+        assert "err=" not in resp.headers["location"]
+        assert "msg=Saved" in resp.headers["location"]
 
     monkeypatch.delenv("PINTXOS_WARN_AT")
+    assert get_setting("PINTXOS_WARN_HARD_AT") == "50"
+
+
+def test_settings_post_model_only_change_saves_despite_pinned_warn_conflict(monkeypatch):
+    # env PINTXOS_WARN_AT=150 conflicts with the stored PINTXOS_WARN_HARD_AT=120; a
+    # model-only change (the disabled warn_at input isn't submitted at all) must still
+    # save instead of being blocked by an unrelated, unfixable-from-the-UI conflict.
+    monkeypatch.setenv("PINTXOS_WARN_AT", "150")
+    with db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
+            ("PINTXOS_WARN_HARD_AT", "120"),
+        )
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "m2",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "sk-test-1234",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "err=" not in resp.headers["location"]
+        assert "msg=Saved" in resp.headers["location"]
+
+    monkeypatch.delenv("PINTXOS_WARN_AT")
+
+
+def test_settings_page_env_pinned_warn_at_junk_shows_default(monkeypatch):
+    monkeypatch.setenv("PINTXOS_WARN_AT", "abc")
+    with TestClient(app) as c:
+        page = c.get("/settings").text
+    monkeypatch.delenv("PINTXOS_WARN_AT")
+
+    assert 'name="warn_at" min="1" value="100" disabled' in page
+
+
+def test_settings_page_env_pinned_warn_hard_at_below_warn_is_clamped(monkeypatch):
+    monkeypatch.setenv("PINTXOS_WARN_HARD_AT", "50")
+    with TestClient(app) as c:
+        page = c.get("/settings").text
+    monkeypatch.delenv("PINTXOS_WARN_HARD_AT")
+
+    assert 'name="warn_hard_at" min="1" value="100" disabled' in page
+
+
+def test_settings_post_blank_warn_at_resets_to_default():
+    with db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
+            ("PINTXOS_WARN_AT", "30"),
+        )
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "m",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "sk-test-1234",
+                "warn_at": "",
+                "warn_hard_at": "180",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "err=" not in resp.headers["location"]
+        assert "msg=Saved" in resp.headers["location"]
+
+        page = c.get("/settings").text
+
+    with db() as conn:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key = ?", ("PINTXOS_WARN_AT",)
+        ).fetchone()
+    assert row is None
+    assert 'name="warn_at" min="1" value="100"' in page
 
 
 def test_settings_api_key_stored_and_masked():
