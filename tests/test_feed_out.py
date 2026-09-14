@@ -475,7 +475,7 @@ def test_warning_item_fields_and_escaping():
         kept_today=40,
     )
 
-    assert item["guid"] == "pintxos-warning-7-100-2026-09-11"
+    assert item["guid"] == "pintxos-warning-7-warn-2026-09-11"
     assert item["title"] == "Pintxøs: this feed produced 62 summaries today"
     assert item["link"] == "https://pintxos.example/feeds/7"
     assert item["pub_date"].tzinfo is not None
@@ -513,6 +513,8 @@ def test_warning_item_hard_level_adds_escalation_sentence():
     assert "paid for and never opened" in item["description"]
     # Falls back to the feed URL when it has no title.
     assert "https://example.com/nofeed produced 250 summaries" in item["description"]
+    # Guid encodes the tier reached, not the raw threshold value.
+    assert item["guid"] == "pintxos-warning-3-hard-2026-09-11"
 
 
 def test_warning_item_loop_sentence_appears_when_mostly_discarded():
