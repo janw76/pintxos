@@ -24,6 +24,10 @@ def _isolated_data_dir(tmp_path, monkeypatch):
     # many entries a poll summarizes or keeps.
     monkeypatch.delenv("PINTXOS_DAILY_BUDGET", raising=False)
     monkeypatch.delenv("PINTXOS_KEEP_PER_FEED", raising=False)
+    # Volume-warning thresholds added by pintxos-af1: an ambient value would change
+    # the default-vs-env-pinned assertions in the settings tests.
+    monkeypatch.delenv("PINTXOS_WARN_AT", raising=False)
+    monkeypatch.delenv("PINTXOS_WARN_HARD_AT", raising=False)
 
 
 def write_cookies(text: str) -> None:

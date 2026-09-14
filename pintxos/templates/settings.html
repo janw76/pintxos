@@ -39,6 +39,17 @@
     <label for="items_per_feed">Items per feed</label>
     <input type="number" id="items_per_feed" name="items_per_feed" min="1" max="500" value="{{ items_per_feed }}">
   </div>
+  <div class="field field-narrow">
+    <label for="warn_at">Warn at N summaries per feed per day</label>
+    <input type="number" id="warn_at" name="warn_at" min="1" value="{{ warn_at }}" {% if warn_env %}disabled{% endif %}>
+    {% if warn_env %}<div class="muted">Set by PINTXOS_WARN_AT in the environment.</div>{% endif %}
+  </div>
+  <div class="field field-narrow">
+    <label for="warn_hard_at">Strong warning at</label>
+    <input type="number" id="warn_hard_at" name="warn_hard_at" min="1" value="{{ warn_hard_at }}" {% if warn_hard_env %}disabled{% endif %}>
+    {% if warn_hard_env %}<div class="muted">Set by PINTXOS_WARN_HARD_AT in the environment.</div>{% endif %}
+  </div>
+  <div class="muted">The output feed gets a warning item once a feed has produced this many summaries in a day; the stronger wording starts at the second number.</div>
   <div class="field field-checkbox">
     <label><input type="checkbox" name="full_text" value="1" {% if full_text_on %}checked{% endif %} {% if full_text_env %}disabled{% endif %}> Include full article text</label>
     <div class="muted">Appends the extracted article text below each summary in the output feed, after the Original line. Applies to every feed, including items already stored. Items polled before this option existed have no stored text.</div>

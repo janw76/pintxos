@@ -8,6 +8,7 @@ import re
 import stat
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from urllib.parse import unquote
 
 import pytest
 from fastapi.testclient import TestClient
@@ -370,6 +371,165 @@ def test_settings_post_invalid_interval_rejected():
 
     # unchanged from default
     assert get_setting("PINTXOS_POLL_MINUTES") == "30"
+
+
+def test_settings_page_shows_warn_defaults():
+    with TestClient(app) as c:
+        page = c.get("/settings").text
+
+    assert 'name="warn_at" min="1" value="100"' in page
+    assert 'name="warn_hard_at" min="1" value="180"' in page
+
+
+def test_settings_post_persists_warn_thresholds():
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "m",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "sk-test-1234",
+                "warn_at": "120",
+                "warn_hard_at": "240",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "err=" not in resp.headers["location"]
+
+        page = c.get("/settings").text
+
+    assert get_setting("PINTXOS_WARN_AT") == "120"
+    assert get_setting("PINTXOS_WARN_HARD_AT") == "240"
+    assert 'name="warn_at" min="1" value="120"' in page
+    assert 'name="warn_hard_at" min="1" value="240"' in page
+
+
+def test_settings_post_warn_hard_below_warn_rejected():
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "m",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "sk-test-1234",
+                "warn_at": "240",
+                "warn_hard_at": "120",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "err=" in resp.headers["location"]
+
+    # unchanged from defaults
+    assert get_setting("PINTXOS_WARN_AT") == "100"
+    assert get_setting("PINTXOS_WARN_HARD_AT") == "180"
+
+
+def test_settings_post_warn_at_below_one_rejected():
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "m",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "sk-test-1234",
+                "warn_at": "0",
+                "warn_hard_at": "180",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "err=" in resp.headers["location"]
+
+    # unchanged from default
+    assert get_setting("PINTXOS_WARN_AT") == "100"
+
+
+def test_settings_warn_at_env_pinned_disables_control_and_ignores_submission(monkeypatch):
+    monkeypatch.setenv("PINTXOS_WARN_AT", "150")
+    with TestClient(app) as c:
+        page = c.get("/settings").text
+        assert 'name="warn_at" min="1" value="150" disabled' in page
+        assert "Set by PINTXOS_WARN_AT in the environment." in page
+
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "m",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "sk-test-1234",
+                "warn_hard_at": "260",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "err=" not in resp.headers["location"]
+
+    monkeypatch.delenv("PINTXOS_WARN_AT")
+    with db() as conn:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key = ?", ("PINTXOS_WARN_AT",)
+        ).fetchone()
+    assert row is None
+    assert get_setting("PINTXOS_WARN_HARD_AT") == "260"
+
+
+def test_settings_warn_at_env_pinned_junk_value_does_not_block_save(monkeypatch):
+    monkeypatch.setenv("PINTXOS_WARN_AT", "abc")
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "m",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "sk-test-1234",
+                "warn_hard_at": "200",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "err=" not in resp.headers["location"]
+        assert "msg=Saved" in resp.headers["location"]
+
+    monkeypatch.delenv("PINTXOS_WARN_AT")
+    with db() as conn:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key = ?", ("PINTXOS_WARN_AT",)
+        ).fetchone()
+    assert row is None
+    assert get_setting("PINTXOS_WARN_HARD_AT") == "200"
+
+
+def test_settings_warn_at_env_pinned_junk_value_falls_back_to_default_for_comparison(
+    monkeypatch,
+):
+    monkeypatch.setenv("PINTXOS_WARN_AT", "abc")
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "m",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "sk-test-1234",
+                "warn_hard_at": "50",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "err=" in resp.headers["location"]
+        assert (
+            "Strong warning threshold must not be below the first warning threshold"
+            in unquote(resp.headers["location"])
+        )
+
+    monkeypatch.delenv("PINTXOS_WARN_AT")
 
 
 def test_settings_api_key_stored_and_masked():
@@ -1390,16 +1550,16 @@ def test_feed_xml_no_warning_below_threshold(monkeypatch):
     assert "pintxos-warning" not in body
 
 
-def test_feed_xml_warning_at_50_is_first_item(monkeypatch):
+def test_feed_xml_warning_at_100_is_first_item(monkeypatch):
     monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
     with TestClient(app) as c:
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
         with db() as conn:
-            feedstats.bump(conn, 1, summaries=50, day=feedstats.today())
+            feedstats.bump(conn, 1, summaries=100, day=feedstats.today())
         body = c.get("/feeds/1.xml").text
 
     today = feedstats.today()
-    guid = f"pintxos-warning-1-50-{today}"
+    guid = f"pintxos-warning-1-100-{today}"
     first_item = _first_item_block(body)
     assert guid in first_item
     link = first_item[first_item.index("<link>") + len("<link>") : first_item.index("</link>")]
@@ -1427,7 +1587,7 @@ def test_feed_xml_warning_names_the_feeds_own_model(monkeypatch):
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
         with db() as conn:
             conn.execute("UPDATE feeds SET model = ? WHERE id = 1", ("openai/gpt-5-mini",))
-            feedstats.bump(conn, 1, summaries=50, day=feedstats.today())
+            feedstats.bump(conn, 1, summaries=100, day=feedstats.today())
         body = c.get("/feeds/1.xml").text
         global_model = get_setting("PINTXOS_MODEL")
 
@@ -1454,7 +1614,7 @@ def test_feed_xml_warning_link_uses_base_url_setting(monkeypatch):
     with TestClient(app) as c:
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
         with db() as conn:
-            feedstats.bump(conn, 1, summaries=50, day=feedstats.today())
+            feedstats.bump(conn, 1, summaries=100, day=feedstats.today())
         body = c.get("/feeds/1.xml").text
 
     first_item = _first_item_block(body)

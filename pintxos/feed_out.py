@@ -9,12 +9,9 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from email.utils import format_datetime
 
+from pintxos.config import DEFAULTS, get_setting
 from pintxos.stats import format_stats
 from pintxos.topics import TOPIC_NAMES
-
-# Daily per-feed summary-count thresholds at which a warning article is prepended
-# to the output feed. Ascending order; warning_level() reports the highest one reached.
-WARN_LEVELS = (50, 100)
 
 _AUTH_NOTES = {
     "used": "<p><em>Read with your subscription.</em></p>",
@@ -78,19 +75,54 @@ def _topic_name(item: sqlite3.Row) -> str | None:
     return TOPIC_NAMES.get(slug)
 
 
-def warning_level(summaries_today: int) -> int | None:
-    """The highest WARN_LEVELS threshold that summaries_today reached, else None."""
-    level = None
-    for threshold in WARN_LEVELS:
-        if summaries_today >= threshold:
-            level = threshold
-    return level
+def positive_int_setting(key: str, conn=None) -> int:
+    """The int value of setting `key`, falling back to its DEFAULTS value.
+
+    Falls back silently (no raise) when the stored value is missing, non-numeric,
+    or less than 1.
+    """
+    value = get_setting(key, conn)
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = None
+    if parsed is None or parsed < 1:
+        parsed = int(DEFAULTS[key])
+    return parsed
+
+
+# Daily per-feed summary-count thresholds at which a warning article is prepended
+# to the output feed, read from the PINTXOS_WARN_AT / PINTXOS_WARN_HARD_AT settings;
+# warning_level() reports the highest one reached.
+def warn_levels(conn=None) -> tuple[int, int]:
+    """The (warn, hard) daily per-feed summary-count thresholds from settings.
+
+    Falls back to the DEFAULTS values for either threshold when the stored value is
+    missing, non-numeric, or less than 1. If the hard threshold ends up below the
+    warn threshold, it is raised to match the warn threshold.
+    """
+    warn = positive_int_setting("PINTXOS_WARN_AT", conn)
+    hard = positive_int_setting("PINTXOS_WARN_HARD_AT", conn)
+    if hard < warn:
+        hard = warn
+    return (warn, hard)
+
+
+def warning_level(summaries_today: int, levels: tuple[int, int] = (100, 180)) -> int | None:
+    """The highest of `levels` (warn, hard) that summaries_today reached, else None."""
+    warn, hard = levels
+    if summaries_today >= hard:
+        return hard
+    if summaries_today >= warn:
+        return warn
+    return None
 
 
 def warning_item(
     feed: sqlite3.Row,
     *,
     level: int,
+    hard_level: int,
     summaries_today: int,
     day: str,
     feed_page_url: str,
@@ -106,7 +138,7 @@ def warning_item(
         f"{title_esc} produced {summaries_today} summaries today, "
         f"each one a call to {model_esc}; {kept_today} of them became new items."
     )
-    if level >= 100:
+    if level >= hard_level:
         sentence += (
             " That is far more than anyone reads in a day; "
             "most of these summaries are paid for and never opened."
