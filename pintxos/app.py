@@ -198,6 +198,7 @@ def feed_edit_page(request: Request, feed_id: int) -> Response:
         global_patterns = get_setting("PINTXOS_AD_TITLE_PATTERNS", conn) or ""
         global_respect_language_on = is_truthy(get_setting("PINTXOS_RESPECT_LANGUAGE", conn))
         global_model = get_setting("PINTXOS_MODEL", conn)
+        warn_at = feed_out.warn_levels(conn)[0]
         counts = conn.execute(
             f"SELECT COUNT(*) AS total, SUM(fallback = 1) AS fallback_count, "
             f"{_bucket_sql('')} FROM items WHERE feed_id = ? AND muted = 0",
@@ -280,6 +281,7 @@ def feed_edit_page(request: Request, feed_id: int) -> Response:
             "summaries_total": summaries_total,
             "kept_today": kept_today,
             "global_model": global_model,
+            "warn_at": warn_at,
         },
     )
 
