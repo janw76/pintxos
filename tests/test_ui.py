@@ -506,9 +506,13 @@ def test_settings_warn_at_env_pinned_junk_value_does_not_block_save(monkeypatch)
     assert get_setting("PINTXOS_WARN_HARD_AT") == "200"
 
 
-def test_settings_warn_at_env_pinned_junk_value_falls_back_to_default_for_comparison(
+def test_settings_warn_at_env_pinned_skips_cross_check_even_when_hard_looks_low(
     monkeypatch,
 ):
+    # PINTXOS_WARN_AT is env-pinned, so save_settings can no longer see it and must
+    # skip the hard >= warn cross-check entirely (warn_levels() clamps at read time
+    # instead). Previously this saved warn_hard_at=50 was rejected because the code
+    # fell back to the DEFAULTS value (100) for the pinned key when comparing.
     monkeypatch.setenv("PINTXOS_WARN_AT", "abc")
     with TestClient(app) as c:
         resp = c.post(
@@ -523,13 +527,90 @@ def test_settings_warn_at_env_pinned_junk_value_falls_back_to_default_for_compar
             follow_redirects=False,
         )
         assert resp.status_code == 303
-        assert "err=" in resp.headers["location"]
-        assert (
-            "Strong warning threshold must not be below the first warning threshold"
-            in unquote(resp.headers["location"])
-        )
+        assert "err=" not in resp.headers["location"]
+        assert "msg=Saved" in resp.headers["location"]
 
     monkeypatch.delenv("PINTXOS_WARN_AT")
+    assert get_setting("PINTXOS_WARN_HARD_AT") == "50"
+
+
+def test_settings_post_model_only_change_saves_despite_pinned_warn_conflict(monkeypatch):
+    # env PINTXOS_WARN_AT=150 conflicts with the stored PINTXOS_WARN_HARD_AT=120; a
+    # model-only change (the disabled warn_at input isn't submitted at all) must still
+    # save instead of being blocked by an unrelated, unfixable-from-the-UI conflict.
+    monkeypatch.setenv("PINTXOS_WARN_AT", "150")
+    with db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
+            ("PINTXOS_WARN_HARD_AT", "120"),
+        )
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "m2",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "sk-test-1234",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "err=" not in resp.headers["location"]
+        assert "msg=Saved" in resp.headers["location"]
+
+    monkeypatch.delenv("PINTXOS_WARN_AT")
+
+
+def test_settings_page_env_pinned_warn_at_junk_shows_default(monkeypatch):
+    monkeypatch.setenv("PINTXOS_WARN_AT", "abc")
+    with TestClient(app) as c:
+        page = c.get("/settings").text
+    monkeypatch.delenv("PINTXOS_WARN_AT")
+
+    assert 'name="warn_at" min="1" value="100" disabled' in page
+
+
+def test_settings_page_env_pinned_warn_hard_at_below_warn_is_clamped(monkeypatch):
+    monkeypatch.setenv("PINTXOS_WARN_HARD_AT", "50")
+    with TestClient(app) as c:
+        page = c.get("/settings").text
+    monkeypatch.delenv("PINTXOS_WARN_HARD_AT")
+
+    assert 'name="warn_hard_at" min="1" value="100" disabled' in page
+
+
+def test_settings_post_blank_warn_at_resets_to_default():
+    with db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
+            ("PINTXOS_WARN_AT", "30"),
+        )
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "m",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "sk-test-1234",
+                "warn_at": "",
+                "warn_hard_at": "180",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "err=" not in resp.headers["location"]
+        assert "msg=Saved" in resp.headers["location"]
+
+        page = c.get("/settings").text
+
+    with db() as conn:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key = ?", ("PINTXOS_WARN_AT",)
+        ).fetchone()
+    assert row is None
+    assert 'name="warn_at" min="1" value="100"' in page
 
 
 def test_settings_api_key_stored_and_masked():
@@ -1384,6 +1465,30 @@ def test_feed_edit_page_shows_volume_defaults_and_summary_totals(monkeypatch):
     assert "Summaries: 0 paid today, 0 new items kept, 0 total" in page
 
 
+def test_feed_edit_page_shows_configured_warn_threshold(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
+            ("PINTXOS_WARN_AT", "70"),
+        )
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        page = c.get("/feeds/1").text
+
+    assert "70 or more summaries" in page
+    assert 'href="/settings"' in page
+
+
+def test_feed_edit_page_shows_default_warn_threshold(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        page = c.get("/feeds/1").text
+
+    assert "100 or more summaries" in page
+
+
 def test_feed_edit_post_saves_warn_volume_and_daily_budget(monkeypatch):
     monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
     with TestClient(app) as c:
@@ -1544,7 +1649,7 @@ def test_feed_xml_no_warning_below_threshold(monkeypatch):
     with TestClient(app) as c:
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
         with db() as conn:
-            feedstats.bump(conn, 1, summaries=49, day=feedstats.today())
+            feedstats.bump(conn, 1, summaries=99, day=feedstats.today())
         body = c.get("/feeds/1.xml").text
 
     assert "pintxos-warning" not in body
@@ -1559,7 +1664,7 @@ def test_feed_xml_warning_at_100_is_first_item(monkeypatch):
         body = c.get("/feeds/1.xml").text
 
     today = feedstats.today()
-    guid = f"pintxos-warning-1-100-{today}"
+    guid = f"pintxos-warning-1-warn-{today}"
     first_item = _first_item_block(body)
     assert guid in first_item
     link = first_item[first_item.index("<link>") + len("<link>") : first_item.index("</link>")]
@@ -1576,9 +1681,24 @@ def test_feed_xml_warning_at_120_uses_100_level(monkeypatch):
         body = c.get("/feeds/1.xml").text
 
     today = feedstats.today()
-    guid = f"pintxos-warning-1-100-{today}"
+    guid = f"pintxos-warning-1-warn-{today}"
     first_item = _first_item_block(body)
     assert guid in first_item
+
+
+def test_feed_xml_warning_at_200_is_hard_tier(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        with db() as conn:
+            feedstats.bump(conn, 1, summaries=200, day=feedstats.today())
+        body = c.get("/feeds/1.xml").text
+
+    today = feedstats.today()
+    guid = f"pintxos-warning-1-hard-{today}"
+    first_item = _first_item_block(body)
+    assert guid in first_item
+    assert "far more than anyone reads" in first_item
 
 
 def test_feed_xml_warning_names_the_feeds_own_model(monkeypatch):

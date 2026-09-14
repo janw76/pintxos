@@ -17,7 +17,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from pintxos import adfilter, feed_out, feedstats, llm
-from pintxos.config import data_dir, get_setting, is_truthy
+from pintxos.config import DEFAULTS, data_dir, get_setting, is_truthy
 from pintxos.cookies import cookie_path, expiry_for, get_jar, has_cookies_for, load_jar, summary
 from pintxos.db import db, init_db, now
 from pintxos.feed_out import render_rss
@@ -198,6 +198,7 @@ def feed_edit_page(request: Request, feed_id: int) -> Response:
         global_patterns = get_setting("PINTXOS_AD_TITLE_PATTERNS", conn) or ""
         global_respect_language_on = is_truthy(get_setting("PINTXOS_RESPECT_LANGUAGE", conn))
         global_model = get_setting("PINTXOS_MODEL", conn)
+        warn_at = feed_out.warn_levels(conn)[0]
         counts = conn.execute(
             f"SELECT COUNT(*) AS total, SUM(fallback = 1) AS fallback_count, "
             f"{_bucket_sql('')} FROM items WHERE feed_id = ? AND muted = 0",
@@ -280,6 +281,7 @@ def feed_edit_page(request: Request, feed_id: int) -> Response:
             "summaries_total": summaries_total,
             "kept_today": kept_today,
             "global_model": global_model,
+            "warn_at": warn_at,
         },
     )
 
@@ -544,8 +546,7 @@ def settings_page(request: Request) -> Response:
         respect_language = get_setting("PINTXOS_RESPECT_LANGUAGE", conn)
         ad_title_patterns = get_setting("PINTXOS_AD_TITLE_PATTERNS", conn) or ""
         ad_keep_patterns = get_setting("PINTXOS_AD_KEEP_PATTERNS", conn) or ""
-        warn_at = get_setting("PINTXOS_WARN_AT", conn)
-        warn_hard_at = get_setting("PINTXOS_WARN_HARD_AT", conn)
+        warn_at, warn_hard_at = feed_out.warn_levels(conn)
         row = conn.execute("SELECT value FROM settings WHERE key = ?", ("ANTHROPIC_API_KEY",)).fetchone()
         openrouter_row = conn.execute(
             "SELECT value FROM settings WHERE key = ?", ("OPENROUTER_API_KEY",)
@@ -634,23 +635,52 @@ def save_settings(
     if not (1 <= items_per_feed_i <= 500):
         return _redirect("/settings", err="Items per feed must be between 1 and 500")
 
+    # A blank, non-pinned field means "reset to default": it is deleted from the
+    # settings table rather than re-saved, so DEFAULTS applies again. The hard >= warn
+    # cross-check only makes sense when both keys are actually under UI control; when
+    # either is env-pinned, warn_levels() clamps the effective pair at read time, so the
+    # check is skipped here entirely (fixing it up here would either falsely reject an
+    # unrelated settings change, or, if both are pinned, be unfixable from the UI at all).
     warn_at_pinned = env_pinned("PINTXOS_WARN_AT")
     warn_hard_at_pinned = env_pinned("PINTXOS_WARN_HARD_AT")
-    with db() as conn:
-        warn_at_default = feed_out.positive_int_setting("PINTXOS_WARN_AT", conn)
-        warn_hard_at_default = feed_out.positive_int_setting("PINTXOS_WARN_HARD_AT", conn)
-    try:
-        warn_at_i = int(warn_at) if (warn_at and not warn_at_pinned) else warn_at_default
-        warn_hard_at_i = (
-            int(warn_hard_at)
-            if (warn_hard_at and not warn_hard_at_pinned)
-            else warn_hard_at_default
-        )
-    except ValueError:
-        return _redirect("/settings", err="Warning thresholds must be numbers")
-    if warn_at_i < 1 or warn_hard_at_i < 1:
-        return _redirect("/settings", err="Warning thresholds must be at least 1")
-    if warn_hard_at_i < warn_at_i:
+    resets: list[str] = []
+    warn_pairs: list[tuple[str, str]] = []
+    warn_at_effective: int | None = None
+    warn_hard_at_effective: int | None = None
+
+    if not warn_at_pinned:
+        if warn_at:
+            try:
+                warn_at_i = int(warn_at)
+            except ValueError:
+                return _redirect("/settings", err="Warning thresholds must be numbers")
+            if warn_at_i < 1:
+                return _redirect("/settings", err="Warning thresholds must be at least 1")
+            warn_pairs.append(("PINTXOS_WARN_AT", str(warn_at_i)))
+            warn_at_effective = warn_at_i
+        else:
+            resets.append("PINTXOS_WARN_AT")
+            warn_at_effective = int(DEFAULTS["PINTXOS_WARN_AT"])
+
+    if not warn_hard_at_pinned:
+        if warn_hard_at:
+            try:
+                warn_hard_at_i = int(warn_hard_at)
+            except ValueError:
+                return _redirect("/settings", err="Warning thresholds must be numbers")
+            if warn_hard_at_i < 1:
+                return _redirect("/settings", err="Warning thresholds must be at least 1")
+            warn_pairs.append(("PINTXOS_WARN_HARD_AT", str(warn_hard_at_i)))
+            warn_hard_at_effective = warn_hard_at_i
+        else:
+            resets.append("PINTXOS_WARN_HARD_AT")
+            warn_hard_at_effective = int(DEFAULTS["PINTXOS_WARN_HARD_AT"])
+
+    if (
+        not warn_at_pinned
+        and not warn_hard_at_pinned
+        and warn_hard_at_effective < warn_at_effective
+    ):
         return _redirect(
             "/settings",
             err="Strong warning threshold must not be below the first warning threshold",
@@ -704,12 +734,13 @@ def save_settings(
         pairs.append(("PINTXOS_FULL_TEXT", "1" if full_text == "1" else "0"))
     if not env_pinned("PINTXOS_RESPECT_LANGUAGE"):
         pairs.append(("PINTXOS_RESPECT_LANGUAGE", "1" if respect_language == "1" else "0"))
-    if not warn_at_pinned:
-        pairs.append(("PINTXOS_WARN_AT", str(warn_at_i)))
-    if not warn_hard_at_pinned:
-        pairs.append(("PINTXOS_WARN_HARD_AT", str(warn_hard_at_i)))
+    pairs.extend(warn_pairs)
 
     with db() as conn:
+        if resets:
+            conn.executemany(
+                "DELETE FROM settings WHERE key = ?", [(k,) for k in resets]
+            )
         conn.executemany(
             "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)", pairs
         )

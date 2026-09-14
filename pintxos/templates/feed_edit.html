@@ -85,7 +85,7 @@
       <label class="radio"><input type="radio" name="warn_volume" value="1" {% if warn_volume == 1 %}checked{% endif %}> On</label>
       <label class="radio"><input type="radio" name="warn_volume" value="0" {% if warn_volume == 0 %}checked{% endif %}> Off</label>
     </div>
-    <div class="muted">Adds a warning article to this feed's output when it produces 50 or more summaries in a day.</div>
+    <div class="muted">Adds a warning article to this feed's output when it produces {{ warn_at }} or more summaries in a day. The threshold is set on the <a href="/settings">Settings</a> page.</div>
     <div class="field field-narrow">
       <label for="daily_budget">Max summaries per day</label>
       <input type="number" id="daily_budget" name="daily_budget" min="0" step="1" value="{{ daily_budget if daily_budget is not none else '' }}">
