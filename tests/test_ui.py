@@ -1672,7 +1672,39 @@ def test_feed_xml_warning_at_100_is_first_item(monkeypatch):
     assert ".xml" not in link
 
 
-def test_feed_xml_warning_at_120_uses_100_level(monkeypatch):
+def test_feed_xml_warning_tiers_follow_settings_table(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        with db() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
+                ("PINTXOS_WARN_AT", "20"),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
+                ("PINTXOS_WARN_HARD_AT", "30"),
+            )
+            feedstats.bump(conn, 1, summaries=25, day=feedstats.today())
+        body = c.get("/feeds/1.xml").text
+
+        today = feedstats.today()
+        warn_guid = f"pintxos-warning-1-warn-{today}"
+        first_item = _first_item_block(body)
+        assert warn_guid in first_item
+        assert "far more than anyone reads" not in first_item
+
+        with db() as conn:
+            feedstats.bump(conn, 1, summaries=10, day=feedstats.today())
+        body = c.get("/feeds/1.xml").text
+
+        hard_guid = f"pintxos-warning-1-hard-{today}"
+        first_item = _first_item_block(body)
+        assert hard_guid in first_item
+        assert "far more than anyone reads" in first_item
+
+
+def test_feed_xml_warning_at_120_uses_warn_tier(monkeypatch):
     monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
     with TestClient(app) as c:
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
