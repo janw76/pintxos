@@ -1465,6 +1465,30 @@ def test_feed_edit_page_shows_volume_defaults_and_summary_totals(monkeypatch):
     assert "Summaries: 0 paid today, 0 new items kept, 0 total" in page
 
 
+def test_feed_edit_page_shows_configured_warn_threshold(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
+            ("PINTXOS_WARN_AT", "70"),
+        )
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        page = c.get("/feeds/1").text
+
+    assert "70 or more summaries" in page
+    assert 'href="/settings"' in page
+
+
+def test_feed_edit_page_shows_default_warn_threshold(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        page = c.get("/feeds/1").text
+
+    assert "100 or more summaries" in page
+
+
 def test_feed_edit_post_saves_warn_volume_and_daily_budget(monkeypatch):
     monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
     with TestClient(app) as c:
