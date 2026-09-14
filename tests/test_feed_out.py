@@ -220,6 +220,74 @@ def test_feed_xml_original_line_precedes_stats_line():
     assert entry.description.index("Original:") < entry.description.index("min read")
 
 
+def _seed_topic_cases():
+    """A fetched+classified item, a fallback+classified item, and an unclassified fetched item."""
+    with db() as conn:
+        feed_id = conn.execute(
+            "INSERT INTO feeds(url, title, created_at) VALUES (?, ?, ?)",
+            (FEED_URL, "Example Feed", now()),
+        ).lastrowid
+        rows = [
+            # (guid, headline, fallback, word_count, topic)
+            ("topic-fetched", "Headline Topic Fetched", 0, 1200, "lifestyle"),
+            ("topic-fallback", "Headline Topic Fallback", 1, None, "health"),
+            ("topic-unclassified", "Headline Topic Unclassified", 0, 900, None),
+        ]
+        for guid, headline, fallback, words, topic in rows:
+            conn.execute(
+                """INSERT INTO items
+                (feed_id, guid, link, original_title, published_at, headline, summary,
+                 fallback, word_count, created_at, topic)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    feed_id,
+                    f"guid-{guid}",
+                    f"https://example.com/{guid}",
+                    f"Original {headline}",
+                    "2026-09-06T12:00:00+00:00",
+                    headline,
+                    f"Summary {guid}.",
+                    fallback,
+                    words,
+                    now(),
+                    topic,
+                ),
+            )
+    return feed_id
+
+
+def test_feed_xml_stats_line_includes_topic_for_fetched_classified_item():
+    feed_id = _seed_topic_cases()
+    with TestClient(app) as c:
+        resp = c.get(f"/feeds/{feed_id}.xml")
+
+    parsed = feedparser.parse(resp.content)
+    entry = next(e for e in parsed.entries if e.title == "Headline Topic Fetched")
+    assert "About 1,200 words · 6 min read · lifestyle and leisure" in entry.description
+
+
+def test_feed_xml_stats_line_is_topic_only_for_fallback_classified_item():
+    feed_id = _seed_topic_cases()
+    with TestClient(app) as c:
+        resp = c.get(f"/feeds/{feed_id}.xml")
+
+    parsed = feedparser.parse(resp.content)
+    entry = next(e for e in parsed.entries if e.title == "Headline Topic Fallback")
+    assert "<em>health</em>" in entry.description
+    assert "min read" not in entry.description
+
+
+def test_feed_xml_stats_line_has_no_topic_for_unclassified_fetched_item():
+    feed_id = _seed_topic_cases()
+    with TestClient(app) as c:
+        resp = c.get(f"/feeds/{feed_id}.xml")
+
+    parsed = feedparser.parse(resp.content)
+    entry = next(e for e in parsed.entries if e.title == "Headline Topic Unclassified")
+    assert "min read" in entry.description
+    assert "min read ·" not in entry.description
+
+
 FULL_TEXT_SAMPLE = "AT&T said 1 < 2\n\nSecond para"
 
 

@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from email.utils import format_datetime
 
 from pintxos.stats import format_stats
+from pintxos.topics import TOPIC_NAMES
 
 # Daily per-feed summary-count thresholds at which a warning article is prepended
 # to the output feed. Ascending order; warning_level() reports the highest one reached.
@@ -61,6 +62,20 @@ def _is_muted(item: sqlite3.Row) -> bool:
         return bool(item["muted"])
     except (IndexError, KeyError):
         return False
+
+
+def _topic_name(item: sqlite3.Row) -> str | None:
+    """The IPTC topic name for this item's topic slug, or None if absent/unknown.
+
+    Tolerates rows selected without the column (older callers): absent means no topic.
+    """
+    try:
+        slug = item["topic"]
+    except (IndexError, KeyError):
+        return None
+    if not slug:
+        return None
+    return TOPIC_NAMES.get(slug)
 
 
 def warning_level(summaries_today: int) -> int | None:
@@ -177,8 +192,13 @@ def render_rss(
                 )
         description += f"<p>Original: {item['original_title']}</p>"
         words = item["word_count"]
-        if words:
+        topic_name = _topic_name(item)
+        if words and topic_name:
+            description += f"<p><em>{format_stats(words)} · {html.escape(topic_name)}</em></p>"
+        elif words:
             description += f"<p><em>{format_stats(words)}</em></p>"
+        elif topic_name:
+            description += f"<p><em>{html.escape(topic_name)}</em></p>"
         if full_text and item["text"]:
             description += "<p>=== FULL TEXT BELOW ===</p>"
             norm_original_title = _norm_title(item["original_title"] or "")
