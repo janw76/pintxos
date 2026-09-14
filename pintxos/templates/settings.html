@@ -49,7 +49,7 @@
     <input type="number" id="warn_hard_at" name="warn_hard_at" min="1" value="{{ warn_hard_at }}" {% if warn_hard_env %}disabled{% endif %}>
     {% if warn_hard_env %}<div class="muted">Set by PINTXOS_WARN_HARD_AT in the environment.</div>{% endif %}
   </div>
-  <div class="muted">The output feed gets a warning item once a feed has produced this many summaries in a day; the stronger wording starts at the second number.</div>
+  <div class="muted">The output feed gets a warning item once a feed has produced this many summaries in a day; the stronger wording starts at the second number. Leave a field blank to go back to the default (100 / 180).</div>
   <div class="field field-checkbox">
     <label><input type="checkbox" name="full_text" value="1" {% if full_text_on %}checked{% endif %} {% if full_text_env %}disabled{% endif %}> Include full article text</label>
     <div class="muted">Appends the extracted article text below each summary in the output feed, after the Original line. Applies to every feed, including items already stored. Items polled before this option existed have no stored text.</div>
