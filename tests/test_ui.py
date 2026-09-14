@@ -372,6 +372,112 @@ def test_settings_post_invalid_interval_rejected():
     assert get_setting("PINTXOS_POLL_MINUTES") == "30"
 
 
+def test_settings_page_shows_warn_defaults():
+    with TestClient(app) as c:
+        page = c.get("/settings").text
+
+    assert 'name="warn_at" min="1" value="100"' in page
+    assert 'name="warn_hard_at" min="1" value="180"' in page
+
+
+def test_settings_post_persists_warn_thresholds():
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "m",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "sk-test-1234",
+                "warn_at": "120",
+                "warn_hard_at": "240",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "err=" not in resp.headers["location"]
+
+        page = c.get("/settings").text
+
+    assert get_setting("PINTXOS_WARN_AT") == "120"
+    assert get_setting("PINTXOS_WARN_HARD_AT") == "240"
+    assert 'name="warn_at" min="1" value="120"' in page
+    assert 'name="warn_hard_at" min="1" value="240"' in page
+
+
+def test_settings_post_warn_hard_below_warn_rejected():
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "m",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "sk-test-1234",
+                "warn_at": "240",
+                "warn_hard_at": "120",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "err=" in resp.headers["location"]
+
+    # unchanged from defaults
+    assert get_setting("PINTXOS_WARN_AT") == "100"
+    assert get_setting("PINTXOS_WARN_HARD_AT") == "180"
+
+
+def test_settings_post_warn_at_below_one_rejected():
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "m",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "sk-test-1234",
+                "warn_at": "0",
+                "warn_hard_at": "180",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "err=" in resp.headers["location"]
+
+    # unchanged from default
+    assert get_setting("PINTXOS_WARN_AT") == "100"
+
+
+def test_settings_warn_at_env_pinned_disables_control_and_ignores_submission(monkeypatch):
+    monkeypatch.setenv("PINTXOS_WARN_AT", "150")
+    with TestClient(app) as c:
+        page = c.get("/settings").text
+        assert 'name="warn_at" min="1" value="150" disabled' in page
+        assert "Set by PINTXOS_WARN_AT in the environment." in page
+
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "m",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "sk-test-1234",
+                "warn_hard_at": "260",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "err=" not in resp.headers["location"]
+
+    monkeypatch.delenv("PINTXOS_WARN_AT")
+    with db() as conn:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key = ?", ("PINTXOS_WARN_AT",)
+        ).fetchone()
+    assert row is None
+    assert get_setting("PINTXOS_WARN_HARD_AT") == "260"
+
+
 def test_settings_api_key_stored_and_masked():
     with TestClient(app) as c:
         c.post(
