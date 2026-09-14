@@ -26,6 +26,10 @@ DEFAULTS: dict[str, str | None] = {
     "PINTXOS_FULL_TEXT": "1",
     # Force the summarizer to keep the article's own language instead of English.
     "PINTXOS_RESPECT_LANGUAGE": "1",
+    # Output-feed volume warning threshold, summaries per feed per day.
+    "PINTXOS_WARN_AT": "100",
+    # Stronger wording from here.
+    "PINTXOS_WARN_HARD_AT": "180",
     # These two are environment-only (like PINTXOS_DATA_DIR): read directly by
     # pintxos/cli.py before the app/DB is touched, never via get_setting().
     "PINTXOS_HOST": "127.0.0.1",

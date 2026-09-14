@@ -409,11 +409,55 @@ def test_warning_level_boundaries():
     from pintxos.feed_out import warning_level
 
     assert warning_level(0) is None
-    assert warning_level(49) is None
-    assert warning_level(50) == 50
-    assert warning_level(99) == 50
+    assert warning_level(99) is None
     assert warning_level(100) == 100
-    assert warning_level(250) == 100
+    assert warning_level(179) == 100
+    assert warning_level(180) == 180
+    assert warning_level(250) == 180
+
+
+def test_warning_level_custom_levels():
+    from pintxos.feed_out import warning_level
+
+    assert warning_level(30, (20, 40)) == 20
+    assert warning_level(40, (20, 40)) == 40
+    assert warning_level(19, (20, 40)) is None
+
+
+def test_warn_levels_honours_settings_table():
+    from pintxos.feed_out import warn_levels
+
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('PINTXOS_WARN_AT', '10')"
+        )
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('PINTXOS_WARN_HARD_AT', '20')"
+        )
+        assert warn_levels(conn) == (10, 20)
+
+
+def test_warn_levels_raises_hard_to_warn_when_lower():
+    from pintxos.feed_out import warn_levels
+
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('PINTXOS_WARN_AT', '10')"
+        )
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('PINTXOS_WARN_HARD_AT', '5')"
+        )
+        assert warn_levels(conn) == (10, 10)
+
+
+def test_warn_levels_falls_back_to_defaults_on_non_numeric_value():
+    from pintxos.feed_out import warn_levels
+
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('PINTXOS_WARN_AT', 'not-a-number')"
+        )
+        assert warn_levels(conn) == (100, 180)
 
 
 def test_warning_item_fields_and_escaping():
@@ -422,7 +466,8 @@ def test_warning_item_fields_and_escaping():
     feed = {"id": 7, "title": "News & <Views>", "url": "https://example.com/feed.xml"}
     item = warning_item(
         feed,
-        level=50,
+        level=100,
+        hard_level=180,
         summaries_today=62,
         day="2026-09-11",
         feed_page_url="https://pintxos.example/feeds/7",
@@ -430,7 +475,7 @@ def test_warning_item_fields_and_escaping():
         kept_today=40,
     )
 
-    assert item["guid"] == "pintxos-warning-7-50-2026-09-11"
+    assert item["guid"] == "pintxos-warning-7-100-2026-09-11"
     assert item["title"] == "Pintxøs: this feed produced 62 summaries today"
     assert item["link"] == "https://pintxos.example/feeds/7"
     assert item["pub_date"].tzinfo is not None
@@ -443,19 +488,20 @@ def test_warning_item_fields_and_escaping():
     assert 'href="https://pintxos.example/feeds/7"' in description
     assert "Open the feed's settings" in description
     assert "Did you know? Pintxøs can skip ads" in description
-    # Below the 100 threshold: no "far more than anyone reads" escalation sentence.
+    # Below the hard threshold: no "far more than anyone reads" escalation sentence.
     assert "far more than anyone reads" not in description
     # 40 * 2 = 80 >= 62: not a discard loop, no warning sentence.
     assert "re-summarize loop" not in description
 
 
-def test_warning_item_level_100_adds_escalation_sentence():
+def test_warning_item_hard_level_adds_escalation_sentence():
     from pintxos.feed_out import warning_item
 
     feed = {"id": 3, "title": None, "url": "https://example.com/nofeed"}
     item = warning_item(
         feed,
-        level=100,
+        level=180,
+        hard_level=180,
         summaries_today=250,
         day="2026-09-11",
         feed_page_url="https://pintxos.example/feeds/3",
@@ -475,7 +521,8 @@ def test_warning_item_loop_sentence_appears_when_mostly_discarded():
     feed = {"id": 9, "title": "Discardy", "url": "https://example.com/discardy"}
     item = warning_item(
         feed,
-        level=50,
+        level=100,
+        hard_level=180,
         summaries_today=60,
         day="2026-09-11",
         feed_page_url="https://pintxos.example/feeds/9",
@@ -498,7 +545,8 @@ def test_warning_item_loop_sentence_absent_when_mostly_kept():
     feed = {"id": 9, "title": "Keepy", "url": "https://example.com/keepy"}
     item = warning_item(
         feed,
-        level=50,
+        level=100,
+        hard_level=180,
         summaries_today=60,
         day="2026-09-11",
         feed_page_url="https://pintxos.example/feeds/9",
@@ -519,6 +567,7 @@ def test_render_rss_with_warning_prepends_warning_item():
     warning = warning_item(
         feed,
         level=50,
+        hard_level=180,
         summaries_today=62,
         day="2026-09-11",
         feed_page_url="https://pintxos.example/feeds/1",
@@ -588,6 +637,7 @@ def test_render_rss_with_warning_still_skips_muted_items():
     warning = warning_item(
         db_feed,
         level=50,
+        hard_level=180,
         summaries_today=62,
         day="2026-09-11",
         feed_page_url="https://pintxos.example/feeds/1",

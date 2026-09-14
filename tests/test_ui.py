@@ -1390,16 +1390,16 @@ def test_feed_xml_no_warning_below_threshold(monkeypatch):
     assert "pintxos-warning" not in body
 
 
-def test_feed_xml_warning_at_50_is_first_item(monkeypatch):
+def test_feed_xml_warning_at_100_is_first_item(monkeypatch):
     monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
     with TestClient(app) as c:
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
         with db() as conn:
-            feedstats.bump(conn, 1, summaries=50, day=feedstats.today())
+            feedstats.bump(conn, 1, summaries=100, day=feedstats.today())
         body = c.get("/feeds/1.xml").text
 
     today = feedstats.today()
-    guid = f"pintxos-warning-1-50-{today}"
+    guid = f"pintxos-warning-1-100-{today}"
     first_item = _first_item_block(body)
     assert guid in first_item
     link = first_item[first_item.index("<link>") + len("<link>") : first_item.index("</link>")]
@@ -1427,7 +1427,7 @@ def test_feed_xml_warning_names_the_feeds_own_model(monkeypatch):
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
         with db() as conn:
             conn.execute("UPDATE feeds SET model = ? WHERE id = 1", ("openai/gpt-5-mini",))
-            feedstats.bump(conn, 1, summaries=50, day=feedstats.today())
+            feedstats.bump(conn, 1, summaries=100, day=feedstats.today())
         body = c.get("/feeds/1.xml").text
         global_model = get_setting("PINTXOS_MODEL")
 
@@ -1454,7 +1454,7 @@ def test_feed_xml_warning_link_uses_base_url_setting(monkeypatch):
     with TestClient(app) as c:
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
         with db() as conn:
-            feedstats.bump(conn, 1, summaries=50, day=feedstats.today())
+            feedstats.bump(conn, 1, summaries=100, day=feedstats.today())
         body = c.get("/feeds/1.xml").text
 
     first_item = _first_item_block(body)
