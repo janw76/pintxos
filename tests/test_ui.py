@@ -2837,6 +2837,63 @@ def test_retry_one_queues_retry_fallback(monkeypatch):
     assert ("queued", "retry-42") in calls
 
 
+def test_retry_fallback_route_clears_status_and_reenables_poll_now(monkeypatch):
+    """End-to-end regression for pintxos-q7a: a manual POST /retry-fallback must
+    clear the feed's in-memory status once the (synchronous, here) job finishes,
+    so /status stops reporting it and the Poll now button re-enables. Before the
+    fix, retry_fallback only cleared status if it still held _QUEUED, but retry_one
+    replaces _QUEUED with "Retrying i/total" during the run, so the guard never
+    fired and the feed was stuck "Queued" forever."""
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+
+    class SyncScheduler:
+        def __init__(self):
+            self.calls = []
+
+        def add_job(self, func, args, id, replace_existing, misfire_grace_time):
+            self.calls.append(id)
+            func(*args)
+
+    sync_scheduler = SyncScheduler()
+    monkeypatch.setattr(poll, "scheduler", sync_scheduler)
+    monkeypatch.setattr(poll, "fetch_article", lambda link: ("FULL ARTICLE TEXT " * 20, "ok", []))
+    monkeypatch.setattr(
+        poll, "summarize", lambda text, title, url, **kwargs: ("H", "S")
+    )
+
+    with TestClient(app) as c:
+        resp = c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        assert resp.status_code == 303
+        _insert_item(1, "guid-1", fallback=1)
+
+        resp = c.post("/feeds/1/retry-fallback", follow_redirects=False)
+        assert resp.status_code == 303
+        assert "retry-1" in sync_scheduler.calls
+
+        rows = _item_rows(1)
+        assert len(rows) == 1
+        assert rows[0]["fallback"] == 0
+
+        status_json = c.get("/status").json()
+        assert "1" not in status_json
+
+        row_html = c.get("/feeds/1/row").text
+        assert 'aria-label="Poll now"' in row_html
+        assert "btn-polling" not in row_html
+        assert "disabled" not in row_html
+        assert "Polling…" not in row_html
+
+        # Negative control: with a real "Queued" status the disabled/polling
+        # variant must render, proving the assertions above are not vacuous.
+        try:
+            poll._status[1] = poll._QUEUED
+            queued_html = c.get("/feeds/1/row").text
+            assert "btn-polling" in queued_html
+            assert "disabled" in queued_html
+        finally:
+            poll._status.pop(1, None)
+
+
 # --- POST /feeds/{id}/summarize ---------------------------------------------
 
 
