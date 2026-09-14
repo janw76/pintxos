@@ -8,6 +8,7 @@ import re
 import stat
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from urllib.parse import unquote
 
 import pytest
 from fastapi.testclient import TestClient
@@ -476,6 +477,59 @@ def test_settings_warn_at_env_pinned_disables_control_and_ignores_submission(mon
         ).fetchone()
     assert row is None
     assert get_setting("PINTXOS_WARN_HARD_AT") == "260"
+
+
+def test_settings_warn_at_env_pinned_junk_value_does_not_block_save(monkeypatch):
+    monkeypatch.setenv("PINTXOS_WARN_AT", "abc")
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "m",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "sk-test-1234",
+                "warn_hard_at": "200",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "err=" not in resp.headers["location"]
+        assert "msg=Saved" in resp.headers["location"]
+
+    monkeypatch.delenv("PINTXOS_WARN_AT")
+    with db() as conn:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key = ?", ("PINTXOS_WARN_AT",)
+        ).fetchone()
+    assert row is None
+    assert get_setting("PINTXOS_WARN_HARD_AT") == "200"
+
+
+def test_settings_warn_at_env_pinned_junk_value_falls_back_to_default_for_comparison(
+    monkeypatch,
+):
+    monkeypatch.setenv("PINTXOS_WARN_AT", "abc")
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "m",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "sk-test-1234",
+                "warn_hard_at": "50",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "err=" in resp.headers["location"]
+        assert (
+            "Strong warning threshold must not be below the first warning threshold"
+            in unquote(resp.headers["location"])
+        )
+
+    monkeypatch.delenv("PINTXOS_WARN_AT")
 
 
 def test_settings_api_key_stored_and_masked():
