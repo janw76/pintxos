@@ -13,6 +13,7 @@ from urllib.parse import unquote
 import pytest
 from fastapi.testclient import TestClient
 
+import pintxos
 import pintxos.app as app_module
 from pintxos import feedstats, llm, poll, topics
 from pintxos.app import app
@@ -379,6 +380,24 @@ def test_settings_page_shows_warn_defaults():
 
     assert 'name="warn_at" min="1" value="100"' in page
     assert 'name="warn_hard_at" min="1" value="180"' in page
+
+
+def test_settings_page_shows_version_with_release_link(monkeypatch):
+    monkeypatch.setattr(pintxos, "__version__", "26.09.1")
+    with TestClient(app) as c:
+        page = c.get("/settings").text
+
+    assert "Pintxos 26.09.1" in page
+    assert "releases/tag/v26.09.1" in page
+
+
+def test_settings_page_shows_dev_version_without_release_link(monkeypatch):
+    monkeypatch.setattr(pintxos, "__version__", "dev")
+    with TestClient(app) as c:
+        page = c.get("/settings").text
+
+    assert "Pintxos dev" in page
+    assert "releases/tag" not in page
 
 
 def test_settings_post_persists_warn_thresholds():
