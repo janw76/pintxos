@@ -129,13 +129,13 @@ def feed_xml(request: Request, feed_id: int) -> Response:
             (feed_id, int(get_setting("PINTXOS_ITEMS_PER_FEED", conn))),
         ).fetchall()
         full_text = is_truthy(get_setting("PINTXOS_FULL_TEXT", conn))
+        base_url = get_setting("PINTXOS_BASE_URL", conn) or str(request.base_url).rstrip("/")
 
         warn_on = feed["warn_volume"] is None or feed["warn_volume"] == 1
         summaries_today = feedstats.totals(conn, feed_id)[0]
         levels = feed_out.warn_levels(conn)
         level = feed_out.warning_level(summaries_today, levels)
         if warn_on and level is not None:
-            base_url = get_setting("PINTXOS_BASE_URL", conn) or str(request.base_url).rstrip("/")
             feed_page_url = f"{base_url}/feeds/{feed_id}"
             model = feed["model"] or get_setting("PINTXOS_MODEL", conn)
             warning = feed_out.warning_item(
@@ -151,7 +151,7 @@ def feed_xml(request: Request, feed_id: int) -> Response:
         else:
             warning = None
 
-        body = render_rss(feed, items, full_text=full_text, warning=warning)
+        body = render_rss(feed, items, full_text=full_text, warning=warning, base_url=base_url)
     return Response(content=body, media_type="application/rss+xml; charset=utf-8")
 
 
