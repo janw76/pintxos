@@ -16,6 +16,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, Response, Uploa
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+import pintxos
 from pintxos import adfilter, feed_out, feedstats, llm
 from pintxos.config import DEFAULTS, data_dir, get_setting, is_truthy
 from pintxos.cookies import cookie_path, expiry_for, get_jar, has_cookies_for, load_jar, summary
@@ -637,6 +638,7 @@ def settings_page(request: Request) -> Response:
             "cookie_file_exists": cookie_file_exists,
             "cookies_text": cookies_text,
             "cookie_soon": cookie_soon,
+            "version": pintxos.__version__,
         },
     )
 

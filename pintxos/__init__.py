@@ -1,3 +1,5 @@
 """Pintxos — bite-sized, honest RSS feeds."""
 
-__version__ = "0.1.0"
+import os
+
+__version__ = os.environ.get("PINTXOS_VERSION", "dev")

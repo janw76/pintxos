@@ -123,4 +123,12 @@
   </div>
   <button type="submit" class="btn-primary">Save</button>
 </form>
+
+<p class="muted">
+  {% if version != "dev" %}
+  <a href="https://github.com/janw76/pintxos/releases/tag/v{{ version }}">Pintxos {{ version }}</a>
+  {% else %}
+  Pintxos {{ version }}
+  {% endif %}
+</p>
 {% endblock %}
