@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block title %}{{ item.headline or "Pintxøs" }}{% endblock %}
+
+{% block header %}{% endblock %}
+
+{% block head %}
+<style>
+  .btn-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1.5rem; }
+  article { max-width: 40rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="btn-row">
+  <button type="button" class="btn-tint-accent btn-copy" onclick="pintxosCopyRich(this, document.getElementById('head'))">Copy summary</button>
+  <button type="button" class="btn-tint-accent btn-copy" onclick="pintxosCopyRich(this, document.getElementById('item'))">Copy with full text</button>
+  <button type="button" class="btn-tint-accent" hidden data-share onclick="navigator.share({text: document.getElementById('head').dataset.plain}).catch(function(){})">Share summary</button>
+  <button type="button" class="btn-tint-accent" hidden data-share onclick="navigator.share({text: document.getElementById('item').dataset.plain}).catch(function(){})">Share with full text</button>
+</div>
+<article id="item" data-plain="{{ full_plain }}"><div id="head" data-plain="{{ head_plain }}">{{ head_html|safe }}</div>{{ full_lines_html|safe }}</article>
+<script>
+  if (navigator.share) { document.querySelectorAll('[data-share]').forEach(function(b){ b.hidden = false; }); }
+  function pintxosCopyRich(btn, el) {
+    if (navigator.clipboard && window.ClipboardItem) {
+      navigator.clipboard.write([new ClipboardItem({
+        "text/html": new Blob([el.innerHTML], {type: "text/html"}),
+        "text/plain": new Blob([el.dataset.plain], {type: "text/plain"})
+      })]);
+    } else {
+      var r = document.createRange();
+      r.selectNodeContents(el);
+      var s = window.getSelection();
+      s.removeAllRanges();
+      s.addRange(r);
+      document.execCommand("copy");
+      s.removeAllRanges();
+    }
+    var label = btn.querySelector(".label") || btn;
+    var old = label.textContent;
+    label.textContent = "Copied!";
+    btn.classList.add("copied");
+    setTimeout(function () { label.textContent = old; btn.classList.remove("copied"); }, 1200);
+  }
+</script>
+{% endblock %}

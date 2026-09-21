@@ -381,6 +381,37 @@ def feed_edit_save(
     return _redirect("/", msg="Saved")
 
 
+@app.get("/items/{item_id}")
+def item_page(request: Request, item_id: int) -> Response:
+    with db() as conn:
+        item = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+        if item is None:
+            raise HTTPException(status_code=404, detail="item not found")
+
+        head_html = feed_out.item_html(item, full=False)
+        full_html = feed_out.item_html(item, full=True)
+        if full_html.startswith(head_html):
+            remainder = full_html[len(head_html) :]
+            full_lines_html = remainder[1:] if remainder.startswith("\n") else remainder
+        else:
+            full_lines_html = ""
+
+        head_plain = feed_out.item_plain(item, full=False)
+        full_plain = feed_out.item_plain(item, full=True)
+
+    return templates.TemplateResponse(
+        request,
+        "item.html",
+        {
+            "item": dict(item),
+            "head_html": head_html,
+            "full_lines_html": full_lines_html,
+            "head_plain": head_plain,
+            "full_plain": full_plain,
+        },
+    )
+
+
 def _load_feed_rows(request: Request, feed_id: int | None = None) -> list[dict]:
     """Feed dicts for the index table: every feed, or just one when feed_id is given.
 
