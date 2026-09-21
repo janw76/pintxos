@@ -38,6 +38,7 @@ Same story, no guessing games. Sanity restored. Point Pintxøs at a feed once, a
 - **Word count and reading time** on every item, so you know what you are clicking into.
 - **Topic mute.** Tick any of 17 media categories (arts, sport, health, weather, ...) to mute them entirely.
 - **Volume warning and daily budget.** A feed that produces an unusually high number of summaries gets a warning article in its output feed, once per day. Set a per-feed daily limit if you want a hard cap.
+- **Copy and share.** Every feed item links to a page with one-tap Copy (rich text: bold headline, italic stats, small model name; plain text for iMessage/WhatsApp) and Share buttons, so you can pass an article on from a mobile feed reader.
 
 ## How to use it
 

@@ -346,7 +346,14 @@ def test_feed_xml_full_text_off_has_no_marker(monkeypatch):
     parsed = feedparser.parse(resp.content)
     entry = next(e for e in parsed.entries if e.title == "Headline Text")
     assert "=== FULL TEXT BELOW ===" not in entry.description
-    assert entry.description.rstrip().endswith("Original: Original Text</p>")
+    # The feed route always wires a base_url, so the copy-link paragraph (added by
+    # render_rss's base_url support) is now the last paragraph, right after "Original:".
+    assert (
+        "Original: Original Text</p><p><a href="
+        in entry.description.replace("&#34;", '"')
+    )
+    assert "Copy or share this article</a></p>" in entry.description.rstrip()
+    assert entry.description.rstrip().endswith("</p>")
 
 
 def test_feed_xml_full_text_null_has_no_marker():
@@ -779,3 +786,167 @@ def test_feed_xml_omits_muted_items():
     assert "Original Three" not in resp.text
     parsed = feedparser.parse(resp.content)
     assert {e.title for e in parsed.entries} == {"Headline One", "Headline Two"}
+
+
+def test_text_lines_dedups_original_title():
+    from pintxos.feed_out import text_lines
+
+    feed_id = _seed_with_text("Original One\n\nfirst para\nsecond", title="original one")
+    with db() as conn:
+        item = conn.execute(
+            "SELECT * FROM items WHERE feed_id = ? AND guid = 'guid-text'", (feed_id,)
+        ).fetchone()
+
+    assert text_lines(item) == ["first para", "second"]
+
+
+def _seed_full_item():
+    with db() as conn:
+        feed_id = conn.execute(
+            "INSERT INTO feeds(url, title, created_at) VALUES (?, ?, ?)",
+            (FEED_URL, "Example Feed", now()),
+        ).lastrowid
+        conn.execute(
+            """INSERT INTO items
+            (feed_id, guid, link, original_title, published_at, headline, summary,
+             fallback, word_count, text, model, topic, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                feed_id,
+                "guid-full",
+                "https://example.com/exact",
+                "Original Exact",
+                "2026-09-07T12:00:00+00:00",
+                "Headline Exact",
+                "Summary exact.",
+                0,
+                1200,
+                "First line\n\nSecond line",
+                "gpt-4o",
+                "science",
+                now(),
+            ),
+        )
+    with db() as conn:
+        return conn.execute(
+            "SELECT * FROM items WHERE feed_id = ? AND guid = 'guid-full'", (feed_id,)
+        ).fetchone()
+
+
+def test_item_html_and_plain_exact():
+    from pintxos.feed_out import item_html, item_plain
+
+    item = _seed_full_item()
+
+    html_no_full = (
+        '<p><b style="font-size:1.15em">Headline Exact</b></p>\n'
+        "<p>Summary exact. <small>(gpt-4o)</small></p>\n"
+        "<p>Original: Original Exact</p>\n"
+        "<p><em>About 1,200 words · 6 min read · science and technology</em></p>\n"
+        '<p><a href="https://example.com/exact">https://example.com/exact</a></p>'
+    )
+    html_full = (
+        html_no_full
+        + "\n<p>First line</p>\n<p>Second line</p>"
+    )
+    plain_no_full = (
+        "Headline Exact\n\n"
+        "Summary exact. (gpt-4o)\n\n"
+        "Original: Original Exact\n\n"
+        "About 1,200 words · 6 min read · science and technology\n\n"
+        "https://example.com/exact"
+    )
+    plain_full = plain_no_full + "\n\nFirst line\n\nSecond line"
+
+    assert item_html(item, full=False) == html_no_full
+    assert item_html(item, full=True) == html_full
+    assert item_plain(item, full=False) == plain_no_full
+    assert item_plain(item, full=True) == plain_full
+
+    for rendered in (html_no_full, html_full, plain_no_full, plain_full):
+        assert "/items/" not in rendered
+        assert "/feeds/" not in rendered
+
+    assert item_html(item, full=True).endswith("<p>First line</p>\n<p>Second line</p>")
+    assert item_plain(item, full=True).endswith("First line\n\nSecond line")
+    assert "First line" not in item_html(item, full=False)
+    assert "Second line" not in item_html(item, full=False)
+    assert "First line" not in item_plain(item, full=False)
+    assert "Second line" not in item_plain(item, full=False)
+
+
+def test_item_html_escapes():
+    from pintxos.feed_out import item_html, item_plain
+
+    with db() as conn:
+        feed_id = conn.execute(
+            "INSERT INTO feeds(url, title, created_at) VALUES (?, ?, ?)",
+            (FEED_URL, "Example Feed", now()),
+        ).lastrowid
+        conn.execute(
+            """INSERT INTO items
+            (feed_id, guid, link, original_title, published_at, headline, summary,
+             fallback, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                feed_id,
+                "guid-escape",
+                "https://example.com/escape",
+                None,
+                "2026-09-08T12:00:00+00:00",
+                "<b>&",
+                None,
+                0,
+                now(),
+            ),
+        )
+        item = conn.execute(
+            "SELECT * FROM items WHERE feed_id = ? AND guid = 'guid-escape'", (feed_id,)
+        ).fetchone()
+
+    expected_html = (
+        '<p><b style="font-size:1.15em">&lt;b&gt;&amp;</b></p>\n'
+        '<p><a href="https://example.com/escape">https://example.com/escape</a></p>'
+    )
+    expected_plain = "<b>&\n\nhttps://example.com/escape"
+    assert item_html(item, full=False) == expected_html
+    assert item_plain(item, full=False) == expected_plain
+
+
+def test_feed_description_has_item_link_before_full_text(monkeypatch):
+    monkeypatch.setenv("PINTXOS_FULL_TEXT", "1")
+    feed_id = _seed_with_text(FULL_TEXT_SAMPLE)
+    with db() as conn:
+        item_id = conn.execute(
+            "SELECT id FROM items WHERE feed_id = ? AND guid = 'guid-text'", (feed_id,)
+        ).fetchone()["id"]
+
+    import xml.sax.saxutils
+
+    with TestClient(app) as c:
+        resp = c.get(f"/feeds/{feed_id}.xml")
+
+    raw = xml.sax.saxutils.unescape(resp.text)
+    marker = f'/items/{item_id}">Copy or share this article'
+    assert marker in raw
+    link_index = raw.index(marker)
+    assert raw.index("Original:") < link_index < raw.index("=== FULL TEXT BELOW ===")
+
+    parsed = feedparser.parse(resp.content)
+    entry = next(e for e in parsed.entries if e.title == "Headline Text")
+    assert entry.link == "https://example.com/text"
+
+
+def test_render_rss_without_base_url_unchanged():
+    from pintxos.feed_out import render_rss
+
+    feed_id = _seed()
+    with db() as conn:
+        db_feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        items = conn.execute(
+            "SELECT * FROM items WHERE feed_id = ? ORDER BY published_at DESC, id DESC",
+            (feed_id,),
+        ).fetchall()
+
+    body = render_rss(db_feed, items, full_text=True)
+    assert "/items/" not in body.decode("utf-8")
