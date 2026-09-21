@@ -171,12 +171,135 @@ def warning_item(
     }
 
 
+def text_lines(item: sqlite3.Row) -> list[str]:
+    """Non-blank lines of item['text'], deduping a first line that repeats the title.
+
+    Tolerates rows selected without the 'text' column: absent/falsy means no lines.
+    A first non-blank line that (loosely) matches original_title is dropped, since
+    the fetched article body often repeats its own headline as its first line.
+    """
+    text = item["text"] if "text" in item.keys() else None
+    if not text:
+        return []
+    norm_original_title = _norm_title(item["original_title"] or "")
+    lines: list[str] = []
+    first_line_seen = False
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        if not first_line_seen:
+            first_line_seen = True
+            if norm_original_title and _norm_title(line) == norm_original_title:
+                continue
+        lines.append(line)
+    return lines
+
+
+def item_html(item: sqlite3.Row, *, full: bool) -> str:
+    """The item's description rendered as HTML paragraphs, joined with "\\n".
+
+    A stripped-down cousin of render_rss's per-item description: no auth/fetch
+    notes, no "=== FULL TEXT BELOW ===" marker, no link to Pintxøs. Every
+    interpolated value is html.escape()d; a paragraph is skipped entirely when its
+    source value is falsy. When `full` is True, the fetched article's text lines
+    (see text_lines()) are appended, one paragraph per line.
+    """
+    paragraphs: list[str] = []
+
+    headline = item["headline"]
+    if headline:
+        paragraphs.append(
+            f'<p><b style="font-size:1.15em">{html.escape(headline)}</b></p>'
+        )
+
+    summary = item["summary"]
+    if summary:
+        model = item["model"] if "model" in item.keys() else None
+        if model:
+            paragraphs.append(
+                f"<p>{html.escape(summary)} <small>({html.escape(model)})</small></p>"
+            )
+        else:
+            paragraphs.append(f"<p>{html.escape(summary)}</p>")
+
+    original_title = item["original_title"]
+    if original_title:
+        paragraphs.append(f"<p>Original: {html.escape(original_title)}</p>")
+
+    words = item["word_count"]
+    topic_name = _topic_name(item)
+    if words and topic_name:
+        paragraphs.append(
+            f"<p><em>{html.escape(format_stats(words))} · {html.escape(topic_name)}</em></p>"
+        )
+    elif words:
+        paragraphs.append(f"<p><em>{html.escape(format_stats(words))}</em></p>")
+    elif topic_name:
+        paragraphs.append(f"<p><em>{html.escape(topic_name)}</em></p>")
+
+    link = item["link"]
+    if link:
+        link_esc = html.escape(link)
+        paragraphs.append(f'<p><a href="{link_esc}">{link_esc}</a></p>')
+
+    if full:
+        for line in text_lines(item):
+            paragraphs.append(f"<p>{html.escape(line)}</p>")
+
+    return "\n".join(paragraphs)
+
+
+def item_plain(item: sqlite3.Row, *, full: bool) -> str:
+    """The item's description rendered as plain text paragraphs, joined with "\\n\\n".
+
+    Same paragraphs, order, and skip rules as item_html(), but unescaped. When
+    `full` is True, each of the fetched article's text lines (see text_lines())
+    is appended as its own paragraph.
+    """
+    paragraphs: list[str] = []
+
+    headline = item["headline"]
+    if headline:
+        paragraphs.append(headline)
+
+    summary = item["summary"]
+    if summary:
+        model = item["model"] if "model" in item.keys() else None
+        if model:
+            paragraphs.append(f"{summary} ({model})")
+        else:
+            paragraphs.append(summary)
+
+    original_title = item["original_title"]
+    if original_title:
+        paragraphs.append(f"Original: {original_title}")
+
+    words = item["word_count"]
+    topic_name = _topic_name(item)
+    if words and topic_name:
+        paragraphs.append(f"{format_stats(words)} · {topic_name}")
+    elif words:
+        paragraphs.append(format_stats(words))
+    elif topic_name:
+        paragraphs.append(topic_name)
+
+    link = item["link"]
+    if link:
+        paragraphs.append(link)
+
+    if full:
+        paragraphs.extend(text_lines(item))
+
+    return "\n\n".join(paragraphs)
+
+
 def render_rss(
     feed: sqlite3.Row,
     items: Sequence[sqlite3.Row],
     *,
     full_text: bool = True,
     warning: dict | None = None,
+    base_url: str | None = None,
 ) -> bytes:
     """Render a feed and its items as RSS 2.0 XML bytes."""
     rss = ET.Element("rss", {"version": "2.0"})
@@ -237,17 +360,12 @@ def render_rss(
             description += f"<p><em>{format_stats(words)}</em></p>"
         elif topic_name:
             description += f"<p><em>{html.escape(topic_name)}</em></p>"
+        if base_url is not None:
+            item_url = html.escape(f"{base_url}/items/{item['id']}")
+            description += f'<p><a href="{item_url}">Copy or share this article</a></p>'
         if full_text and item["text"]:
             description += "<p>=== FULL TEXT BELOW ===</p>"
-            norm_original_title = _norm_title(item["original_title"] or "")
-            first_line_seen = False
-            for line in item["text"].splitlines():
-                if not line.strip():
-                    continue
-                if not first_line_seen:
-                    first_line_seen = True
-                    if norm_original_title and _norm_title(line) == norm_original_title:
-                        continue
+            for line in text_lines(item):
                 description += f"<p>{html.escape(line)}</p>"
         ET.SubElement(entry, "description").text = description
 
