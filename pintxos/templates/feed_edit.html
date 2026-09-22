@@ -20,7 +20,7 @@
     <label for="feed_model">Model</label>
     <input type="text" id="feed_model" name="model" value="{{ feed.model or '' }}" placeholder="Global default ({{ global_model }})">
     <div class="muted">Leave blank to use the global model from <a href="/settings">Settings</a>.</div>
-    {% with model_input_id="feed_model" %}{% include "_model_presets.html" %}{% endwith %}
+    <details class="muted"><summary>Model presets</summary>{% with model_input_id="feed_model" %}{% include "_model_presets.html" %}{% endwith %}</details>
   </div>
   <fieldset class="field">
     <legend>Language</legend>
