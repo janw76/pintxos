@@ -58,17 +58,18 @@ services:
     volumes:
       - ./data:/data
     environment:
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      # OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}  # only needed for models with a slash
-      # PINTXOS_MODEL: claude-haiku-4-5-20251001
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}  # only needed for models without a slash (Anthropic direct)
+      # PINTXOS_MODEL: z-ai/glm-5.3-flash
       # PINTXOS_POLL_MINUTES: 30
       # PINTXOS_ITEMS_PER_FEED: 50
       # PINTXOS_BASE_URL: https://pintxos.example.com
     restart: unless-stopped
 ```
 
-Put your key in a `.env` file next to `docker-compose.yml` (see
-`.env.example`), then:
+Put your `OPENROUTER_API_KEY` in a `.env` file next to `docker-compose.yml`
+(see `.env.example`) — `ANTHROPIC_API_KEY` instead if you use a model without
+a slash — then:
 
 ```bash
 docker compose up -d
@@ -115,7 +116,8 @@ Then run it:
 ```
 
 Copy `.env.example` to `.env` in the directory you run `pintxos` from, and
-fill in `ANTHROPIC_API_KEY` (and any other overrides), or export the
+fill in `OPENROUTER_API_KEY` (or `ANTHROPIC_API_KEY` for a model without a
+slash, plus any other overrides), or export the
 variables directly — real environment variables always win over `.env`. The
 SQLite database lives in `./data` relative to that directory unless you set
 `PINTXOS_DATA_DIR`, so run `pintxos` from a stable directory.
@@ -138,9 +140,9 @@ to the database. `PINTXOS_BASE_URL`, `PINTXOS_DATA_DIR`, `PINTXOS_HOST`,
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | *(none)* | Anthropic API key. See note below. |
-| `OPENROUTER_API_KEY` | *(none)* | OpenRouter API key. Needed only for models with a slash in the name. |
-| `PINTXOS_MODEL` | `claude-haiku-4-5-20251001` | Default model. Names with a slash go to OpenRouter, names without go to Anthropic. Feeds can override it. |
+| `ANTHROPIC_API_KEY` | *(none)* | Anthropic API key. Needed only for models without a slash in the name (Anthropic direct). See note below. |
+| `OPENROUTER_API_KEY` | *(none)* | OpenRouter API key. Needed for the default model and any model with a slash in the name. |
+| `PINTXOS_MODEL` | `z-ai/glm-5.3-flash` | Default model. Names with a slash go to OpenRouter, names without go to Anthropic. Feeds can override it. |
 | `PINTXOS_POLL_MINUTES` | `30` | How often feeds are polled, in minutes. |
 | `PINTXOS_ITEMS_PER_FEED` | `50` | Items in each output feed, and the most feed entries considered per poll. |
 | `PINTXOS_KEEP_PER_FEED` | `1000` | Rows stored per feed; the oldest-inserted are pruned first. Keeps history well beyond the output feed so an entry that leaves and re-enters a publisher's feed is never summarized again. Roughly 5 KB per row with full text. No UI field. |
@@ -326,12 +328,13 @@ A model name with a slash (e.g. `google/gemini-2.5-flash-lite`) is sent to OpenR
 
 | Model | Approx. cost per 100 articles | Notes |
 |---|---|---|
-| `claude-haiku-4-5-20251001` | ~$0.28 | Anthropic direct. Current default, strongest multilingual output. |
-| `anthropic/claude-haiku-4.5` | ~$0.28 | Same model via OpenRouter. |
-| `openai/gpt-5-mini` | ~$0.08 | Same quality tier as Haiku at a third of the price. |
-| `google/gemini-2.5-flash-lite` | ~$0.03 | Recommended starting point. Fast, reliable JSON, good in European languages. |
+| `z-ai/glm-5.3-flash` | ~$0.04 | Default. Via OpenRouter; fast, large context, good summaries at a fraction of Haiku's price. |
+| `claude-haiku-4-5-20251001` | ~$0.28 | Anthropic direct. Strongest multilingual output. |
+| `deepseek/deepseek-v4.1-flash` | ~$0.04 | Newer DeepSeek flash model. Large context, solid summaries. |
+| `google/gemini-2.5-flash-lite` | ~$0.03 | Fast, reliable JSON, good in European languages. |
+| `deepseek/deepseek-v4-flash-0731` | ~$0.01 | Cheapest of the set. Large context, solid summaries; newer and less proven than the others. |
 
-Prices are OpenRouter's as of September 2026 and drift; see the full list at [openrouter.ai/models](https://openrouter.ai/models). The same four presets are clickable on the Settings page.
+Prices are OpenRouter's as of September 2026 and drift; see the full list at [openrouter.ai/models](https://openrouter.ai/models). The same five presets are clickable on the Settings page.
 
 Each feed can override the model on its Edit page — e.g., a premium model for one feed, the cheapest for another; leaving it blank uses the global default.
 
