@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 
 from fastapi.testclient import TestClient
+from markupsafe import escape
 
 from pintxos.app import app
 from pintxos.db import db, now
@@ -13,7 +14,7 @@ from pintxos.feed_out import item_html, item_plain
 FEED_URL = "https://example.com/feed.xml"
 
 
-def _seed():
+def _seed(headline="Test Headline", summary="Test summary sentence."):
     with db() as conn:
         feed_id = conn.execute(
             "INSERT INTO feeds(url, title, created_at) VALUES (?, ?, ?)",
@@ -30,8 +31,8 @@ def _seed():
                 "https://example.com/1",
                 "Original One",
                 "2026-09-01T12:00:00+00:00",
-                "Test Headline",
-                "Test summary sentence.",
+                headline,
+                summary,
                 0,
                 1200,
                 now(),
@@ -64,16 +65,29 @@ def test_item_page_renders():
 
 
 def test_item_page_plain_attrs():
-    item_id = _seed()
+    item_id = _seed(
+        headline='Say "hi" & <wave>',
+        summary="It's a 'test' & more",
+    )
     with db() as conn:
         item = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
-    expected_head_plain = html.escape(item_plain(item, full=False), quote=True)
-    expected_full_plain = html.escape(item_plain(item, full=True), quote=True)
+    head_plain = item_plain(item, full=False)
+    full_plain = item_plain(item, full=True)
+    expected_head_plain = str(escape(head_plain))
+    expected_full_plain = str(escape(full_plain))
     with TestClient(app) as c:
         resp = c.get(f"/items/{item_id}")
     body = resp.text
     assert f'id="head" data-plain="{expected_head_plain}"' in body
     assert f'id="item" data-plain="{expected_full_plain}"' in body
+
+    # Round trip: unescaping the rendered attribute must reproduce the plain
+    # text regardless of which entity style the escaper uses (e.g. &#34;
+    # vs &quot; for a double quote).
+    head_attr_start = body.index('id="head" data-plain="') + len('id="head" data-plain="')
+    head_attr_end = body.index('"', head_attr_start)
+    rendered_head_attr = body[head_attr_start:head_attr_end]
+    assert html.unescape(rendered_head_attr) == head_plain
 
 
 def test_item_page_buttons():
