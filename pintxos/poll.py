@@ -10,7 +10,7 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from http.cookiejar import MozillaCookieJar
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import curl_cffi.requests
 import feedparser
@@ -463,6 +463,24 @@ def _insert_item(
     )
 
 
+def _resolve_entry_links(parsed, feed_url: str) -> None:
+    """Some feeds (e.g. HBR's Atom feed) give every entry a relative link like
+    `/2026/09/slug` and only declare the site once, at feed level
+    (`<link href="http://hbr.org"/>`). Resolve each entry's link against that
+    feed-level link, falling back to the polled `feed_url` itself when the
+    feed-level link is missing or also relative. Absolute entry links and the
+    `id` field (often a `tag:` URI, never meant to be fetched) are left alone.
+    Mutates `parsed.entries` in place.
+    """
+    base = parsed.feed.get("link")
+    if not base or urlparse(base).scheme == "":
+        base = feed_url
+    for entry in parsed.entries:
+        link = entry.get("link")
+        if link and urlparse(link).scheme == "":
+            entry["link"] = urljoin(base, link)
+
+
 def poll_feed(feed_id: int) -> bool:
     """Poll one feed. Returns False if the whole run should stop (no API key)."""
     # Every DB connection below is short-lived: never hold a write transaction across a
@@ -497,6 +515,7 @@ def poll_feed(feed_id: int) -> bool:
             if resp.status_code // 100 != 2:
                 raise ValueError(f"HTTP {resp.status_code}")
             parsed = feedparser.parse(resp.content)
+            _resolve_entry_links(parsed, url)
             if parsed.bozo and not parsed.entries:
                 raise ValueError(str(parsed.bozo_exception))
         except Exception as e:

@@ -3042,3 +3042,94 @@ def test_short_item_is_never_counted_as_paywalled(feed_id, calls, monkeypatch):
             f"SELECT {_bucket_sql('')} FROM items WHERE feed_id = ? AND muted = 0", (feed_id,)
         ).fetchone()
     assert counts["paywalled"] == 0
+
+
+# -- _resolve_entry_links: HBR-style relative entry links (GitHub issue: pintxos-qsm) --
+
+
+def _parsed_with(feed_link: str | None, entry_link: str | None, entry_id: str = "tag:hbr.org,2026:/2026/09/x"):
+    """Build a minimal feedparser-shaped object: real feedparser dicts/FeedParserDict
+    support both attribute and item access, but plain dicts (used here) support only
+    item access, which is all _resolve_entry_links uses (`.get`, `[]=`)."""
+    feed = {"link": feed_link} if feed_link is not None else {}
+    entry: dict = {"id": entry_id}
+    if entry_link is not None:
+        entry["link"] = entry_link
+    parsed = feedparser.util.FeedParserDict()
+    parsed["feed"] = feed
+    parsed["entries"] = [entry]
+    return parsed
+
+
+def test_resolve_entry_links_resolves_relative_link_against_feed_link():
+    parsed = _parsed_with(feed_link="http://hbr.org", entry_link="/2026/09/x")
+    poll._resolve_entry_links(parsed, "https://ignored.example/feed.xml")
+    assert parsed.entries[0]["link"] == "http://hbr.org/2026/09/x"
+
+
+def test_resolve_entry_links_falls_back_to_feed_url_when_feed_link_missing():
+    parsed = _parsed_with(feed_link=None, entry_link="/2026/09/x")
+    poll._resolve_entry_links(parsed, "https://example.com/feed.xml")
+    assert parsed.entries[0]["link"] == "https://example.com/2026/09/x"
+
+
+def test_resolve_entry_links_falls_back_to_feed_url_when_feed_link_relative():
+    parsed = _parsed_with(feed_link="site.hostname/x", entry_link="/2026/09/x")
+    poll._resolve_entry_links(parsed, "https://example.com/feed.xml")
+    assert parsed.entries[0]["link"] == "https://example.com/2026/09/x"
+
+
+def test_resolve_entry_links_leaves_absolute_entry_links_unchanged():
+    parsed = _parsed_with(feed_link="http://hbr.org", entry_link="https://hbr.org/2026/09/x")
+    poll._resolve_entry_links(parsed, "https://ignored.example/feed.xml")
+    assert parsed.entries[0]["link"] == "https://hbr.org/2026/09/x"
+
+
+def test_resolve_entry_links_leaves_id_unchanged():
+    parsed = _parsed_with(
+        feed_link="http://hbr.org", entry_link="/2026/09/x", entry_id="tag:hbr.org,2026:/2026/09/x"
+    )
+    poll._resolve_entry_links(parsed, "https://ignored.example/feed.xml")
+    assert parsed.entries[0]["id"] == "tag:hbr.org,2026:/2026/09/x"
+
+
+def test_poll_feed_resolves_relative_entry_link_and_fetches_absolute_url(feed_id, monkeypatch):
+    """Integration: an Atom feed whose entry link is relative to the feed-level
+    <link> must be stored and fetched as an absolute URL."""
+    body = b"""<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>HBR</title>
+  <link href="http://example.test"/>
+  <entry>
+    <title>Relative link article</title>
+    <link href="/a/b"/>
+    <id>tag:example.test,2026:/a/b</id>
+    <summary>Some excerpt text that is long enough to pass the fallback minimum.</summary>
+    <updated>2026-09-12T16:59:53Z</updated>
+  </entry>
+</feed>
+"""
+    fetched_urls: list[str] = []
+
+    def fake_get(url):
+        if url == FEED_URL:
+            return FakeResponse(body)
+        raise AssertionError(f"unexpected GET {url}")
+
+    def fake_fetch_article(link):
+        fetched_urls.append(link)
+        return (None, "error", [])
+
+    def fake_summarize(text, original_title, url, respect_language=None, model=None):
+        return "HEADLINE", f"summary of {original_title}"
+
+    monkeypatch.setattr(poll, "_get", fake_get)
+    monkeypatch.setattr(poll, "fetch_article", fake_fetch_article)
+    monkeypatch.setattr(poll, "summarize", fake_summarize)
+
+    assert poll.poll_feed(feed_id) is True
+
+    rows = items()
+    assert rows
+    assert rows[0]["link"] == "http://example.test/a/b"
+    assert fetched_urls == ["http://example.test/a/b"]
