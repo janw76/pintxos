@@ -66,10 +66,13 @@ jobs:
             exit 1
           fi
 
-  image:
+  version:
     needs: [test, native]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prev: ${{ steps.version.outputs.prev }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -84,7 +87,69 @@ jobs:
           prev="$(git tag --list 'v[0-9][0-9].[0-9][0-9].*' --sort=-v:refname | head -n1)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "prev=$prev" >> "$GITHUB_OUTPUT"
-      - uses: docker/setup-qemu-action@v4
+
+  build:
+    needs: [version]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+            slug: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            slug: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            PINTXOS_VERSION=${{ needs.version.outputs.version }}
+          outputs: type=image,name=ghcr.io/${{ github.repository }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.slug }}
+          cache-to: type=gha,scope=${{ matrix.slug }}
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.slug }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: [version, build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
         with:
@@ -99,24 +164,21 @@ jobs:
           # (26.09.1) is not valid semver and would silently emit no tag.
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=${{ steps.version.outputs.version }}
+            type=raw,value=${{ needs.version.outputs.version }}
             type=sha
-      - id: build
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            PINTXOS_VERSION=${{ steps.version.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha
+      - name: Create manifest
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'ghcr.io/${{ github.repository }}@sha256:%s ' *)
+      - name: Inspect manifest
+        run: |
+          docker buildx imagetools inspect ghcr.io/${{ github.repository }}:${{ needs.version.outputs.version }}
       - id: tag
         name: Tag release
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -126,8 +188,8 @@ jobs:
         name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.version.outputs.version }}
-          PREV: ${{ steps.version.outputs.prev }}
+          VERSION: ${{ needs.version.outputs.version }}
+          PREV: ${{ needs.version.outputs.prev }}
         run: |
           args=(-f tag_name="v$VERSION")
           if [ -n "$PREV" ]; then args+=(-f previous_tag_name="$PREV"); fi
