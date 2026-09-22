@@ -98,6 +98,18 @@ def test_item_page_no_pintxos_links():
     assert 'class="wordmark"' not in body
 
 
+def test_item_page_byline():
+    item_id = _seed()
+    with TestClient(app) as c:
+        resp = c.get(f"/items/{item_id}")
+    body = resp.text
+    assert body.count("Summary created by") == 2
+    assert 'href="https://github.com/janw76/pintxos"' in body
+    assert body.count("pintxosShare(") >= 3
+    article = body[body.index('<article id="item"') : body.index('</article>')]
+    assert "Summary created by" not in article
+
+
 def test_item_page_404():
     with TestClient(app) as c:
         resp = c.get("/items/999999")

@@ -15,17 +15,19 @@
 <div class="btn-row">
   <button type="button" class="btn-tint-accent btn-copy" onclick="pintxosCopyRich(this, document.getElementById('head'))">Copy summary</button>
   <button type="button" class="btn-tint-accent btn-copy" onclick="pintxosCopyRich(this, document.getElementById('item'))">Copy with full text</button>
-  <button type="button" class="btn-tint-accent" hidden data-share onclick="navigator.share({text: document.getElementById('head').dataset.plain}).catch(function(){})">Share summary</button>
-  <button type="button" class="btn-tint-accent" hidden data-share onclick="navigator.share({text: document.getElementById('item').dataset.plain}).catch(function(){})">Share with full text</button>
+  <button type="button" class="btn-tint-accent" hidden data-share onclick="pintxosShare(document.getElementById('head'))">Share summary</button>
+  <button type="button" class="btn-tint-accent" hidden data-share onclick="pintxosShare(document.getElementById('item'))">Share with full text</button>
 </div>
 <article id="item" data-plain="{{ full_plain }}"><div id="head" data-plain="{{ head_plain }}">{{ head_html|safe }}</div>{{ full_lines_html|safe }}</article>
 <script>
+  var BYLINE_HTML = '<p><small>Summary created by <a href="https://github.com/janw76/pintxos">Pintxøs – Bite-sized, honest RSS feeds</a></small></p>';
+  var BYLINE_TEXT = "Summary created by Pintxøs – Bite-sized, honest RSS feeds";
   if (navigator.share) { document.querySelectorAll('[data-share]').forEach(function(b){ b.hidden = false; }); }
   function pintxosCopyRich(btn, el) {
     if (navigator.clipboard && window.ClipboardItem) {
       navigator.clipboard.write([new ClipboardItem({
-        "text/html": new Blob([el.innerHTML], {type: "text/html"}),
-        "text/plain": new Blob([el.dataset.plain], {type: "text/plain"})
+        "text/html": new Blob([el.innerHTML + "\n" + BYLINE_HTML], {type: "text/html"}),
+        "text/plain": new Blob([el.dataset.plain + "\n\n" + BYLINE_TEXT], {type: "text/plain"})
       })]);
     } else {
       var r = document.createRange();
@@ -41,6 +43,9 @@
     label.textContent = "Copied!";
     btn.classList.add("copied");
     setTimeout(function () { label.textContent = old; btn.classList.remove("copied"); }, 1200);
+  }
+  function pintxosShare(el) {
+    navigator.share({text: el.dataset.plain + "\n\n" + BYLINE_TEXT}).catch(function(){});
   }
 </script>
 {% endblock %}
