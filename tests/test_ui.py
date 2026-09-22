@@ -681,14 +681,18 @@ def test_settings_page_shows_model_presets_and_key_fields():
     with TestClient(app) as c:
         page = c.get("/settings").text
 
+    assert "z-ai/glm-5.3-flash" in page
+    assert "deepseek/deepseek-v4.1-flash" in page
     assert "claude-haiku-4-5-20251001" in page
-    assert "anthropic/claude-haiku-4.5" in page
-    assert "openai/gpt-5-mini" in page
     assert "google/gemini-2.5-flash-lite" in page
     assert "deepseek/deepseek-v4-flash-0731" in page
+    assert "anthropic/claude-haiku-4.5" not in page
+    assert "openai/gpt-5-mini" not in page
     assert "Names with a slash (vendor/model) go to OpenRouter, names without go to Anthropic." in page
     assert 'name="api_key"' in page
     assert 'name="openrouter_api_key"' in page
+    assert 'data-model="z-ai/glm-5.3-flash"' in page
+    assert "<summary>Model presets</summary>" not in page
 
 
 def test_settings_post_openrouter_model_without_key_rejected_and_model_unchanged():
@@ -1559,11 +1563,17 @@ def test_feed_edit_page_shows_model_field_and_presets(monkeypatch):
 
     assert 'id="feed_model"' in page
     assert 'name="model"' in page
+    assert "z-ai/glm-5.3-flash" in page
+    assert "deepseek/deepseek-v4.1-flash" in page
     assert "claude-haiku-4-5-20251001" in page
-    assert "anthropic/claude-haiku-4.5" in page
-    assert "openai/gpt-5-mini" in page
     assert "google/gemini-2.5-flash-lite" in page
+    assert "deepseek/deepseek-v4-flash-0731" in page
+    assert "anthropic/claude-haiku-4.5" not in page
+    assert "openai/gpt-5-mini" not in page
     assert "document.getElementById('feed_model').value=this.dataset.model" in page
+    assert "<summary>Model presets</summary>" in page
+    assert '<details class="muted"><summary>Model presets</summary>' in page
+    assert "<details open" not in page
 
 
 def test_feed_edit_post_model_with_openrouter_key_stores_value(monkeypatch):
