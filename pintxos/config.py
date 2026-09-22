@@ -10,7 +10,7 @@ DEFAULTS: dict[str, str | None] = {
     "PINTXOS_DATA_DIR": "./data",
     "ANTHROPIC_API_KEY": None,
     "OPENROUTER_API_KEY": None,
-    "PINTXOS_MODEL": "claude-haiku-4-5-20251001",
+    "PINTXOS_MODEL": "z-ai/glm-5.3-flash",
     "PINTXOS_POLL_MINUTES": "30",
     "PINTXOS_ITEMS_PER_FEED": "50",
     # Rows kept in the DB per feed; the oldest-inserted are pruned first. No UI field.

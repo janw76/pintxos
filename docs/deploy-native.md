@@ -43,7 +43,7 @@ sudo python3 -m venv /opt/pintxos/venv
 sudo /opt/pintxos/venv/bin/pip install git+https://github.com/janw76/pintxos
 
 sudo tee /etc/pintxos/env >/dev/null <<'EOF'
-ANTHROPIC_API_KEY=sk-ant-...
+OPENROUTER_API_KEY=sk-or-...
 PINTXOS_HOST=0.0.0.0
 PINTXOS_DATA_DIR=/var/lib/pintxos/data
 EOF
@@ -51,6 +51,9 @@ sudo chmod 600 /etc/pintxos/env
 sudo chown root:root /etc/pintxos/env
 sudo chown -R pintxos:pintxos /var/lib/pintxos
 ```
+
+Use `ANTHROPIC_API_KEY` instead if you set `PINTXOS_MODEL` to a model without
+a slash (Anthropic direct).
 
 Then create `/etc/systemd/system/pintxos.service`:
 
@@ -128,8 +131,8 @@ mkdir -p ~/Library/Logs/pintxos
     <string>/Users/YOU/pintxos</string>
     <key>EnvironmentVariables</key>
     <dict>
-        <key>ANTHROPIC_API_KEY</key>
-        <string>sk-ant-...</string>
+        <key>OPENROUTER_API_KEY</key>
+        <string>sk-or-...</string>
         <key>PINTXOS_HOST</key>
         <string>0.0.0.0</string>
         <key>PINTXOS_DATA_DIR</key>
@@ -148,6 +151,9 @@ mkdir -p ~/Library/Logs/pintxos
 </dict>
 </plist>
 ```
+
+Use `ANTHROPIC_API_KEY` instead if you set `PINTXOS_MODEL` to a model without
+a slash (Anthropic direct).
 
 Load and manage it:
 
