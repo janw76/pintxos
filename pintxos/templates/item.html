@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}{{ item.headline or "Pintxøs" }}{% endblock %}
+{% block title %}{{ item.headline or item.original_title or "Pintxøs" }}{% endblock %}
 
 {% block header %}{% endblock %}
 
