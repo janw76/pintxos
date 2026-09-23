@@ -84,6 +84,11 @@ _HOST_PAUSE = 2.0
 _last_request: dict[str, float] = {}
 _BLOCKED_RETRIES = 3
 
+# Global pause after an account-level LLM error (bad/missing credit, revoked key):
+# the same failure would just repeat on every other feed, so polling stops
+# everywhere for PAUSE_MINUTES rather than burning through them one by one.
+PAUSE_MINUTES = 30
+
 
 def _get(url: str) -> curl_cffi.requests.Response:
     """Single seam for HTTP GETs so tests can monkeypatch one thing."""
@@ -434,6 +439,64 @@ def _set_error(feed_id: int, message: str, polled: bool = True) -> None:
             )
 
 
+def _pause(error: str) -> None:
+    """Start (or extend) the global pause after an account-level LLM error.
+
+    PINTXOS_PAUSED_UNTIL is always moved to PAUSE_MINUTES from now, so a repeat
+    failure during the probe (paused_until() already in the past) pushes the
+    cooldown forward again. PINTXOS_PAUSED_ERROR is refreshed every call.
+    PINTXOS_PAUSED_SINCE is set only the first time -- it marks when the pause
+    began, not its most recent extension.
+    """
+    until = (datetime.now(UTC) + timedelta(minutes=PAUSE_MINUTES)).isoformat()
+    with db() as conn:
+        pairs = [("PINTXOS_PAUSED_UNTIL", until), ("PINTXOS_PAUSED_ERROR", error[:500])]
+        if get_setting("PINTXOS_PAUSED_SINCE", conn) is None:
+            pairs.append(("PINTXOS_PAUSED_SINCE", now()))
+        conn.executemany(
+            "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)", pairs
+        )
+
+
+def _unpause() -> None:
+    """Clear the global pause: all three PINTXOS_PAUSED_* settings are removed."""
+    with db() as conn:
+        conn.executemany(
+            "DELETE FROM settings WHERE key = ?",
+            [
+                ("PINTXOS_PAUSED_UNTIL",),
+                ("PINTXOS_PAUSED_SINCE",),
+                ("PINTXOS_PAUSED_ERROR",),
+            ],
+        )
+
+
+def paused_until() -> datetime | None:
+    """The end of the current global pause, as an aware datetime, or None when not
+    paused or the stored value can't be parsed."""
+    value = get_setting("PINTXOS_PAUSED_UNTIL")
+    if not value:
+        return None
+    try:
+        until = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if until.tzinfo is None:  # defensive: every value we write is already aware
+        until = until.replace(tzinfo=UTC)
+    return until
+
+
+def _maybe_unpause(conn=None) -> None:
+    """After a summarize/classify call succeeds, end a pause it proves is over.
+
+    A no-op once the pause is already cleared, so calling this after every
+    success in a poll still only ever unpauses once. Pass the connection already
+    open at the call site (if any) so the check doesn't open a fresh one per item.
+    """
+    if get_setting("PINTXOS_PAUSED_UNTIL", conn) is not None:
+        _unpause()
+
+
 def _billed(e: SummarizeError) -> bool:
     """True when the provider answered (and charged) even though the result was unusable.
 
@@ -600,6 +663,7 @@ def _retry_held(
             continue
 
         with db() as conn:  # commit per item: a crash keeps what we already paid for
+            _maybe_unpause(conn)
             # attempts is left as it is: it records the failures this row survived.
             conn.execute(
                 "UPDATE items SET headline = ?, summary = ?, model = ?, "
@@ -614,6 +678,12 @@ def _retry_held(
 
 def poll_feed(feed_id: int) -> bool:
     """Poll one feed. Returns False if the whole run should stop (no API key)."""
+    until = paused_until()
+    if until is not None and until > datetime.now(UTC):
+        log.info("paused until %s", until.isoformat())
+        _status.pop(feed_id, None)
+        return True
+
     # Every DB connection below is short-lived: never hold a write transaction across a
     # network fetch or an Anthropic call, or the web UI blocks on "database is locked".
     with db() as conn:
@@ -649,6 +719,11 @@ def poll_feed(feed_id: int) -> bool:
             )
         except MissingApiKey as e:
             log.error("%s, stopping poll", e)
+            _set_error(feed_id, str(e), polled=False)
+            return False
+        except llm.AccountError as e:
+            log.error("%s, pausing poll", e)
+            _pause(str(e))
             _set_error(feed_id, str(e), polled=False)
             return False
 
@@ -745,7 +820,17 @@ def poll_feed(feed_id: int) -> bool:
                     log.error("%s, stopping poll", e)
                     _set_error(feed_id, str(e), polled=False)
                     return False
+                except llm.AccountError as e:
+                    log.error("%s, pausing poll", e)
+                    _pause(str(e))
+                    _set_error(feed_id, str(e), polled=False)
+                    # No topic to store yet, so no row: an inserted-but-unclassified
+                    # entry would sit in `seen` forever and skip classification (and
+                    # so mute_topics) on every later poll. Leaving it unseen means the
+                    # next poll re-fetches and re-classifies it from scratch.
+                    return False
                 with db() as conn:
+                    _maybe_unpause(conn)
                     feedstats.bump(conn, feed_id, classifications=1)
 
             if topic is not None and topic in mute_topics:
@@ -795,6 +880,18 @@ def poll_feed(feed_id: int) -> bool:
                 log.error("%s, stopping poll", e)
                 _set_error(feed_id, str(e), polled=False)
                 return False
+            except llm.AccountError as e:
+                log.error("%s, pausing poll", e)
+                _pause(str(e))
+                _set_error(feed_id, str(e), polled=False)
+                with db() as conn:  # hold the in-flight entry for the next poll
+                    _insert_item(
+                        conn, feed_id, guid, link, original_title, entry,
+                        None, None, article.fallback, article, labels_json,
+                        topic, None, summarize_attempts=0, last_attempt_at=None,
+                        summarize_error=str(e)[:500],
+                    )
+                return False
             except SummarizeError as e:
                 log.warning("summarize failed for %s: %s", link, e)
                 # Held, not faked: the row is stored with no headline/summary at all
@@ -818,6 +915,7 @@ def poll_feed(feed_id: int) -> bool:
                 continue
 
             with db() as conn:  # commit per item: a crash keeps what we already paid for
+                _maybe_unpause(conn)
                 _insert_item(
                     conn, feed_id, guid, link, original_title, entry,
                     headline, summary, article.fallback, article, labels_json,
@@ -1058,6 +1156,21 @@ def retry_fallback(feed_id: int, limit: int | None = None, only_blocked: bool = 
     exhausted ones its sweep has given up on. This button is the only way back for
     an exhausted row, so a success resets its attempt counter to zero.
     """
+    prev = _status.get(feed_id)
+    # The sentinel is retry_one's queue marker, not a caller's progress label, so it
+    # must be popped rather than restored.
+    if prev == _QUEUED:
+        prev = None
+
+    until = paused_until()
+    if until is not None and until > datetime.now(UTC):
+        log.info("paused until %s", until.isoformat())
+        if prev is None:
+            _status.pop(feed_id, None)
+        else:
+            _status[feed_id] = prev
+        return
+
     sql = (
         "SELECT id, link, original_title, labels FROM items "
         "WHERE feed_id = ? AND muted = 0 AND "
@@ -1110,11 +1223,6 @@ def retry_fallback(feed_id: int, limit: int | None = None, only_blocked: bool = 
             rows = candidates
 
     total = len(rows)
-    prev = _status.get(feed_id)
-    # The sentinel is retry_one's queue marker, not a caller's progress label, so it
-    # must be popped rather than restored.
-    if prev == _QUEUED:
-        prev = None
     try:
         for i, row in enumerate(rows, 1):
             item_id, link, original_title, existing_labels = (
@@ -1151,6 +1259,19 @@ def retry_fallback(feed_id: int, limit: int | None = None, only_blocked: bool = 
                 log.error("%s, stopping retry", e)
                 _set_error(feed_id, str(e), polled=False)
                 return
+            except llm.AccountError as e:
+                log.error("%s, pausing retry", e)
+                _pause(str(e))
+                _set_error(feed_id, str(e), polled=False)
+                with db() as conn:
+                    # fetch succeeded even though summarize didn't: record the fresh
+                    # auth/fetch_status/labels, but leave attempts untouched -- this
+                    # wasn't a bad response, the account itself is the problem.
+                    conn.execute(
+                        "UPDATE items SET auth = ?, fetch_status = ?, labels = ? WHERE id = ?",
+                        (auth, fetch_status, merged_labels, item_id),
+                    )
+                return
             except SummarizeError as e:
                 log.warning("summarize failed for %s: %s", link, e)
                 with db() as conn:
@@ -1170,6 +1291,7 @@ def retry_fallback(feed_id: int, limit: int | None = None, only_blocked: bool = 
                 continue  # left as a fallback item; a later retry can try again
 
             with db() as conn:  # commit per item: a crash keeps what we already paid for
+                _maybe_unpause(conn)  # a manual retry that succeeds ends the pause too
                 # a row pruned meanwhile is a harmless no-op. attempts back to 0: the
                 # row has a summary again, and a future failure starts a fresh backoff.
                 conn.execute(
@@ -1218,6 +1340,11 @@ def poll_one(feed_id: int) -> None:
 
 def poll_all() -> None:
     """Poll every feed, sequentially."""
+    until = paused_until()
+    if until is not None and until > datetime.now(UTC):
+        log.info("paused until %s, skipping poll", until.isoformat())
+        return
+
     # ponytail: sequential and global; switch to per-feed threads if >20 feeds.
     with db() as conn:
         feed_ids = [row["id"] for row in conn.execute("SELECT id FROM feeds ORDER BY id")]
