@@ -510,3 +510,106 @@ def test_fresh_schema_has_feed_stats_and_budget_columns(db):
     assert "feed_stats" in names
     feed_cols = {r["name"] for r in db.execute("PRAGMA table_info(feeds)")}
     assert {"warn_volume", "daily_budget"} <= feed_cols
+
+
+def test_fresh_schema_has_held_item_columns(db):
+    """A DB created from the current SCHEMA already has the held-item columns."""
+    item_cols = {r["name"] for r in db.execute("PRAGMA table_info(items)")}
+    assert {
+        "summarize_attempts",
+        "last_attempt_at",
+        "summarize_error",
+        "excerpt",
+        "model_fallback",
+    } <= item_cols
+
+
+def test_connect_migrates_existing_db_missing_held_item_columns(tmp_path, monkeypatch):
+    """A DB from before the held-item columns gains them on connect(), and only once."""
+    monkeypatch.setenv("PINTXOS_DATA_DIR", str(tmp_path))
+    old_conn = sqlite3.connect(db_path())
+    old_conn.executescript(
+        """
+        CREATE TABLE feeds (
+            id INTEGER PRIMARY KEY,
+            url TEXT UNIQUE NOT NULL,
+            title TEXT,
+            created_at TEXT,
+            last_polled_at TEXT,
+            last_error TEXT
+        );
+        CREATE TABLE items (
+            id INTEGER PRIMARY KEY,
+            feed_id INTEGER REFERENCES feeds(id) ON DELETE CASCADE,
+            guid TEXT NOT NULL,
+            link TEXT NOT NULL,
+            original_title TEXT,
+            published_at TEXT,
+            headline TEXT,
+            summary TEXT,
+            fallback INTEGER DEFAULT 0,
+            word_count INTEGER,
+            auth TEXT,
+            fetch_status TEXT,
+            text TEXT,
+            created_at TEXT,
+            labels TEXT,
+            topic TEXT,
+            muted INTEGER NOT NULL DEFAULT 0,
+            model TEXT,
+            UNIQUE(feed_id, guid)
+        );
+        """
+    )
+    old_conn.commit()
+    old_conn.close()
+
+    conn = connect()
+    try:
+        cols = [r["name"] for r in conn.execute("PRAGMA table_info(items)")]
+        for name in (
+            "summarize_attempts",
+            "last_attempt_at",
+            "summarize_error",
+            "excerpt",
+            "model_fallback",
+        ):
+            assert cols.count(name) == 1
+    finally:
+        conn.close()
+
+    # Second connect() must be a no-op migration, not an error, and columns stay singular.
+    conn2 = connect()
+    try:
+        cols2 = [r["name"] for r in conn2.execute("PRAGMA table_info(items)")]
+        for name in (
+            "summarize_attempts",
+            "last_attempt_at",
+            "summarize_error",
+            "excerpt",
+            "model_fallback",
+        ):
+            assert cols2.count(name) == 1
+
+        feed_id = add_feed(conn2)
+        item_id = add_item(conn2, feed_id)
+        row = conn2.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+        assert row["summarize_attempts"] == 0
+        assert row["last_attempt_at"] is None
+        assert row["summarize_error"] is None
+        assert row["excerpt"] is None
+        assert row["model_fallback"] == 0
+    finally:
+        conn2.close()
+
+
+def test_get_setting_fallback_model_default(db):
+    from pintxos.config import get_setting
+
+    assert get_setting("PINTXOS_FALLBACK_MODEL") == "deepseek/deepseek-v4-flash"
+
+
+def test_get_setting_paused_until_default_none(db):
+    from pintxos.config import get_setting
+
+    assert get_setting("PINTXOS_PAUSED_UNTIL") is None

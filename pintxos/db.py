@@ -50,6 +50,11 @@ CREATE TABLE IF NOT EXISTS items (
     topic TEXT,
     muted INTEGER NOT NULL DEFAULT 0,
     model TEXT,
+    summarize_attempts INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at TEXT,
+    summarize_error TEXT,
+    excerpt TEXT,
+    model_fallback INTEGER NOT NULL DEFAULT 0,
     UNIQUE(feed_id, guid)
 );
 
@@ -132,6 +137,16 @@ def connect() -> sqlite3.Connection:
         # The model used to produce this row's summary. NULL = no summary was written
         # (title-only/muted row), or the row was written before this column existed.
         ("model", "TEXT"),
+        # How many times summarization has been attempted for this item (held items only).
+        ("summarize_attempts", "INTEGER NOT NULL DEFAULT 0"),
+        # ISO8601 timestamp of the most recent summarize attempt. NULL = never attempted.
+        ("last_attempt_at", "TEXT"),
+        # Error message from the most recent failed summarize attempt. NULL = no failure.
+        ("summarize_error", "TEXT"),
+        # Short excerpt shown while an item is held pending summarization. NULL = none.
+        ("excerpt", "TEXT"),
+        # 1 = this row's summary was produced by the fallback model, not the primary one.
+        ("model_fallback", "INTEGER NOT NULL DEFAULT 0"),
     ):
         if name not in item_cols:
             conn.execute(f"ALTER TABLE items ADD COLUMN {name} {ddl}")
