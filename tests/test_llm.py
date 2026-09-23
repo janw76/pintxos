@@ -453,6 +453,17 @@ def test_openrouter_omits_models_when_fallback_equals_the_model(monkeypatch):
     assert "models" not in kwargs["json"]
 
 
+def test_openrouter_omits_models_when_fallback_kwarg_is_false(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    monkeypatch.setenv("PINTXOS_FALLBACK_MODEL", "vendor/cheap")
+    calls = _patch_post(monkeypatch, _ok_response("sport"))
+
+    llm.complete("sys", "user", 10, "openai/gpt-5", fallback=False)
+
+    ((_url, kwargs),) = calls
+    assert "models" not in kwargs["json"]
+
+
 def test_openrouter_omits_models_when_no_fallback_is_configured(monkeypatch):
     def fake_get_setting(key, conn=None):
         return {"OPENROUTER_API_KEY": "or-key", "PINTXOS_FALLBACK_MODEL": ""}.get(key)
