@@ -3508,6 +3508,36 @@ def test_retry_fallback_records_the_attempt_when_it_fails_again(feed_id, monkeyp
     assert row["fetch_status"] == "ok"
 
 
+def test_retry_fallback_bumps_summaries_on_billed_summarize_error(feed_id, monkeypatch):
+    """The provider answered (and charged) but the JSON was unusable: that one counts
+    against feed_stats even though the item stays a fallback."""
+    _seed_fallback_item(feed_id)
+    monkeypatch.setattr(poll, "fetch_article", lambda link: ("FULL ARTICLE TEXT " * 20, "ok", []))
+    monkeypatch.setattr(
+        poll,
+        "summarize",
+        _always_fails("could not parse response as JSON", cause=json.JSONDecodeError("x", "y", 0)),
+    )
+
+    poll.retry_fallback(feed_id)
+
+    assert feed_stats_today(feed_id) == (1, 0)
+
+
+def test_retry_fallback_does_not_bump_summaries_on_transport_failure(feed_id, monkeypatch):
+    """A failure the provider never answered (transport, 5xx, timeout) costs nothing,
+    so feed_stats must not count it."""
+    _seed_fallback_item(feed_id)
+    monkeypatch.setattr(poll, "fetch_article", lambda link: ("FULL ARTICLE TEXT " * 20, "ok", []))
+    monkeypatch.setattr(
+        poll, "summarize", _always_fails("HTTP 503", cause=llm.LLMError("HTTP 503"))
+    )
+
+    poll.retry_fallback(feed_id)
+
+    assert feed_stats_today(feed_id) == (0, 0)
+
+
 def test_retry_fallback_only_blocked_ignores_held_rows(feed_id, monkeypatch):
     """The automatic per-poll blocked-row rotation stays about fetches: it must not
     start re-summarizing held rows behind the sweep's back."""
