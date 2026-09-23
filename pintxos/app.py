@@ -61,6 +61,16 @@ def _bucket_sql(i: str) -> str:
     return ", ".join(f"{expr.format(i=i)} AS {name}" for name, expr in _BUCKET_SQL.items())
 
 
+def _unreadable_where(i: str = "") -> str:
+    """The 'unreadable' bucket's row predicate (not wrapped in SUM()), column-prefixed
+    by i. Derived from _BUCKET_SQL["unreadable"] so a per-item WHERE clause (feed_edit_page's
+    unreadable-items list) and the aggregate badge count can never disagree.
+    """
+    expr = _BUCKET_SQL["unreadable"].format(i=i)
+    assert expr.startswith("SUM(") and expr.endswith(")")
+    return expr[len("SUM(") : -1]
+
+
 def ago(iso: str | None, now: datetime | None = None) -> str:
     """Render an ISO8601 UTC timestamp as a compact relative time.
 
@@ -267,6 +277,16 @@ def feed_edit_page(request: Request, feed_id: int) -> Response:
             (feed_id,),
         ).fetchone()
         fallback_count = counts["fallback_count"] or 0
+        unreadable_items = [
+            dict(row)
+            for row in conn.execute(
+                "SELECT COALESCE(NULLIF(original_title, ''), NULLIF(headline, ''), link) "
+                "AS title, link, fetch_status FROM items "
+                f"WHERE feed_id = ? AND muted = 0 AND ({_unreadable_where()}) "
+                "ORDER BY created_at DESC",
+                (feed_id,),
+            ).fetchall()
+        ]
         jar = get_jar()
         domain, cookies_loaded_for_domain, domain_expiry = _feed_login_context(
             conn, feed_id, feed["url"], jar
@@ -331,6 +351,7 @@ def feed_edit_page(request: Request, feed_id: int) -> Response:
             "global_patterns": global_patterns,
             "global_respect_language_on": global_respect_language_on,
             "last_filtered": last_filtered,
+            "unreadable_items": unreadable_items,
             "fallback_count": fallback_count,
             "fetch_status": fetch_status,
             "topics": topics,

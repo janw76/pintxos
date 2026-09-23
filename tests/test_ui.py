@@ -2676,6 +2676,7 @@ def _insert_item(
     muted=0,
     headline="Headline",
     summary="Summary.",
+    original_title="Original",
 ):
     with db() as conn:
         conn.execute(
@@ -2686,7 +2687,7 @@ def _insert_item(
                 feed_id,
                 guid,
                 link,
-                "Original",
+                original_title,
                 published_at or db_now(),
                 headline,
                 summary,
@@ -2770,6 +2771,57 @@ def test_status_cell_shows_unreadable_for_error_and_null_fetch_status(monkeypatc
         page = c.get("/").text
 
     assert "2 unreadable" in page
+
+
+def test_feed_edit_page_lists_unreadable_items(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        _insert_item(
+            1,
+            "g1",
+            auth=None,
+            fallback=1,
+            fetch_status="error",
+            original_title="Broken article",
+            headline=None,
+        )
+        _insert_item(
+            1,
+            "g2",
+            auth=None,
+            fallback=1,
+            fetch_status=None,
+            original_title="Stuck article",
+            headline=None,
+        )
+        _insert_item(
+            1,
+            "g3",
+            auth=None,
+            fallback=0,
+            fetch_status="ok",
+            original_title="Fine article",
+        )
+
+        page = c.get("/feeds/1").text
+
+    assert "Unreadable" in page
+    label_start = page.index(">Unreadable<")
+    block_end = page.index("<h2>Status</h2>", label_start)
+    block = page[label_start:block_end]
+
+    assert "Broken article" in block
+    assert "Stuck article" in block
+    assert "Fine article" not in block
+
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.org/feed.xml"}, follow_redirects=False)
+        _insert_item(2, "h1", auth=None, fallback=0, fetch_status="ok", original_title="Fine article")
+
+        clean_page = c.get("/feeds/2").text
+
+    assert ">Unreadable<" not in clean_page
 
 
 def test_status_cell_shows_ok_muted_for_clean_feed(monkeypatch):

@@ -43,3 +43,6 @@ packages = ["pintxos"]
 
 [tool.setuptools.package-data]
 pintxos = ["templates/*.html"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
