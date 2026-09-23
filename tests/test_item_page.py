@@ -130,7 +130,112 @@ def test_item_page_404():
     assert resp.status_code == 404
 
 
+def _seed_exhausted(**overrides):
+    fields = dict(
+        headline="Old Headline",
+        original_title="Real Original",
+        summary=None,
+        summarize_attempts=3,
+        summarize_error="bad JSON from model",
+        excerpt="An excerpt for the exhausted item.",
+        text="Body line one\nBody line two",
+    )
+    fields.update(overrides)
+    with db() as conn:
+        feed_id = conn.execute(
+            "INSERT INTO feeds(url, title, created_at) VALUES (?, ?, ?)",
+            (FEED_URL, "Example Feed", now()),
+        ).lastrowid
+        item_id = conn.execute(
+            """INSERT INTO items
+            (feed_id, guid, link, original_title, published_at, headline, summary,
+             fallback, created_at, summarize_attempts, summarize_error, excerpt, text)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                feed_id,
+                "guid-exhausted",
+                "https://example.com/exhausted",
+                fields["original_title"],
+                "2026-09-01T12:00:00+00:00",
+                fields["headline"],
+                fields["summary"],
+                0,
+                now(),
+                fields["summarize_attempts"],
+                fields["summarize_error"],
+                fields["excerpt"],
+                fields["text"],
+            ),
+        ).lastrowid
+    return item_id
+
+
+def test_item_page_held_item_is_404():
+    with db() as conn:
+        feed_id = conn.execute(
+            "INSERT INTO feeds(url, title, created_at) VALUES (?, ?, ?)",
+            (FEED_URL, "Example Feed", now()),
+        ).lastrowid
+        item_id = conn.execute(
+            """INSERT INTO items
+            (feed_id, guid, link, original_title, published_at, headline, summary,
+             fallback, created_at, summarize_attempts)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                feed_id,
+                "guid-held",
+                "https://example.com/held",
+                "Original Held",
+                "2026-09-01T12:00:00+00:00",
+                "Held Headline",
+                None,
+                0,
+                now(),
+                1,
+            ),
+        ).lastrowid
+    with TestClient(app) as c:
+        resp = c.get(f"/items/{item_id}")
+    assert resp.status_code == 404
+
+
+def test_item_page_exhausted_item_renders_note_and_excerpt():
+    item_id = _seed_exhausted()
+    with TestClient(app) as c:
+        resp = c.get(f"/items/{item_id}")
+    assert resp.status_code == 200
+    body = resp.text
+    article = body[body.index('<article id="item"') : body.index("</article>")]
+    assert "Real Original" in article
+    assert "Old Headline" not in article
+    assert "returned an unusable answer three times" in article
+    assert "An excerpt for the exhausted item." in article
+    assert "(gpt-4o)" not in article
+
+
 def test_index_still_has_header():
     with TestClient(app) as c:
         resp = c.get("/")
     assert 'class="wordmark"' in resp.text
+
+
+def test_item_page_title_falls_back_to_original_title_when_headline_is_null():
+    """Exhausted rows have no headline; the <title> tag must not fall straight to
+    the generic "Pintxøs" while a real original_title is available."""
+    item_id = _seed_exhausted(headline=None)
+    with TestClient(app) as c:
+        resp = c.get(f"/items/{item_id}")
+    assert resp.status_code == 200
+    body = resp.text
+    title = body[body.index("<title>") + len("<title>") : body.index("</title>")]
+    assert title == "Real Original"
+
+
+def test_item_page_title_falls_back_to_generic_when_neither_present():
+    item_id = _seed_exhausted(headline=None, original_title=None)
+    with TestClient(app) as c:
+        resp = c.get(f"/items/{item_id}")
+    assert resp.status_code == 200
+    body = resp.text
+    title = body[body.index("<title>") + len("<title>") : body.index("</title>")]
+    assert title == "Pintxøs"

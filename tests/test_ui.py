@@ -48,6 +48,34 @@ def test_index_shows_feed_count_in_heading(monkeypatch):
         assert '<h1>Feeds (<span id="feed-count">1</span>)</h1>' in page
 
 
+def test_index_pause_banner_absent_when_not_paused(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        page = c.get("/").text
+    assert 'role="alert"' not in page
+    assert "needs attention" not in page
+
+
+def test_index_pause_banner_shown_when_paused(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with db() as conn:
+        conn.executemany(
+            "INSERT INTO settings(key, value) VALUES (?, ?)",
+            [
+                ("PINTXOS_PAUSED_UNTIL", "2026-09-11T09:00:00+00:00"),
+                ("PINTXOS_PAUSED_SINCE", "2026-09-11T08:15:00+00:00"),
+                ("PINTXOS_PAUSED_ERROR", "credit: OpenRouter HTTP 402: insufficient credit"),
+            ],
+        )
+    with TestClient(app) as c:
+        page = c.get("/").text
+    assert 'class="error" role="alert"' in page
+    assert "Pintxøs has stopped summarizing: your AI account needs attention." in page
+    assert "2026-09-11 08:15 UTC" in page
+    assert "Your AI provider reports that there is no credit left." in page
+    assert 'href="/settings"' in page
+
+
 def test_index_search_box_has_no_match_row_and_non_url_input(monkeypatch):
     monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
     with TestClient(app) as c:
@@ -695,6 +723,94 @@ def test_settings_page_shows_model_presets_and_key_fields():
     assert "<summary>Model presets</summary>" not in page
 
 
+def test_settings_page_shows_fallback_model_field():
+    with TestClient(app) as c:
+        page = c.get("/settings").text
+
+    assert 'name="fallback_model"' in page
+    assert 'value="deepseek/deepseek-v4-flash"' in page
+    assert "Used automatically when the default model fails; empty means the built-in default." in page
+
+
+def test_settings_post_saves_fallback_model():
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "z-ai/glm-5.3-flash",
+                "fallback_model": "vendor/cheap",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "",
+                "openrouter_api_key": "sk-or-test",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "err=" not in resp.headers["location"]
+
+    assert get_setting("PINTXOS_FALLBACK_MODEL") == "vendor/cheap"
+
+
+def test_settings_post_empty_fallback_model_saves_empty_string():
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "z-ai/glm-5.3-flash",
+                "fallback_model": "",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "",
+                "openrouter_api_key": "sk-or-test",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "err=" not in resp.headers["location"]
+
+    from pintxos.db import db
+
+    with db() as conn:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key = ?", ("PINTXOS_FALLBACK_MODEL",)
+        ).fetchone()
+    assert row is not None and row["value"] == ""
+    # An empty value falls through to the built-in default: get_setting treats
+    # "" as unset, so the fallback cannot be disabled from the UI (by design).
+    from pintxos.config import get_setting
+
+    assert get_setting("PINTXOS_FALLBACK_MODEL") == "deepseek/deepseek-v4-flash"
+
+
+def test_settings_post_env_pinned_fallback_model_not_overwritten(monkeypatch):
+    monkeypatch.setenv("PINTXOS_FALLBACK_MODEL", "vendor/pinned")
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "z-ai/glm-5.3-flash",
+                "fallback_model": "vendor/should-not-be-stored",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "",
+                "openrouter_api_key": "sk-or-test",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "err=" not in resp.headers["location"]
+
+    monkeypatch.delenv("PINTXOS_FALLBACK_MODEL")
+    from pintxos.db import db
+
+    with db() as conn:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key = ?", ("PINTXOS_FALLBACK_MODEL",)
+        ).fetchone()
+    assert row is None
+
+
 def test_settings_post_openrouter_model_without_key_rejected_and_model_unchanged():
     with TestClient(app) as c:
         resp = c.post(
@@ -804,7 +920,7 @@ def test_settings_test_route_success(monkeypatch):
 
     def fake_complete(*args, **kwargs):
         calls.append((args, kwargs))
-        return "OK"
+        return llm.Completion("OK", "m")
 
     monkeypatch.setattr(llm, "complete", fake_complete)
     with TestClient(app) as c:
@@ -817,6 +933,7 @@ def test_settings_test_route_success(monkeypatch):
     (args, kwargs) = calls[0]
     max_tokens = kwargs.get("max_tokens", args[2] if len(args) > 2 else None)
     assert max_tokens == 50
+    assert kwargs.get("fallback") is False
 
 
 def test_settings_test_route_llm_error(monkeypatch):
@@ -2944,6 +3061,7 @@ def test_retry_fallback_updates_row_in_place_on_success_or_records_auth_on_failu
             lambda text, original_title, url, respect_language=None, model=None: (
                 "New Headline",
                 "New summary",
+                model,
             ),
         )
     else:
@@ -2984,7 +3102,7 @@ def test_retry_fallback_error_paths(monkeypatch, error):
             raise MissingApiKey("ANTHROPIC_API_KEY not set")
         if len(calls) == 1:
             raise SummarizeError("API said no")
-        return "New Headline", "New summary"
+        return "New Headline", "New summary", model
 
     monkeypatch.setattr(poll, "summarize", fake_summarize)
 
@@ -3039,7 +3157,7 @@ def test_retry_fallback_route_clears_status_and_reenables_poll_now(monkeypatch):
     monkeypatch.setattr(poll, "scheduler", sync_scheduler)
     monkeypatch.setattr(poll, "fetch_article", lambda link: ("FULL ARTICLE TEXT " * 20, "ok", []))
     monkeypatch.setattr(
-        poll, "summarize", lambda text, title, url, **kwargs: ("H", "S")
+        poll, "summarize", lambda text, title, url, **kwargs: ("H", "S", kwargs.get("model"))
     )
 
     with TestClient(app) as c:

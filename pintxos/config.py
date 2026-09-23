@@ -19,6 +19,12 @@ DEFAULTS: dict[str, str | None] = {
     # a per-feed value always wins; set it very high to effectively remove the cap.
     "PINTXOS_DAILY_BUDGET": "200",
     "PINTXOS_BASE_URL": None,
+    # Model to retry with when the primary PINTXOS_MODEL summarize attempt fails.
+    "PINTXOS_FALLBACK_MODEL": "deepseek/deepseek-v4-flash",
+    # Set (by the app) when summarization is paused after repeated failures; None = not paused.
+    "PINTXOS_PAUSED_UNTIL": None,
+    "PINTXOS_PAUSED_SINCE": None,
+    "PINTXOS_PAUSED_ERROR": None,
     "PINTXOS_FILTER_ADS": "0",
     "PINTXOS_AD_TITLE_PATTERNS": "",
     "PINTXOS_AD_KEEP_PATTERNS": "",

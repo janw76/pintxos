@@ -41,6 +41,9 @@ class SummarizeError(Exception):
 # pintxos.llm raises it, so both names must be the very same exception object.
 MissingApiKey = llm.MissingApiKey
 
+# Same reasoning: poll.py pauses on summarize.AccountError, which llm raises.
+AccountError = llm.AccountError
+
 
 def _parse(raw: str) -> tuple[str, str]:
     stripped = raw.strip()
@@ -74,8 +77,11 @@ def summarize(
     url: str,
     respect_language: bool | None = None,
     model: str | None = None,
-) -> tuple[str, str]:
-    """Return (headline, summary) for the given article text.
+) -> tuple[str, str, str]:
+    """Return (headline, summary, model_used) for the given article text.
+
+    `model_used` is the model that actually answered, which is not always the one
+    asked for: OpenRouter may fall back to PINTXOS_FALLBACK_MODEL.
 
     `respect_language`, when given, overrides the global PINTXOS_RESPECT_LANGUAGE
     setting (e.g. with a per-feed choice); None (the default) falls back to it.
@@ -99,10 +105,15 @@ def summarize(
     try:
         # 400 tokens is only ~300 words of JSON; a long summary would be cut
         # mid-JSON and raise SummarizeError, silently re-introducing a length limit.
-        raw = llm.complete(system_prompt, user_message, 1024, model, json=True)
+        completion = llm.complete(system_prompt, user_message, 1024, model, json=True)
     except llm.MissingApiKey:
+        raise
+    # An account problem (no credit, bad key) is not this article's fault and no
+    # retry can fix it: it passes through unwrapped so the poll can pause on it.
+    except llm.AccountError:
         raise
     except llm.LLMError as e:
         raise SummarizeError(str(e)) from e
 
-    return _parse(raw)
+    headline, summary = _parse(completion.text)
+    return headline, summary, completion.model

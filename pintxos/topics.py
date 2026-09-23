@@ -164,7 +164,8 @@ def classify_topic(
 
     Fails open: an API error or an answer that is not one of the known slugs yields
     None (logged as a warning) rather than an exception, so a failed classification
-    never mutes an item or breaks a poll. MissingApiKey propagates, as for summarize().
+    never mutes an item or breaks a poll. MissingApiKey and AccountError propagate,
+    as for summarize().
     """
     system, user_message = build_prompt(title, labels, lead)
 
@@ -172,8 +173,12 @@ def classify_topic(
     try:
         # 200 is a cap, not a spend: the answer is one slug, but a reasoning model
         # needs room to think before it emits that slug or it returns nothing.
-        raw = llm.complete(system, user_message, 200, model)
+        raw = llm.complete(system, user_message, 200, model).text
     except llm.MissingApiKey:
+        raise
+    # Failing open on an account error would silently drop the topic of every item
+    # of the poll; the caller has to see it (and pause) instead.
+    except llm.AccountError:
         raise
     except llm.LLMError as e:
         log.warning("topic classification failed for %r: %s", title, e)

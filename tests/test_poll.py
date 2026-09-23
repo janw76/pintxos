@@ -8,6 +8,7 @@ import sqlite3
 import threading
 import time
 import urllib.request
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import curl_cffi.requests
@@ -17,8 +18,8 @@ import trafilatura
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from pintxos import feedstats, poll, topics
-from pintxos.config import DEFAULTS, db_path
+from pintxos import feedstats, llm, poll, topics
+from pintxos.config import DEFAULTS, db_path, get_setting
 from pintxos.cookies import cookie_path
 from pintxos.db import connect, db, now
 from pintxos.summarize import MissingApiKey, SummarizeError
@@ -64,7 +65,7 @@ def calls(monkeypatch):
 
     def fake_summarize(text, original_title, url, respect_language=None, model=None):
         seen.append((text, original_title, url))
-        return f"HEADLINE {len(seen)}", f"summary of {original_title}"
+        return f"HEADLINE {len(seen)}", f"summary of {original_title}", model
 
     monkeypatch.setattr(poll, "_get", fake_get)
     monkeypatch.setattr(poll, "fetch_article", lambda link: (None, "error", []))
@@ -91,7 +92,7 @@ def serve_feed(monkeypatch):
             seen.append((text, original_title, url))
             if fails:
                 raise SummarizeError("boom")
-            return f"HEADLINE {len(seen)}", f"summary of {original_title}"
+            return f"HEADLINE {len(seen)}", f"summary of {original_title}", model
 
         monkeypatch.setattr(poll, "_get", fake_get)
         monkeypatch.setattr(poll, "fetch_article", lambda link: (None, "error", []))
@@ -113,7 +114,7 @@ def calls_with_ad(monkeypatch):
 
     def fake_summarize(text, original_title, url, respect_language=None, model=None):
         seen.append((text, original_title, url))
-        return f"HEADLINE {len(seen)}", f"summary of {original_title}"
+        return f"HEADLINE {len(seen)}", f"summary of {original_title}", model
 
     monkeypatch.setattr(poll, "_get", fake_get)
     monkeypatch.setattr(poll, "fetch_article", lambda link: (None, "error", []))
@@ -374,7 +375,7 @@ def test_poll_feed_passes_feed_model_to_summarize_and_classify(feed_id, monkeypa
 
     def fake_summarize(text, original_title, url, respect_language=None, model=None):
         summarize_models.append(model)
-        return "HEADLINE", "summary"
+        return "HEADLINE", "summary", model
 
     def fake_classify(title, labels, lead, model=None):
         classify_models.append(model)
@@ -407,8 +408,8 @@ def test_poll_feed_with_null_model_carries_global_model(feed_id, monkeypatch):
     def fake_complete(system, user, max_tokens, model, json=False):
         used_models.append(model)
         if json:
-            return '{"headline": "H", "summary": "S"}'
-        return "science"
+            return llm.Completion('{"headline": "H", "summary": "S"}', model)
+        return llm.Completion("science", model)
 
     monkeypatch.setattr(llm, "complete", fake_complete)
 
@@ -484,12 +485,12 @@ def test_connect_migrates_existing_db_missing_items_model_column(tmp_path, monke
 
 def test_summarize_error_skips_only_that_item(feed_id, calls, monkeypatch):
     """A summarize failure on one entry doesn't block the others -- and the failed
-    entry is stored too, as a fallback row, not skipped: it is never inserted a
+    entry is stored too, held with no summary, not skipped: it is never inserted a
     second time, so it must not be silently dropped either."""
     def flaky(text, original_title, url, respect_language=None, model=None):
         if url == "https://example.com/two":
             raise SummarizeError("API said no")
-        return "HEADLINE", "summary"
+        return "HEADLINE", "summary", model
 
     monkeypatch.setattr(poll, "summarize", flaky)
     poll.poll_all()
@@ -498,23 +499,26 @@ def test_summarize_error_skips_only_that_item(feed_id, calls, monkeypatch):
         "https://example.com/one", "https://example.com/two", "https://example.com/three",
     }
     failed = rows["https://example.com/two"]
-    assert failed["fallback"] == 1
-    assert failed["headline"] == "Second article about a merger"  # original title, not the LLM's
+    assert failed["fallback"] == 1  # `calls` fails every article fetch
+    assert failed["headline"] is None  # held: no headline, and above all no fake summary
+    assert failed["summary"] is None
     assert failed["model"] is None
-    # calls (fetch_article always fails) makes fallback=1 true for every row here
-    # regardless of summarize outcome, so the distinguishing signal is headline/model:
-    # the two entries that summarized fine got the LLM's headline and a model.
+    assert failed["summarize_attempts"] == 1
+    assert failed["summarize_error"] == "API said no"
+    assert failed["last_attempt_at"]
     for link in ("https://example.com/one", "https://example.com/three"):
         assert rows[link]["headline"] == "HEADLINE"
         assert rows[link]["model"] is not None
+        assert rows[link]["summarize_attempts"] == 0
+        assert rows[link]["summarize_error"] is None
 
 
-def test_persistent_summarize_error_stores_fallback_row(feed_id, monkeypatch):
-    """A summarizer that fails deterministically on every entry still gets each
-    entry stored, as a fallback row: headline is the original title, summary is a
-    short lead from the article text (at most 80 words), fallback=1, model=None,
-    muted=0 -- and the call is still counted against feedstats even though it
-    failed, since it was made and paid for."""
+def test_persistent_summarize_error_holds_every_row(feed_id, monkeypatch):
+    """A summarizer that fails deterministically on every entry still gets each entry
+    stored -- held: headline, summary and model all NULL, one attempt recorded with
+    its error, muted=0 -- and the call is counted against feedstats, since the
+    provider answered (it was the answer that was unusable) and charged for it.
+    Nothing resembling the old first-80-words fake summary is written."""
     calls = {"n": 0}
 
     def always_fails(text, original_title, url, respect_language=None, model=None):
@@ -531,12 +535,14 @@ def test_persistent_summarize_error_stores_fallback_row(feed_id, monkeypatch):
     assert len(rows) == 3
     assert calls["n"] == 3
     for row in rows:
-        assert row["fallback"] == 1
+        assert row["fallback"] == 1  # the article fetch failed too
         assert row["muted"] == 0
-        assert row["headline"] == row["original_title"]
+        assert row["headline"] is None
+        assert row["summary"] is None
         assert row["model"] is None
-        assert row["summary"]
-        assert len(row["summary"].split()) <= 80
+        assert row["summarize_attempts"] == 1
+        assert row["summarize_error"] == "could not parse response as JSON"
+        assert row["last_attempt_at"]
     with db() as conn:
         assert feedstats.totals(conn, feed_id)[0] == calls["n"]
 
@@ -879,7 +885,7 @@ def _seed_fallback_item(feed_id, guid="guid-1", link="https://example.com/one") 
 def test_retry_fallback_sets_fetch_status_ok_on_success(feed_id, monkeypatch):
     item_id = _seed_fallback_item(feed_id)
     monkeypatch.setattr(poll, "fetch_article", lambda link: ("FULL ARTICLE TEXT " * 20, "ok", []))
-    monkeypatch.setattr(poll, "summarize", lambda text, title, url, respect_language=None, model=None: ("New", "New summary"))
+    monkeypatch.setattr(poll, "summarize", lambda text, title, url, respect_language=None, model=None: ("New", "New summary", model))
 
     poll.retry_fallback(feed_id)
 
@@ -940,7 +946,7 @@ def test_retry_fallback_success_writes_text(feed_id, monkeypatch):
     item_id = _seed_fallback_item(feed_id)
     fetched_text = "FULL ARTICLE TEXT " * 20
     monkeypatch.setattr(poll, "fetch_article", lambda link: (fetched_text, "ok", []))
-    monkeypatch.setattr(poll, "summarize", lambda text, title, url, respect_language=None, model=None: ("New", "New summary"))
+    monkeypatch.setattr(poll, "summarize", lambda text, title, url, respect_language=None, model=None: ("New", "New summary", model))
 
     poll.retry_fallback(feed_id)
 
@@ -982,7 +988,7 @@ def test_retry_fallback_merges_page_labels_with_existing(feed_id, monkeypatch):
         lambda link: ("FULL ARTICLE TEXT " * 20, "ok", ["Sport", "Cricket"]),
     )
     monkeypatch.setattr(
-        poll, "summarize", lambda text, title, url, respect_language=None, model=None: ("New", "New summary")
+        poll, "summarize", lambda text, title, url, respect_language=None, model=None: ("New", "New summary", model)
     )
 
     poll.retry_fallback(feed_id)
@@ -1003,7 +1009,7 @@ def test_retry_fallback_keeps_existing_labels_when_refetch_yields_none(feed_id, 
         )
     monkeypatch.setattr(poll, "fetch_article", lambda link: ("FULL ARTICLE TEXT " * 20, "ok", []))
     monkeypatch.setattr(
-        poll, "summarize", lambda text, title, url, respect_language=None, model=None: ("New", "New summary")
+        poll, "summarize", lambda text, title, url, respect_language=None, model=None: ("New", "New summary", model)
     )
 
     poll.retry_fallback(feed_id)
@@ -1024,7 +1030,7 @@ def test_retry_fallback_repairs_into_short_summarizing_title_when_text_empty(fee
 
     def fake_summarize(text, title, url, respect_language=None, model=None):
         seen_text.append(text)
-        return "New", "New summary"
+        return "New", "New summary", model
 
     monkeypatch.setattr(poll, "summarize", fake_summarize)
 
@@ -1047,7 +1053,7 @@ def test_retry_fallback_repairs_into_short_summarizing_fetched_text_when_nonempt
     item_id = _seed_fallback_item(feed_id)
     monkeypatch.setattr(poll, "fetch_article", lambda link: ("A cartoon caption.", "short", []))
     monkeypatch.setattr(
-        poll, "summarize", lambda text, title, url, respect_language=None, model=None: ("New", "New summary")
+        poll, "summarize", lambda text, title, url, respect_language=None, model=None: ("New", "New summary", model)
     )
 
     poll.retry_fallback(feed_id)
@@ -1103,7 +1109,7 @@ def test_poll_feed_retries_three_newest_blocked_items(
     _mark_sample_guids_seen(feed_id)
 
     monkeypatch.setattr(poll, "fetch_article", lambda link: ("FULL ARTICLE TEXT " * 20, "ok", []))
-    monkeypatch.setattr(poll, "summarize", lambda text, title, url, **kwargs: ("H", "S"))
+    monkeypatch.setattr(poll, "summarize", lambda text, title, url, **kwargs: ("H", "S", kwargs.get("model")))
 
     assert poll.poll_feed(feed_id) is True
 
@@ -1156,7 +1162,7 @@ def test_poll_feed_only_retries_blocked_items_on_hosts_with_cookies(
         return "FULL ARTICLE TEXT " * 20, "ok", []
 
     monkeypatch.setattr(poll, "fetch_article", fetch_article)
-    monkeypatch.setattr(poll, "summarize", lambda text, title, url, **kwargs: ("H", "S"))
+    monkeypatch.setattr(poll, "summarize", lambda text, title, url, **kwargs: ("H", "S", kwargs.get("model")))
 
     assert poll.poll_feed(feed_id) is True
 
@@ -1242,7 +1248,7 @@ def test_retry_fallback_button_path_retries_all_hosts_regardless_of_cookies(feed
     other_ids = _seed_blocked_items(feed_id, 2, host="other.com")
 
     monkeypatch.setattr(poll, "fetch_article", lambda link: ("FULL ARTICLE TEXT " * 20, "ok", []))
-    monkeypatch.setattr(poll, "summarize", lambda text, title, url, **kwargs: ("H", "S"))
+    monkeypatch.setattr(poll, "summarize", lambda text, title, url, **kwargs: ("H", "S", kwargs.get("model")))
 
     poll.retry_fallback(feed_id)
 
@@ -1260,7 +1266,7 @@ def test_retry_fallback_button_path_still_retries_all_blocked_items(feed_id, mon
     with db() as conn:
         conn.execute("UPDATE items SET fetch_status = 'teaser' WHERE id = ?", (teaser_id,))
     monkeypatch.setattr(poll, "fetch_article", lambda link: ("FULL ARTICLE TEXT " * 20, "ok", []))
-    monkeypatch.setattr(poll, "summarize", lambda text, title, url, **kwargs: ("H", "S"))
+    monkeypatch.setattr(poll, "summarize", lambda text, title, url, **kwargs: ("H", "S", kwargs.get("model")))
 
     poll.retry_fallback(feed_id)
 
@@ -1276,7 +1282,7 @@ def test_retry_fallback_restores_callers_status_instead_of_popping(feed_id, monk
     so the caller's own status survives the nested call."""
     _seed_blocked_items(feed_id, 1)
     monkeypatch.setattr(poll, "fetch_article", lambda link: ("FULL ARTICLE TEXT " * 20, "ok", []))
-    monkeypatch.setattr(poll, "summarize", lambda text, title, url, **kwargs: ("H", "S"))
+    monkeypatch.setattr(poll, "summarize", lambda text, title, url, **kwargs: ("H", "S", kwargs.get("model")))
 
     poll._status[feed_id] = "Summarizing 2/3"
     poll.retry_fallback(feed_id, limit=1, only_blocked=True)
@@ -1293,7 +1299,7 @@ def test_retry_fallback_pops_queued_sentinel(feed_id, monkeypatch):
     or the feed would show 'Queued' forever."""
     _seed_blocked_items(feed_id, 1)
     monkeypatch.setattr(poll, "fetch_article", lambda link: ("FULL ARTICLE TEXT " * 20, "ok", []))
-    monkeypatch.setattr(poll, "summarize", lambda text, title, url, **kwargs: ("H", "S"))
+    monkeypatch.setattr(poll, "summarize", lambda text, title, url, **kwargs: ("H", "S", kwargs.get("model")))
 
     poll._status[feed_id] = poll._QUEUED
     poll.retry_fallback(feed_id)
@@ -1310,11 +1316,21 @@ def test_retry_fallback_pops_queued_sentinel_on_error(feed_id, monkeypatch):
         raise RuntimeError("connection reset")
 
     monkeypatch.setattr(poll, "fetch_article", boom)
-    monkeypatch.setattr(poll, "summarize", lambda text, title, url, **kwargs: ("H", "S"))
+    monkeypatch.setattr(poll, "summarize", lambda text, title, url, **kwargs: ("H", "S", kwargs.get("model")))
 
     poll._status[feed_id] = poll._QUEUED
     with pytest.raises(RuntimeError):
         poll.retry_fallback(feed_id)
+    assert feed_id not in poll._status
+
+
+def test_retry_fallback_pops_queued_sentinel_when_paused(feed_id):
+    """The pause gate at the top of retry_fallback must clear the Queued sentinel
+    retry_one stamped before scheduling it, same as a normal run does -- otherwise
+    a manual retry while paused leaves the feed showing 'Queued' forever."""
+    poll._pause("no credit")
+    poll._status[feed_id] = poll._QUEUED
+    poll.retry_fallback(feed_id)
     assert feed_id not in poll._status
 
 
@@ -1337,7 +1353,7 @@ def test_ui_can_write_while_polling(feed_id, calls, monkeypatch):
             pytest.fail(f"UI write blocked during poll: {e}")
         finally:
             other.close()
-        return "HEADLINE", "summary"
+        return "HEADLINE", "summary", model
 
     monkeypatch.setattr(poll, "summarize", summarize_and_write)
     poll.poll_all()
@@ -1438,7 +1454,7 @@ def test_extra_pattern_filters_entry_not_caught_by_builtin_rules(feed_id, monkey
 
     def fake_summarize(text, original_title, url, respect_language=None, model=None):
         seen.append(original_title)
-        return "HEADLINE", f"summary of {original_title}"
+        return "HEADLINE", f"summary of {original_title}", model
 
     monkeypatch.setattr(poll, "_get", fake_get)
     monkeypatch.setattr(poll, "fetch_article", lambda link: (None, "error", []))
@@ -1503,7 +1519,7 @@ def test_last_filtered_records_title_and_reason_for_wired_fixture(feed_id, monke
     monkeypatch.setattr(poll, "_get", fake_get)
     monkeypatch.setattr(poll, "fetch_article", lambda link: (None, "error", []))
     monkeypatch.setattr(
-        poll, "summarize", lambda text, title, url, respect_language=None, model=None: ("H", f"summary of {title}")
+        poll, "summarize", lambda text, title, url, respect_language=None, model=None: ("H", f"summary of {title}", model)
     )
 
     poll.poll_feed(feed_id)
@@ -1536,7 +1552,7 @@ def _serve(monkeypatch, xml: bytes) -> list[str]:
 
     def fake_summarize(text, original_title, url, respect_language=None, model=None):
         seen.append(original_title)
-        return "HEADLINE", f"summary of {original_title}"
+        return "HEADLINE", f"summary of {original_title}", model
 
     monkeypatch.setattr(poll, "_get", fake_get)
     monkeypatch.setattr(poll, "fetch_article", lambda link: (None, "error", []))
@@ -1615,7 +1631,7 @@ def test_retry_fallback_passes_feed_override_respect_language_false(feed_id, mon
 
     def fake_summarize(text, original_title, url, respect_language=None, model=None):
         seen_kwargs.append(respect_language)
-        return "New", "New summary"
+        return "New", "New summary", model
 
     monkeypatch.setattr(poll, "summarize", fake_summarize)
     poll.retry_fallback(feed_id)
@@ -2098,7 +2114,7 @@ def test_poll_stores_rss_and_page_labels_in_order(feed_id, monkeypatch):
         raise AssertionError(f"unexpected GET {url}")
 
     monkeypatch.setattr(poll, "_get", fake_get)
-    monkeypatch.setattr(poll, "summarize", lambda text, title, url, respect_language=None, model=None: ("H", "S"))
+    monkeypatch.setattr(poll, "summarize", lambda text, title, url, respect_language=None, model=None: ("H", "S", model))
 
     assert poll.poll_feed(feed_id) is True
 
@@ -2126,7 +2142,7 @@ def test_poll_stores_null_labels_when_no_rss_tags_and_no_page_meta(feed_id, monk
         raise AssertionError(f"unexpected GET {url}")
 
     monkeypatch.setattr(poll, "_get", fake_get)
-    monkeypatch.setattr(poll, "summarize", lambda text, title, url, respect_language=None, model=None: ("H", "S"))
+    monkeypatch.setattr(poll, "summarize", lambda text, title, url, respect_language=None, model=None: ("H", "S", model))
 
     assert poll.poll_feed(feed_id) is True
 
@@ -2151,7 +2167,7 @@ def test_poll_dedupes_labels_case_insensitively_keeping_first_seen_casing(feed_i
         raise AssertionError(f"unexpected GET {url}")
 
     monkeypatch.setattr(poll, "_get", fake_get)
-    monkeypatch.setattr(poll, "summarize", lambda text, title, url, respect_language=None, model=None: ("H", "S"))
+    monkeypatch.setattr(poll, "summarize", lambda text, title, url, respect_language=None, model=None: ("H", "S", model))
 
     assert poll.poll_feed(feed_id) is True
 
@@ -2586,7 +2602,7 @@ def test_summarize_item_releases_muted_row_with_stored_text(feed_id, monkeypatch
 
     def fake_summarize(text, title, link, respect_language=None, model=None):
         seen.append((text, title, link))
-        return "New headline", "New summary"
+        return "New headline", "New summary", model
 
     monkeypatch.setattr(poll, "summarize", fake_summarize)
 
@@ -2614,7 +2630,7 @@ def test_summarize_item_releases_muted_row_title_only_when_text_is_null(feed_id,
     seen = []
     monkeypatch.setattr(
         poll, "summarize",
-        lambda text, title, link, respect_language=None, model=None: (seen.append(text), ("H", "S"))[1],
+        lambda text, title, link, respect_language=None, model=None: (seen.append(text), ("H", "S", model))[1],
     )
 
     error = poll.summarize_item(feed_id, "g1")
@@ -2632,7 +2648,7 @@ def test_summarize_item_ads_filtered_never_goes_below_zero(feed_id, monkeypatch)
           "published_at": "2025-09-01T10:00:00+00:00"}],
         ads_filtered=0,
     )
-    monkeypatch.setattr(poll, "summarize", lambda *a, **k: ("H", "S"))
+    monkeypatch.setattr(poll, "summarize", lambda *a, **k: ("H", "S", k.get("model")))
 
     error = poll.summarize_item(feed_id, "g1")
 
@@ -2661,7 +2677,7 @@ def test_summarize_item_releases_ad_log_entry(feed_id, monkeypatch):
 
     def fake_summarize(text, title, link, respect_language=None, model=None):
         seen.append((text, title, link))
-        return "Ad headline", "Ad summary"
+        return "Ad headline", "Ad summary", model
 
     monkeypatch.setattr(poll, "summarize", fake_summarize)
 
@@ -2705,7 +2721,7 @@ def test_summarize_item_ad_fetch_failure_still_inserts_via_fallback(feed_id, mon
         ],
     )
     monkeypatch.setattr(poll, "fetch_article", lambda link: (None, "error", []))
-    monkeypatch.setattr(poll, "summarize", lambda *a, **k: ("Ad headline", "Ad summary"))
+    monkeypatch.setattr(poll, "summarize", lambda *a, **k: ("Ad headline", "Ad summary", k.get("model")))
 
     error = poll.summarize_item(feed_id, "ad-guid")
 
@@ -3004,7 +3020,7 @@ def test_summarize_item_bumps_summaries_and_ignores_budget(feed_id, monkeypatch)
             }
         ],
     )
-    monkeypatch.setattr(poll, "summarize", lambda *a, **k: ("New headline", "New summary"))
+    monkeypatch.setattr(poll, "summarize", lambda *a, **k: ("New headline", "New summary", k.get("model")))
 
     error = poll.summarize_item(feed_id, "g1")
 
@@ -3016,7 +3032,7 @@ def test_retry_fallback_bumps_summaries_on_success(feed_id, monkeypatch):
     _seed_fallback_item(feed_id)
     monkeypatch.setattr(poll, "fetch_article", lambda link: ("FULL ARTICLE TEXT " * 20, "ok", []))
     monkeypatch.setattr(
-        poll, "summarize", lambda text, title, url, respect_language=None, model=None: ("New", "New summary")
+        poll, "summarize", lambda text, title, url, respect_language=None, model=None: ("New", "New summary", model)
     )
 
     poll.retry_fallback(feed_id)
@@ -3121,7 +3137,7 @@ def test_poll_feed_resolves_relative_entry_link_and_fetches_absolute_url(feed_id
         return (None, "error", [])
 
     def fake_summarize(text, original_title, url, respect_language=None, model=None):
-        return "HEADLINE", f"summary of {original_title}"
+        return "HEADLINE", f"summary of {original_title}", model
 
     monkeypatch.setattr(poll, "_get", fake_get)
     monkeypatch.setattr(poll, "fetch_article", fake_fetch_article)
@@ -3133,3 +3149,660 @@ def test_poll_feed_resolves_relative_entry_link_and_fetches_absolute_url(feed_id
     assert rows
     assert rows[0]["link"] == "http://example.test/a/b"
     assert fetched_urls == ["http://example.test/a/b"]
+
+
+# --- held rows: excerpt, billing, answering model, backoff retry sweep ----------
+#
+# A summarize failure no longer fakes a summary from the article's first 80 words:
+# the row is stored "held" (summary NULL) with an attempt counter, and every poll
+# re-tries the due ones with an exponential backoff until three attempts are spent.
+
+HELD_LINK = "https://example.com/held"
+
+
+def _seed_held_item(
+    feed_id,
+    guid="held-guid",
+    link=HELD_LINK,
+    text="STORED ARTICLE TEXT " * 20,
+    excerpt=None,
+    attempts=1,
+    minutes_ago=None,
+    original_title="A held title",
+    error="boom",
+) -> int:
+    """One row a poll is holding: summary NULL, `attempts` failures recorded, the last
+    of them `minutes_ago` minutes ago (None = no last_attempt_at at all)."""
+    last = (
+        None
+        if minutes_ago is None
+        else (datetime.now(UTC) - timedelta(minutes=minutes_ago)).isoformat()
+    )
+    with db() as conn:
+        return conn.execute(
+            "INSERT INTO items(feed_id, guid, link, original_title, published_at, "
+            "headline, summary, fallback, text, excerpt, created_at, muted, "
+            "summarize_attempts, last_attempt_at, summarize_error) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                feed_id, guid, link, original_title, "2020-01-01T00:00:00+00:00",
+                None, None, 0, text, excerpt, now(), 0, attempts, last, error,
+            ),
+        ).lastrowid
+
+
+def row_by_id(item_id):
+    with db() as conn:
+        return conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+
+
+def summarized_links(calls):
+    return [url for _text, _title, url in calls]
+
+
+def test_poll_stores_the_feed_excerpt_on_every_row(feed_id, monkeypatch):
+    """items.excerpt is the entry's own body, stripped of HTML -- stored even when the
+    article fetch succeeded and the summary was written from the full text."""
+    monkeypatch.setattr(poll, "_get", lambda url: FakeResponse(SAMPLE))
+    monkeypatch.setattr(poll, "fetch_article", lambda link: ("FULL ARTICLE TEXT " * 40, "ok", []))
+    monkeypatch.setattr(
+        poll,
+        "summarize",
+        lambda text, title, url, respect_language=None, model=None: ("H", "S", model),
+    )
+
+    poll.poll_feed(feed_id)
+
+    rows = {row["link"]: row for row in items()}
+    first = rows["https://example.com/one"]
+    assert first["summary"] == "S"  # a normally summarized row...
+    assert first["excerpt"].startswith("ENCODED BODY:")  # ...still carries the excerpt
+    assert "FULL ARTICLE TEXT" not in first["excerpt"]
+    assert rows["https://example.com/three"]["excerpt"] == "tiny"
+
+
+def test_held_row_stores_the_excerpt_for_the_retry(feed_id, calls, monkeypatch):
+    """The held row keeps the excerpt too: with no article text it is all a later
+    retry has to summarize."""
+    monkeypatch.setattr(poll, "summarize", _always_fails("nope"))
+    poll.poll_feed(feed_id)
+    row = {r["link"]: r for r in items()}["https://example.com/one"]
+    assert row["summary"] is None
+    assert row["excerpt"].startswith("ENCODED BODY:")
+
+
+def _always_fails(message, cause=None):
+    def fake_summarize(text, original_title, url, respect_language=None, model=None):
+        if cause is None:
+            raise SummarizeError(message)
+        raise SummarizeError(message) from cause
+
+    return fake_summarize
+
+
+def test_transport_failure_is_held_but_not_billed(feed_id, calls, monkeypatch):
+    """A failure the provider never answered (transport, 5xx, timeout) costs nothing,
+    so neither feed_stats nor the daily budget may count it -- the row is still held."""
+    monkeypatch.setattr(
+        poll, "summarize", _always_fails("HTTP 503", cause=llm.LLMError("HTTP 503"))
+    )
+
+    poll.poll_feed(feed_id)
+
+    assert feed_stats_today(feed_id) == (0, 0)
+    rows = items()
+    assert len(rows) == 3
+    for row in rows:
+        assert row["summary"] is None
+        assert row["summarize_attempts"] == 1
+        assert row["summarize_error"] == "HTTP 503"
+
+
+def test_unusable_answer_is_billed(feed_id, calls, monkeypatch):
+    """The provider answered (and charged) but the JSON was unusable: that one counts."""
+    monkeypatch.setattr(
+        poll,
+        "summarize",
+        _always_fails("could not parse response as JSON", cause=json.JSONDecodeError("x", "y", 0)),
+    )
+
+    poll.poll_feed(feed_id)
+
+    assert feed_stats_today(feed_id) == (3, 0)
+
+
+def test_transport_failures_do_not_eat_the_daily_budget(feed_id, calls, monkeypatch):
+    """Three unbilled failures leave the budget untouched, so all three entries are
+    still attempted even with a budget of 2."""
+    set_feed(feed_id, daily_budget=2)
+    seen = []
+
+    def fake_summarize(text, original_title, url, respect_language=None, model=None):
+        seen.append(url)
+        raise SummarizeError("HTTP 503") from llm.LLMError("HTTP 503")
+
+    monkeypatch.setattr(poll, "summarize", fake_summarize)
+    poll.poll_feed(feed_id)
+    assert len(seen) == 3
+
+
+@pytest.mark.parametrize(
+    ("answering_model", "expected_flag"),
+    [("primary/model", 0), ("backup/model", 1)],
+)
+def test_answering_model_is_stored_and_flagged(
+    feed_id, calls, monkeypatch, answering_model, expected_flag
+):
+    """The model that actually answered is what gets stored; when it is not the one
+    that was asked for, the row is flagged as a fallback."""
+    set_feed(feed_id, model="primary/model")
+    monkeypatch.setattr(
+        poll,
+        "summarize",
+        lambda text, title, url, respect_language=None, model=None: (
+            "H", "S", answering_model,
+        ),
+    )
+
+    poll.poll_feed(feed_id)
+
+    rows = items()
+    assert rows
+    for row in rows:
+        assert row["model"] == answering_model
+        assert row["model_fallback"] == expected_flag
+        assert row["summarize_error"] is None
+
+
+def test_held_row_is_not_retried_before_the_backoff_elapsed(feed_id, calls):
+    """One failed attempt buys a full poll interval (30 min by default) of silence."""
+    item_id = _seed_held_item(feed_id, attempts=1, minutes_ago=5)
+
+    poll.poll_feed(feed_id)
+
+    assert HELD_LINK not in summarized_links(calls)
+    row = row_by_id(item_id)
+    assert row["summarize_attempts"] == 1
+    assert row["summary"] is None
+
+
+def test_held_row_is_retried_once_the_backoff_elapsed(feed_id, calls, monkeypatch):
+    """Past the backoff the sweep tries again; another failure records attempt 2 with
+    a fresh timestamp and the new error."""
+    item_id = _seed_held_item(feed_id, attempts=1, minutes_ago=31)
+    before = row_by_id(item_id)["last_attempt_at"]
+    seen = []
+
+    def fake_summarize(text, original_title, url, respect_language=None, model=None):
+        seen.append(url)
+        raise SummarizeError("still broken")
+
+    monkeypatch.setattr(poll, "summarize", fake_summarize)
+
+    poll.poll_feed(feed_id)
+
+    assert HELD_LINK in seen
+    row = row_by_id(item_id)
+    assert row["summarize_attempts"] == 2
+    assert row["summarize_error"] == "still broken"
+    assert row["last_attempt_at"] > before
+    assert row["summary"] is None
+
+
+def test_second_attempt_waits_twice_as_long(feed_id, calls):
+    """The backoff doubles per attempt: 31 minutes is enough after one failure, not
+    after two."""
+    item_id = _seed_held_item(feed_id, attempts=2, minutes_ago=31)
+
+    poll.poll_feed(feed_id)
+
+    assert HELD_LINK not in summarized_links(calls)
+    assert row_by_id(item_id)["summarize_attempts"] == 2
+
+
+def test_held_row_retry_success_fills_the_row_and_keeps_its_attempts(feed_id, calls):
+    """A successful retry writes headline/summary/model and clears the error; the
+    attempt count stays as a record of what the row survived."""
+    item_id = _seed_held_item(feed_id, attempts=2, minutes_ago=90)
+
+    poll.poll_feed(feed_id)
+
+    assert HELD_LINK in summarized_links(calls)
+    row = row_by_id(item_id)
+    assert row["headline"] == "HEADLINE 1"  # the sweep runs before any new entry
+    assert row["summary"] == "summary of A held title"
+    assert row["model"] == DEFAULTS["PINTXOS_MODEL"]
+    assert row["model_fallback"] == 0
+    assert row["summarize_error"] is None
+    assert row["summarize_attempts"] == 2
+    assert feed_stats_today(feed_id)[0] == 4  # the held row plus the feed's three entries
+
+
+def test_exhausted_row_is_never_retried_by_the_poll(feed_id, calls):
+    """Three spent attempts: the sweep stops selecting the row for good."""
+    item_id = _seed_held_item(feed_id, attempts=3, minutes_ago=10_000)
+
+    poll.poll_feed(feed_id)
+
+    assert HELD_LINK not in summarized_links(calls)
+    row = row_by_id(item_id)
+    assert row["summarize_attempts"] == 3
+    assert row["summary"] is None
+
+
+def test_row_with_no_attempt_yet_is_due_immediately(feed_id, calls):
+    """A row held without spending an attempt (as the account pause does) is retried
+    on the very next poll, with no backoff to wait out."""
+    item_id = _seed_held_item(feed_id, attempts=0, minutes_ago=None, error=None)
+
+    poll.poll_feed(feed_id)
+
+    assert HELD_LINK in summarized_links(calls)
+    row = row_by_id(item_id)
+    assert row["summary"] == "summary of A held title"
+    assert row["summarize_attempts"] == 0
+
+
+def test_held_retry_falls_back_to_excerpt_then_title(feed_id, calls):
+    """With no stored article text the sweep summarizes the feed excerpt, and the
+    title when even that is too short."""
+    long_excerpt = "EXCERPT BODY " * 10
+    with_excerpt = _seed_held_item(
+        feed_id, guid="held-1", link=HELD_LINK, text=None, excerpt=long_excerpt, attempts=0
+    )
+    too_short = _seed_held_item(
+        feed_id, guid="held-2", link="https://example.com/held-2", text=None, excerpt="tiny",
+        attempts=0, original_title="A short held title",
+    )
+
+    poll.poll_feed(feed_id)
+
+    texts = {url: text for text, _title, url in calls}
+    assert texts[HELD_LINK] == long_excerpt
+    assert texts["https://example.com/held-2"] == "A short held title"
+    assert row_by_id(with_excerpt)["summary"]
+    assert row_by_id(too_short)["summary"]
+
+
+def test_held_retries_respect_the_daily_budget(feed_id, calls):
+    """The sweep spends the same budget as a new entry, and stops when it is gone."""
+    set_feed(feed_id, daily_budget=1)
+    _seed_held_item(feed_id, guid="held-1", link=HELD_LINK, attempts=0)
+    _seed_held_item(feed_id, guid="held-2", link="https://example.com/held-2", attempts=0)
+
+    poll.poll_feed(feed_id)
+
+    assert len(calls) == 1  # one held row, then nothing else all poll
+    assert feed_stats_today(feed_id)[0] == 1
+
+
+def test_missing_api_key_during_the_held_sweep_stops_the_poll(feed_id, calls, monkeypatch):
+    _seed_held_item(feed_id, attempts=0)
+
+    def boom(*_args, **_kwargs):
+        raise MissingApiKey("OPENROUTER_API_KEY not set")
+
+    monkeypatch.setattr(poll, "summarize", boom)
+
+    assert poll.poll_feed(feed_id) is False
+    # the held row is all there is: the poll stopped before it looked at a new entry
+    assert [row["guid"] for row in items()] == ["held-guid"]
+    assert feed_row(feed_id)["last_error"] == "OPENROUTER_API_KEY not set"
+
+
+def test_prune_never_deletes_a_held_row(feed_id, calls, monkeypatch):
+    """The FIFO window ignores held rows entirely: a row still waiting for its summary
+    survives however many newer rows arrive."""
+    monkeypatch.setenv("PINTXOS_KEEP_PER_FEED", "1")
+    monkeypatch.setenv("PINTXOS_ITEMS_PER_FEED", "1")
+    held = _seed_held_item(feed_id, attempts=2, minutes_ago=1)  # not due: stays held
+    exhausted = _seed_held_item(
+        feed_id, guid="spent-guid", link="https://example.com/spent", attempts=3, minutes_ago=1
+    )
+
+    poll.poll_feed(feed_id)
+
+    guids = {row["guid"] for row in items()}
+    assert "held-guid" in guids  # held: never pruned
+    assert "spent-guid" not in guids  # exhausted: back in the FIFO window, and oldest
+    assert row_by_id(held) is not None
+    assert row_by_id(exhausted) is None
+    assert "https://example.com/one" in guids  # the row this poll just inserted
+
+
+def test_retry_fallback_revives_an_exhausted_row(feed_id, monkeypatch):
+    """The manual retry button is the only way back for an exhausted row: it
+    re-summarizes it and resets the attempt bookkeeping."""
+    item_id = _seed_held_item(feed_id, attempts=3, minutes_ago=10_000)
+    monkeypatch.setattr(poll, "fetch_article", lambda link: ("FULL ARTICLE TEXT " * 30, "ok", []))
+    monkeypatch.setattr(
+        poll,
+        "summarize",
+        lambda text, title, url, respect_language=None, model=None: ("New", "New summary", model),
+    )
+
+    poll.retry_fallback(feed_id)
+
+    row = row_by_id(item_id)
+    assert row["headline"] == "New"
+    assert row["summary"] == "New summary"
+    assert row["summarize_attempts"] == 0
+    assert row["summarize_error"] is None
+    assert row["model"] == DEFAULTS["PINTXOS_MODEL"]
+    assert row["fallback"] == 0
+
+
+def test_retry_fallback_records_the_attempt_when_it_fails_again(feed_id, monkeypatch):
+    """A held row the button could not fix keeps its place in the queue with one more
+    attempt against it."""
+    item_id = _seed_held_item(feed_id, attempts=1, minutes_ago=10)
+    monkeypatch.setattr(poll, "fetch_article", lambda link: ("FULL ARTICLE TEXT " * 30, "ok", []))
+    monkeypatch.setattr(poll, "summarize", _always_fails("no again"))
+
+    poll.retry_fallback(feed_id)
+
+    row = row_by_id(item_id)
+    assert row["summary"] is None
+    assert row["summarize_attempts"] == 2
+    assert row["summarize_error"] == "no again"
+    assert row["fetch_status"] == "ok"
+
+
+def test_retry_fallback_bumps_summaries_on_billed_summarize_error(feed_id, monkeypatch):
+    """The provider answered (and charged) but the JSON was unusable: that one counts
+    against feed_stats even though the item stays a fallback."""
+    _seed_fallback_item(feed_id)
+    monkeypatch.setattr(poll, "fetch_article", lambda link: ("FULL ARTICLE TEXT " * 20, "ok", []))
+    monkeypatch.setattr(
+        poll,
+        "summarize",
+        _always_fails("could not parse response as JSON", cause=json.JSONDecodeError("x", "y", 0)),
+    )
+
+    poll.retry_fallback(feed_id)
+
+    assert feed_stats_today(feed_id) == (1, 0)
+
+
+def test_retry_fallback_does_not_bump_summaries_on_transport_failure(feed_id, monkeypatch):
+    """A failure the provider never answered (transport, 5xx, timeout) costs nothing,
+    so feed_stats must not count it."""
+    _seed_fallback_item(feed_id)
+    monkeypatch.setattr(poll, "fetch_article", lambda link: ("FULL ARTICLE TEXT " * 20, "ok", []))
+    monkeypatch.setattr(
+        poll, "summarize", _always_fails("HTTP 503", cause=llm.LLMError("HTTP 503"))
+    )
+
+    poll.retry_fallback(feed_id)
+
+    assert feed_stats_today(feed_id) == (0, 0)
+
+
+def test_retry_fallback_only_blocked_ignores_held_rows(feed_id, monkeypatch):
+    """The automatic per-poll blocked-row rotation stays about fetches: it must not
+    start re-summarizing held rows behind the sweep's back."""
+    _seed_held_item(feed_id, attempts=1, minutes_ago=10)
+    monkeypatch.setattr(
+        poll, "fetch_article", lambda link: pytest.fail(f"unexpected fetch of {link}")
+    )
+
+    poll.retry_fallback(feed_id, limit=3, only_blocked=True)
+
+
+# --- Global pause on account errors (pintxos-6en.4) -------------------------------
+
+
+def test_pause_sets_until_since_and_error():
+    poll._pause("no credit")
+    with db() as conn:
+        until = datetime.fromisoformat(get_setting("PINTXOS_PAUSED_UNTIL", conn))
+        since = datetime.fromisoformat(get_setting("PINTXOS_PAUSED_SINCE", conn))
+        error = get_setting("PINTXOS_PAUSED_ERROR", conn)
+    assert error == "no credit"
+    assert since <= datetime.now(UTC)
+    delta = (until - since).total_seconds()
+    assert abs(delta - poll.PAUSE_MINUTES * 60) < 5
+
+
+def test_pause_truncates_error_to_500_chars():
+    poll._pause("x" * 600)
+    assert len(get_setting("PINTXOS_PAUSED_ERROR")) == 500
+
+
+def test_pause_again_extends_until_but_keeps_since():
+    poll._pause("first")
+    since1 = get_setting("PINTXOS_PAUSED_SINCE")
+    until1 = datetime.fromisoformat(get_setting("PINTXOS_PAUSED_UNTIL"))
+
+    poll._pause("second")
+    since2 = get_setting("PINTXOS_PAUSED_SINCE")
+    until2 = datetime.fromisoformat(get_setting("PINTXOS_PAUSED_UNTIL"))
+
+    assert since2 == since1
+    assert until2 >= until1
+    assert get_setting("PINTXOS_PAUSED_ERROR") == "second"
+
+
+def test_unpause_clears_all_three_keys():
+    poll._pause("no credit")
+    poll._unpause()
+    assert get_setting("PINTXOS_PAUSED_UNTIL") is None
+    assert get_setting("PINTXOS_PAUSED_SINCE") is None
+    assert get_setting("PINTXOS_PAUSED_ERROR") is None
+
+
+def test_paused_until_none_when_unset():
+    assert poll.paused_until() is None
+
+
+def test_paused_until_parses_the_stored_value():
+    poll._pause("no credit")
+    until = poll.paused_until()
+    assert isinstance(until, datetime)
+    assert until.tzinfo is not None
+
+
+def test_paused_until_none_when_unparseable():
+    with db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
+            ("PINTXOS_PAUSED_UNTIL", "not-a-date"),
+        )
+    assert poll.paused_until() is None
+
+
+def _seed_pause(minutes_until: float, minutes_since: float, error: str = "no credit") -> None:
+    """Install PINTXOS_PAUSED_* settings directly, as if a real pause had happened
+    `minutes_since` minutes ago and is due to lift `minutes_until` minutes from now
+    (negative = already in the past)."""
+    with db() as conn:
+        conn.executemany(
+            "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
+            [
+                (
+                    "PINTXOS_PAUSED_UNTIL",
+                    (datetime.now(UTC) + timedelta(minutes=minutes_until)).isoformat(),
+                ),
+                (
+                    "PINTXOS_PAUSED_SINCE",
+                    (datetime.now(UTC) - timedelta(minutes=minutes_since)).isoformat(),
+                ),
+                ("PINTXOS_PAUSED_ERROR", error),
+            ],
+        )
+
+
+def test_account_error_during_held_sweep_pauses_before_fetching_the_feed(feed_id, monkeypatch):
+    held_id = _seed_held_item(feed_id, attempts=0)
+    monkeypatch.setattr(
+        poll, "_get", lambda url: pytest.fail(f"unexpected GET {url}")
+    )
+
+    def boom(*_args, **_kwargs):
+        raise llm.AccountError("no credit")
+
+    monkeypatch.setattr(poll, "summarize", boom)
+
+    assert poll.poll_feed(feed_id) is False
+
+    row = row_by_id(held_id)
+    assert row["summarize_attempts"] == 0  # not counted as a failed attempt
+    assert row["last_attempt_at"] is None
+    assert feed_row(feed_id)["last_error"] == "other: no credit"
+    assert get_setting("PINTXOS_PAUSED_ERROR") == "other: no credit"
+    assert poll.paused_until() is not None
+
+
+def test_account_error_from_classify_pauses_without_holding_the_entry(feed_id, monkeypatch):
+    """No topic is known yet, so no row is inserted at all -- an inserted-but-
+    unclassified row would be `seen` forever and skip classification (and so
+    mute_topics) on every later poll. Leaving it unseen means the next poll
+    re-fetches and re-classifies it from scratch."""
+    set_feed(feed_id, classify_topics=1)
+    monkeypatch.setattr(poll, "_get", lambda url: FakeResponse(SAMPLE))
+    fetch_calls = []
+    monkeypatch.setattr(
+        poll, "fetch_article", lambda link: (fetch_calls.append(link), (None, "error", []))[1]
+    )
+    monkeypatch.setattr(
+        poll, "summarize", lambda *a, **k: pytest.fail("summarize should not be reached")
+    )
+
+    def boom_classify(title, labels, lead, model=None):
+        raise llm.AccountError("no credit")
+
+    monkeypatch.setattr(topics, "classify_topic", boom_classify)
+
+    assert poll.poll_feed(feed_id) is False
+
+    assert len(fetch_calls) == 1  # entries "two" and "three" never fetched
+    assert items() == []  # no row: topic unknown, nothing to hold yet
+    assert feed_row(feed_id)["last_error"] == "other: no credit"
+    assert poll.paused_until() is not None
+
+
+def test_account_error_from_summarize_pauses_and_holds_the_entry(feed_id, monkeypatch):
+    monkeypatch.setattr(poll, "_get", lambda url: FakeResponse(SAMPLE))
+    fetch_calls = []
+    monkeypatch.setattr(
+        poll, "fetch_article", lambda link: (fetch_calls.append(link), (None, "error", []))[1]
+    )
+    summarize_calls = []
+
+    def boom_summarize(*args, **kwargs):
+        summarize_calls.append(args)
+        raise llm.AccountError("no credit")
+
+    monkeypatch.setattr(poll, "summarize", boom_summarize)
+
+    assert poll.poll_feed(feed_id) is False
+
+    assert len(summarize_calls) == 1
+    assert len(fetch_calls) == 1  # entries "two" and "three" never fetched
+    rows = items()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["link"] == "https://example.com/one"
+    assert row["summarize_attempts"] == 0
+    assert row["last_attempt_at"] is None
+    assert row["summarize_error"] == "other: no credit"
+    assert row["headline"] is None
+    assert row["summary"] is None
+    assert row["model"] is None
+    assert feed_row(feed_id)["last_error"] == "other: no credit"
+    assert get_setting("PINTXOS_PAUSED_ERROR") == "other: no credit"
+
+
+def test_poll_feed_skips_when_paused(feed_id, monkeypatch):
+    poll._pause("no credit")
+    monkeypatch.setattr(poll, "_get", lambda url: pytest.fail("unexpected feed fetch"))
+    monkeypatch.setattr(
+        poll, "fetch_article", lambda link: pytest.fail("unexpected article fetch")
+    )
+    monkeypatch.setattr(
+        poll, "summarize", lambda *a, **k: pytest.fail("unexpected summarize call")
+    )
+
+    assert poll.poll_feed(feed_id) is True
+    assert items() == []
+
+
+def test_poll_feed_pops_queued_sentinel_when_paused(feed_id):
+    """A manual poll_one queues the feed with the Queued sentinel before poll_feed
+    runs; if the pause gate returns before that sentinel is popped, the feed shows
+    'Queued' forever."""
+    poll._pause("no credit")
+    poll._status[feed_id] = poll._QUEUED
+    assert poll.poll_feed(feed_id) is True
+    assert feed_id not in poll._status
+
+
+def test_retry_fallback_account_error_from_summarize_pauses_and_stops(feed_id, monkeypatch):
+    """retry_fallback must catch AccountError around its own summarize call, same as
+    poll_feed does, or a blocked-item retry's account error escapes uncaught."""
+    blocked_ids = _seed_blocked_items(feed_id, 3)
+    monkeypatch.setattr(poll, "fetch_article", lambda link: ("FULL ARTICLE TEXT " * 20, "ok", []))
+    summarize_calls = []
+
+    def boom(*args, **kwargs):
+        summarize_calls.append(args)
+        raise llm.AccountError("no credit")
+
+    monkeypatch.setattr(poll, "summarize", boom)
+
+    poll.retry_fallback(feed_id)  # returns rather than raising
+
+    assert len(summarize_calls) == 1  # stops after the first AccountError
+    assert get_setting("PINTXOS_PAUSED_ERROR") == "other: no credit"
+    assert poll.paused_until() is not None
+    for item_id in blocked_ids:
+        assert row_by_id(item_id)["summarize_attempts"] == 0  # not counted as a failure
+
+
+def test_retry_fallback_skips_when_paused(feed_id, monkeypatch):
+    poll._pause("no credit")
+    monkeypatch.setattr(
+        poll, "fetch_article", lambda link: pytest.fail("unexpected article fetch")
+    )
+
+    poll.retry_fallback(feed_id)  # returns without raising: gated before any DB/fetch work
+
+
+def test_poll_all_skips_when_paused(feed_id, monkeypatch):
+    poll._pause("no credit")
+    monkeypatch.setattr(poll, "_get", lambda url: pytest.fail("unexpected feed fetch"))
+
+    poll.poll_all()
+    assert items() == []
+
+
+def test_probe_success_unpauses(feed_id, calls):
+    _seed_pause(minutes_until=-1, minutes_since=31)
+
+    poll.poll_all()
+
+    assert len(calls) == 3  # the poll proceeded normally, cooldown already elapsed
+    assert get_setting("PINTXOS_PAUSED_UNTIL") is None
+    assert get_setting("PINTXOS_PAUSED_SINCE") is None
+    assert get_setting("PINTXOS_PAUSED_ERROR") is None
+
+
+def test_probe_failure_extends_pause_but_keeps_since(feed_id, monkeypatch):
+    _seed_pause(minutes_until=-1, minutes_since=31)
+    since = get_setting("PINTXOS_PAUSED_SINCE")
+    old_until = datetime.fromisoformat(get_setting("PINTXOS_PAUSED_UNTIL"))
+
+    monkeypatch.setattr(poll, "_get", lambda url: FakeResponse(SAMPLE))
+    monkeypatch.setattr(poll, "fetch_article", lambda link: (None, "error", []))
+
+    def boom(*_args, **_kwargs):
+        raise llm.AccountError("still no credit")
+
+    monkeypatch.setattr(poll, "summarize", boom)
+
+    assert poll.poll_feed(feed_id) is False
+
+    assert get_setting("PINTXOS_PAUSED_SINCE") == since  # unchanged
+    new_until = datetime.fromisoformat(get_setting("PINTXOS_PAUSED_UNTIL"))
+    assert new_until > old_until  # moved forward
+    assert get_setting("PINTXOS_PAUSED_ERROR") == "other: still no credit"

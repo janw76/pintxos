@@ -126,11 +126,51 @@ def feed_xml(request: Request, feed_id: int) -> Response:
         # unmuted rows, so growing the retained history never grows the RSS body.
         items = conn.execute(
             "SELECT * FROM items WHERE feed_id = ? AND muted = 0 "
+            "AND NOT (summary IS NULL AND summarize_attempts < 3) "
             "ORDER BY published_at DESC, id DESC LIMIT ?",
             (feed_id, int(get_setting("PINTXOS_ITEMS_PER_FEED", conn))),
         ).fetchall()
         full_text = is_truthy(get_setting("PINTXOS_FULL_TEXT", conn))
         base_url = get_setting("PINTXOS_BASE_URL", conn) or str(request.base_url).rstrip("/")
+        settings_url = f"{base_url}/settings"
+        day = feedstats.today()
+
+        warnings: list[dict] = []
+
+        paused = _paused_context(conn)
+        if paused is not None:
+            warnings.append(
+                feed_out.pause_warning_item(
+                    feed,
+                    paused_since=paused["since"],
+                    error=paused["error"],
+                    day=day,
+                    settings_url=settings_url,
+                )
+            )
+
+        # Across all feeds, not just this one: the fallback model is a global setting,
+        # so overuse is a global condition, and re-appears once per day on every feed's
+        # output until the underlying problem is fixed.
+        fallback_counts = conn.execute(
+            "SELECT COUNT(*) AS total, SUM(model_fallback = 1) AS used FROM items "
+            "WHERE summary IS NOT NULL AND muted = 0 AND substr(created_at, 1, 10) = ?",
+            (day,),
+        ).fetchone()
+        fb_total = fallback_counts["total"] or 0
+        fb_used = fallback_counts["used"] or 0
+        if fb_total >= 10 and fb_used * 10 > fb_total:
+            fallback_model = get_setting("PINTXOS_FALLBACK_MODEL", conn)
+            warnings.append(
+                feed_out.fallback_warning_item(
+                    feed,
+                    used=fb_used,
+                    total=fb_total,
+                    fallback_model=fallback_model,
+                    day=day,
+                    settings_url=settings_url,
+                )
+            )
 
         warn_on = feed["warn_volume"] is None or feed["warn_volume"] == 1
         summaries_today = feedstats.totals(conn, feed_id)[0]
@@ -139,21 +179,42 @@ def feed_xml(request: Request, feed_id: int) -> Response:
         if warn_on and level is not None:
             feed_page_url = f"{base_url}/feeds/{feed_id}"
             model = feed["model"] or get_setting("PINTXOS_MODEL", conn)
-            warning = feed_out.warning_item(
-                feed,
-                level=level,
-                hard_level=levels[1],
-                summaries_today=summaries_today,
-                day=feedstats.today(),
-                feed_page_url=feed_page_url,
-                model=model,
-                kept_today=feedstats.kept_today(conn, feed_id),
+            warnings.append(
+                feed_out.warning_item(
+                    feed,
+                    level=level,
+                    hard_level=levels[1],
+                    summaries_today=summaries_today,
+                    day=day,
+                    feed_page_url=feed_page_url,
+                    model=model,
+                    kept_today=feedstats.kept_today(conn, feed_id),
+                )
             )
-        else:
-            warning = None
 
-        body = render_rss(feed, items, full_text=full_text, warning=warning, base_url=base_url)
+        body = render_rss(feed, items, full_text=full_text, warnings=warnings, base_url=base_url)
     return Response(content=body, media_type="application/rss+xml; charset=utf-8")
+
+
+def _paused_context(conn: sqlite3.Connection) -> dict | None:
+    """The current global-pause state, or None when not paused.
+
+    Shared by feed_xml() (to build the pause warning article) and index() (to render
+    the admin banner), so the plain-language reason (feed_out.pause_reason) is
+    computed in exactly one place.
+    """
+    paused_until_value = get_setting("PINTXOS_PAUSED_UNTIL", conn)
+    if paused_until_value is None:
+        return None
+    paused_since = get_setting("PINTXOS_PAUSED_SINCE", conn) or paused_until_value
+    error = get_setting("PINTXOS_PAUSED_ERROR", conn) or ""
+    return {
+        "since": paused_since,
+        "error": error,
+        "until": paused_until_value,
+        "since_display": feed_out.paused_since_display(paused_since),
+        "reason": feed_out.pause_reason(error),
+    }
 
 
 def _redirect(path: str, *, msg: str | None = None, err: str | None = None) -> RedirectResponse:
@@ -388,6 +449,8 @@ def item_page(request: Request, item_id: int) -> Response:
         item = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
         if item is None:
             raise HTTPException(status_code=404, detail="item not found")
+        if item["summary"] is None and item["summarize_attempts"] < 3:
+            raise HTTPException(status_code=404, detail="item not found")
 
         head_html = feed_out.item_html(item, full=False)
         full_html = feed_out.item_html(item, full=True)
@@ -463,10 +526,12 @@ def _load_feed_rows(request: Request, feed_id: int | None = None) -> list[dict]:
 
 @app.get("/")
 def index(request: Request) -> Response:
+    with db() as conn:
+        paused = _paused_context(conn)
     return templates.TemplateResponse(
         request,
         "index.html",
-        {"feeds": _load_feed_rows(request), "status": dict(poll_status)},
+        {"feeds": _load_feed_rows(request), "status": dict(poll_status), "paused": paused},
     )
 
 
@@ -571,6 +636,7 @@ def _key_available(key_name: str, submitted: str, conn: sqlite3.Connection) -> b
 def settings_page(request: Request) -> Response:
     with db() as conn:
         model = get_setting("PINTXOS_MODEL", conn)
+        fallback_model = get_setting("PINTXOS_FALLBACK_MODEL", conn) or ""
         poll_minutes = get_setting("PINTXOS_POLL_MINUTES", conn)
         items_per_feed = get_setting("PINTXOS_ITEMS_PER_FEED", conn)
         filter_ads = get_setting("PINTXOS_FILTER_ADS", conn)
@@ -599,6 +665,7 @@ def settings_page(request: Request) -> Response:
     keep_patterns_env = env_pinned("PINTXOS_AD_KEEP_PATTERNS")
     warn_env = env_pinned("PINTXOS_WARN_AT")
     warn_hard_env = env_pinned("PINTXOS_WARN_HARD_AT")
+    fallback_model_env = env_pinned("PINTXOS_FALLBACK_MODEL")
     jar = get_jar()
     cookie_domains = summary(jar) if jar else []
     cookie_file = str(cookie_path())
@@ -613,6 +680,8 @@ def settings_page(request: Request) -> Response:
         "settings.html",
         {
             "model": model,
+            "fallback_model": fallback_model,
+            "fallback_model_env": fallback_model_env,
             "poll_minutes": poll_minutes,
             "items_per_feed": items_per_feed,
             "env_key_set": env_key_set,
@@ -646,6 +715,7 @@ def settings_page(request: Request) -> Response:
 @app.post("/settings")
 def save_settings(
     model: str = Form(...),
+    fallback_model: str = Form(""),
     poll_minutes: str = Form(...),
     items_per_feed: str = Form(...),
     api_key: str = Form(""),
@@ -751,6 +821,8 @@ def save_settings(
         ("PINTXOS_POLL_MINUTES", str(poll_minutes_i)),
         ("PINTXOS_ITEMS_PER_FEED", str(items_per_feed_i)),
     ]
+    if not env_pinned("PINTXOS_FALLBACK_MODEL"):
+        pairs.append(("PINTXOS_FALLBACK_MODEL", fallback_model.strip()))
     if api_key and not env_pinned("ANTHROPIC_API_KEY"):
         pairs.append(("ANTHROPIC_API_KEY", api_key))
     if openrouter_api_key and not env_pinned("OPENROUTER_API_KEY"):
@@ -789,10 +861,16 @@ def test_settings() -> Response:
     with db() as conn:
         model = get_setting("PINTXOS_MODEL", conn)
     try:
-        text = llm.complete("You are a health check.", "Reply with the single word OK.", 50, model)
+        text = llm.complete(
+            "You are a health check.",
+            "Reply with the single word OK.",
+            50,
+            model,
+            fallback=False,
+        )
     except llm.LLMError as e:
         return _redirect("/settings", err=f"{model}: {e}")
-    return _redirect("/settings", msg=f"{model} answered: {text.strip()}")
+    return _redirect("/settings", msg=f"{model} answered: {text.text.strip()}")
 
 
 @app.post("/settings/cookies")

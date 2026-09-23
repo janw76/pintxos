@@ -39,8 +39,11 @@ def _forbid_post(monkeypatch):
     monkeypatch.setattr("pintxos.llm.httpx.post", fake_post)
 
 
-def _ok_response(content="the answer"):
-    return FakeResponse(payload={"choices": [{"message": {"content": content}}]})
+def _ok_response(content="the answer", model=None):
+    payload = {"choices": [{"message": {"content": content}}]}
+    if model is not None:
+        payload["model"] = model
+    return FakeResponse(payload=payload)
 
 
 # --- provider -------------------------------------------------------------
@@ -87,7 +90,7 @@ def test_openrouter_request_shape(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
     calls = _patch_post(monkeypatch, _ok_response("sport"))
 
-    assert llm.complete("sys prompt", "user prompt", 123, "openai/gpt-5") == "sport"
+    assert llm.complete("sys prompt", "user prompt", 123, "openai/gpt-5").text == "sport"
 
     ((url, kwargs),) = calls
     assert url == "https://openrouter.ai/api/v1/chat/completions"
@@ -194,7 +197,7 @@ def test_reasoning_mandatory_model_retries_with_effort_minimal(monkeypatch):
 
     result = llm.complete("sys", "user", 50, "openai/gpt-5-mini")
 
-    assert result == "OK"
+    assert result.text == "OK"
     assert len(calls) == 2
     assert calls[0][1]["json"]["reasoning"] == {"enabled": False}
     assert calls[1][1]["json"]["reasoning"] == {"effort": "minimal"}
@@ -208,7 +211,7 @@ def test_reasoning_mandatory_model_remembered_across_calls(monkeypatch):
 
     result = llm.complete("sys", "user", 50, "openai/gpt-5-mini")
 
-    assert result == "OK"
+    assert result.text == "OK"
     assert len(calls) == 1
     assert calls[0][1]["json"]["reasoning"] == {"effort": "minimal"}
 
@@ -222,7 +225,7 @@ def test_other_model_still_sends_enabled_false_after_a_mandatory_model_learned(m
     # is sent and succeeds (this fake only 400s the mandatory model).
     result = llm.complete("sys", "user", 50, "google/gemini-2.5-flash-lite")
 
-    assert result == "OK"
+    assert result.text == "OK"
     assert len(calls) == 1
     assert calls[0][1]["json"]["reasoning"] == {"enabled": False}
     assert "google/gemini-2.5-flash-lite" not in llm._REASONING_MANDATORY
@@ -244,20 +247,25 @@ def test_400_with_unrelated_body_raises_without_retry_or_learning(monkeypatch):
 
 
 class _FakeMessages:
-    def __init__(self, text=None, error=None):
+    def __init__(self, text=None, error=None, model=None):
         self._text = text
         self._error = error
+        self._model = model
         self.calls = []
 
     def create(self, **kwargs):
         self.calls.append(kwargs)
         if self._error is not None:
             raise self._error
-        return type("R", (), {"content": [type("C", (), {"text": self._text})()]})()
+        return type(
+            "R",
+            (),
+            {"content": [type("C", (), {"text": self._text})()], "model": self._model},
+        )()
 
 
-def _patch_anthropic(monkeypatch, text=None, error=None):
-    messages = _FakeMessages(text, error)
+def _patch_anthropic(monkeypatch, text=None, error=None, model=None):
+    messages = _FakeMessages(text, error, model)
     init_kwargs = {}
 
     class FakeAnthropic:
@@ -273,7 +281,7 @@ def test_anthropic_request_shape_and_text(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "an-key")
     messages, init_kwargs = _patch_anthropic(monkeypatch, text="sport")
 
-    assert llm.complete("sys", "user", 55, "claude-haiku-4-5-20251001") == "sport"
+    assert llm.complete("sys", "user", 55, "claude-haiku-4-5-20251001").text == "sport"
 
     assert init_kwargs == {"api_key": "an-key", "max_retries": 2}
     (call,) = messages.calls
@@ -298,4 +306,229 @@ def test_anthropic_branch_never_touches_httpx(monkeypatch):
     _forbid_post(monkeypatch)
     _patch_anthropic(monkeypatch, text="sport")
 
-    assert llm.complete("sys", "user", 10, "claude-haiku-4-5-20251001") == "sport"
+    assert llm.complete("sys", "user", 10, "claude-haiku-4-5-20251001").text == "sport"
+
+
+# --- account vs transient errors ------------------------------------------
+
+
+def test_account_error_is_an_llm_error_but_not_a_missing_key():
+    assert issubclass(llm.AccountError, llm.LLMError)
+    assert not issubclass(llm.AccountError, llm.MissingApiKey)
+    assert not issubclass(llm.MissingApiKey, llm.AccountError)
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_kind"), [(401, "key"), (402, "credit"), (403, "key")]
+)
+def test_openrouter_account_statuses_raise_account_error(monkeypatch, status, expected_kind):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    _patch_post(monkeypatch, FakeResponse(status_code=status, text="no credit left"))
+
+    with pytest.raises(llm.AccountError) as excinfo:
+        llm.complete("sys", "user", 10, "openai/gpt-5")
+    assert excinfo.value.kind == expected_kind
+    assert str(excinfo.value).startswith(f"{expected_kind}: ")
+    assert str(status) in str(excinfo.value)
+    assert "no credit left" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("status", [429, 500, 502, 404])
+def test_openrouter_other_statuses_stay_transient(monkeypatch, status):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    _patch_post(monkeypatch, FakeResponse(status_code=status, text="try later"))
+
+    with pytest.raises(llm.LLMError) as excinfo:
+        llm.complete("sys", "user", 10, "openai/gpt-5")
+    assert not isinstance(excinfo.value, llm.AccountError)
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_anthropic_auth_status_raises_account_error(monkeypatch, status):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "an-key")
+    error = anthropic.APIError("rejected", request=None, body=None)
+    error.status_code = status
+    _patch_anthropic(monkeypatch, error=error)
+
+    with pytest.raises(llm.AccountError) as excinfo:
+        llm.complete("sys", "user", 10, "claude-haiku-4-5-20251001")
+    assert excinfo.value.kind == "key"
+    assert str(excinfo.value).startswith("key: ")
+
+
+def test_anthropic_credit_balance_message_raises_account_error(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "an-key")
+    error = anthropic.APIError(
+        "Your credit balance is too low to access the Anthropic API.",
+        request=None,
+        body=None,
+    )
+    _patch_anthropic(monkeypatch, error=error)
+
+    with pytest.raises(llm.AccountError, match="credit balance") as excinfo:
+        llm.complete("sys", "user", 10, "claude-haiku-4-5-20251001")
+    assert excinfo.value.kind == "credit"
+    assert str(excinfo.value).startswith("credit: ")
+
+
+def test_anthropic_server_error_stays_transient(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "an-key")
+    error = anthropic.APIError("overloaded", request=None, body=None)
+    error.status_code = 529
+    _patch_anthropic(monkeypatch, error=error)
+
+    with pytest.raises(llm.LLMError) as excinfo:
+        llm.complete("sys", "user", 10, "claude-haiku-4-5-20251001")
+    assert not isinstance(excinfo.value, llm.AccountError)
+
+
+# --- empty-response diagnostics -------------------------------------------
+
+
+def test_empty_response_message_names_finish_reason_and_body(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    _patch_post(
+        monkeypatch,
+        FakeResponse(
+            payload={"choices": [{"finish_reason": "error", "message": {"content": ""}}]},
+            text='{"choices":[{"finish_reason":"error",\n"message":{"content":""}}]}',
+        ),
+    )
+
+    with pytest.raises(llm.LLMError) as excinfo:
+        llm.complete("sys", "user", 10, "openai/gpt-5")
+
+    message = str(excinfo.value)
+    assert "finish_reason=error" in message
+    assert "choices" in message  # a slice of the raw body travels with the error
+    assert "\n" not in message  # single line, so it fits one log record
+
+
+def test_empty_response_without_finish_reason_says_not_available(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    _patch_post(monkeypatch, FakeResponse(payload={}, text="{}"))
+
+    with pytest.raises(llm.LLMError) as excinfo:
+        llm.complete("sys", "user", 10, "openai/gpt-5")
+    assert "finish_reason=n/a" in str(excinfo.value)
+
+
+def test_empty_response_body_snippet_is_capped(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    _patch_post(monkeypatch, FakeResponse(payload={}, text="x" * 5000))
+
+    with pytest.raises(llm.LLMError) as excinfo:
+        llm.complete("sys", "user", 10, "openai/gpt-5")
+    assert "x" * 200 in str(excinfo.value)
+    assert "x" * 201 not in str(excinfo.value)
+
+
+def test_unparseable_body_still_raises_empty_response(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    _patch_post(monkeypatch, FakeResponse(payload=None, text="<html>gateway</html>"))
+
+    with pytest.raises(llm.LLMError) as excinfo:
+        llm.complete("sys", "user", 10, "openai/gpt-5")
+    assert "finish_reason=n/a" in str(excinfo.value)
+    assert "gateway" in str(excinfo.value)
+
+
+# --- fallback model list --------------------------------------------------
+
+
+def test_openrouter_sends_primary_and_fallback_models(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    monkeypatch.setenv("PINTXOS_FALLBACK_MODEL", "vendor/cheap")
+    calls = _patch_post(monkeypatch, _ok_response("sport"))
+
+    llm.complete("sys", "user", 10, "openai/gpt-5")
+
+    ((_url, kwargs),) = calls
+    body = kwargs["json"]
+    assert body["models"] == ["openai/gpt-5", "vendor/cheap"]
+    # "model" stays: OpenRouter reads it as the primary choice.
+    assert body["model"] == "openai/gpt-5"
+
+
+def test_openrouter_omits_models_when_fallback_equals_the_model(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    monkeypatch.setenv("PINTXOS_FALLBACK_MODEL", "openai/gpt-5")
+    calls = _patch_post(monkeypatch, _ok_response("sport"))
+
+    llm.complete("sys", "user", 10, "openai/gpt-5")
+
+    ((_url, kwargs),) = calls
+    assert "models" not in kwargs["json"]
+
+
+def test_openrouter_omits_models_when_fallback_kwarg_is_false(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    monkeypatch.setenv("PINTXOS_FALLBACK_MODEL", "vendor/cheap")
+    calls = _patch_post(monkeypatch, _ok_response("sport"))
+
+    llm.complete("sys", "user", 10, "openai/gpt-5", fallback=False)
+
+    ((_url, kwargs),) = calls
+    assert "models" not in kwargs["json"]
+
+
+def test_openrouter_omits_models_when_no_fallback_is_configured(monkeypatch):
+    def fake_get_setting(key, conn=None):
+        return {"OPENROUTER_API_KEY": "or-key", "PINTXOS_FALLBACK_MODEL": ""}.get(key)
+
+    monkeypatch.setattr("pintxos.llm.get_setting", fake_get_setting)
+    calls = _patch_post(monkeypatch, _ok_response("sport"))
+
+    llm.complete("sys", "user", 10, "openai/gpt-5")
+
+    ((_url, kwargs),) = calls
+    assert "models" not in kwargs["json"]
+
+
+# --- the answering model --------------------------------------------------
+
+
+def test_openrouter_reports_the_model_that_answered(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    monkeypatch.setenv("PINTXOS_FALLBACK_MODEL", "vendor/cheap")
+    _patch_post(monkeypatch, _ok_response("sport", model="vendor/cheap"))
+
+    result = llm.complete("sys", "user", 10, "openai/gpt-5")
+
+    assert result.text == "sport"
+    assert result.model == "vendor/cheap"
+
+
+def test_openrouter_falls_back_to_the_requested_model_when_absent(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    _patch_post(monkeypatch, _ok_response("sport"))
+
+    assert llm.complete("sys", "user", 10, "openai/gpt-5").model == "openai/gpt-5"
+
+
+def test_anthropic_reports_the_response_model(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "an-key")
+    _patch_anthropic(monkeypatch, text="sport", model="claude-haiku-4-5-20251001")
+
+    result = llm.complete("sys", "user", 10, "claude-haiku-4-5-20251001")
+
+    assert result.text == "sport"
+    assert result.model == "claude-haiku-4-5-20251001"
+
+
+def test_anthropic_without_a_response_model_reports_the_requested_one(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "an-key")
+    _patch_anthropic(monkeypatch, text="sport")
+
+    assert llm.complete("sys", "user", 10, "claude-haiku-4-5-20251001").model == (
+        "claude-haiku-4-5-20251001"
+    )
+
+
+def test_completion_is_a_named_tuple_of_text_and_model(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    _patch_post(monkeypatch, _ok_response("sport", model="vendor/cheap"))
+
+    text, model = llm.complete("sys", "user", 10, "openai/gpt-5")
+
+    assert (text, model) == ("sport", "vendor/cheap")

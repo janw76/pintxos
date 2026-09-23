@@ -593,7 +593,7 @@ def test_render_rss_with_warning_prepends_warning_item():
 
     from pintxos.feed_out import render_rss
 
-    body = render_rss(db_feed, items, full_text=True, warning=warning)
+    body = render_rss(db_feed, items, full_text=True, warnings=[warning])
     parsed = feedparser.parse(body)
 
     assert parsed.bozo == 0
@@ -606,7 +606,7 @@ def test_render_rss_with_warning_prepends_warning_item():
     assert titles == {"Headline One", "Headline Two"}
 
     # Same shape with full_text disabled.
-    body_no_full_text = render_rss(db_feed, items, full_text=False, warning=warning)
+    body_no_full_text = render_rss(db_feed, items, full_text=False, warnings=[warning])
     parsed_no_full_text = feedparser.parse(body_no_full_text)
     assert len(parsed_no_full_text.entries) == 3
     assert parsed_no_full_text.entries[0].title == warning["title"]
@@ -653,7 +653,7 @@ def test_render_rss_with_warning_still_skips_muted_items():
         model="gpt-4o",
         kept_today=40,
     )
-    body = render_rss(db_feed, items, full_text=True, warning=warning)
+    body = render_rss(db_feed, items, full_text=True, warnings=[warning])
     parsed = feedparser.parse(body)
 
     assert "guid-3" not in body.decode("utf-8")
@@ -950,3 +950,653 @@ def test_render_rss_without_base_url_unchanged():
 
     body = render_rss(db_feed, items, full_text=True)
     assert "/items/" not in body.decode("utf-8")
+
+
+def _seed_item(guid, **overrides):
+    """Insert one feed + one item row with sensible defaults, returning (feed_id, item)."""
+    defaults = dict(
+        original_title="Original Title",
+        published_at="2026-09-10T12:00:00+00:00",
+        headline="A Headline",
+        summary="A summary.",
+        fallback=0,
+        word_count=None,
+        text=None,
+        model=None,
+        summarize_attempts=0,
+        summarize_error=None,
+        excerpt=None,
+        model_fallback=0,
+    )
+    defaults.update(overrides)
+    with db() as conn:
+        feed_id = conn.execute(
+            "INSERT INTO feeds(url, title, created_at) VALUES (?, ?, ?)",
+            (FEED_URL, "Example Feed", now()),
+        ).lastrowid
+        conn.execute(
+            """INSERT INTO items
+            (feed_id, guid, link, original_title, published_at, headline, summary,
+             fallback, word_count, text, model, summarize_attempts, summarize_error,
+             excerpt, model_fallback, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                feed_id,
+                guid,
+                f"https://example.com/{guid}",
+                defaults["original_title"],
+                defaults["published_at"],
+                defaults["headline"],
+                defaults["summary"],
+                defaults["fallback"],
+                defaults["word_count"],
+                defaults["text"],
+                defaults["model"],
+                defaults["summarize_attempts"],
+                defaults["summarize_error"],
+                defaults["excerpt"],
+                defaults["model_fallback"],
+                now(),
+            ),
+        )
+    with db() as conn:
+        item = conn.execute(
+            "SELECT * FROM items WHERE feed_id = ? AND guid = ?", (feed_id, guid)
+        ).fetchone()
+    return feed_id, item
+
+
+def test_feed_xml_excludes_held_item():
+    """A held item (no summary, attempts < 3) never appears in the output feed."""
+    _seed_item("guid-held", summary=None, summarize_attempts=1)
+    with TestClient(app) as c:
+        resp = c.get("/feeds/1.xml")
+    parsed = feedparser.parse(resp.content)
+    assert len(parsed.entries) == 0
+    assert "guid-held" not in resp.text
+
+
+def test_feed_xml_includes_exhausted_item():
+    """An exhausted item (no summary, attempts >= 3) appears, unlike a held one."""
+    _seed_item("guid-exhausted", summary=None, summarize_attempts=3)
+    with TestClient(app) as c:
+        resp = c.get("/feeds/1.xml")
+    parsed = feedparser.parse(resp.content)
+    assert len(parsed.entries) == 1
+
+
+def test_render_rss_exhausted_uses_original_title_as_headline():
+    from pintxos.feed_out import render_rss
+
+    feed_id, _ = _seed_item(
+        "guid-exhausted-title",
+        summary=None,
+        summarize_attempts=3,
+        original_title="The Real Title",
+        headline="Stale Headline",
+    )
+    with db() as conn:
+        db_feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        items = conn.execute("SELECT * FROM items WHERE feed_id = ?", (feed_id,)).fetchall()
+    parsed = feedparser.parse(render_rss(db_feed, items, full_text=True))
+    assert parsed.entries[0].title == "The Real Title"
+
+
+def test_render_rss_exhausted_falls_back_to_headline_when_no_original_title():
+    from pintxos.feed_out import render_rss
+
+    feed_id, _ = _seed_item(
+        "guid-exhausted-nofallback",
+        summary=None,
+        summarize_attempts=3,
+        original_title=None,
+        headline="Only Headline",
+    )
+    with db() as conn:
+        db_feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        items = conn.execute("SELECT * FROM items WHERE feed_id = ?", (feed_id,)).fetchall()
+    parsed = feedparser.parse(render_rss(db_feed, items, full_text=True))
+    assert parsed.entries[0].title == "Only Headline"
+
+
+def test_render_rss_exhausted_json_error_note():
+    from pintxos.feed_out import render_rss
+
+    feed_id, _ = _seed_item(
+        "guid-json-error",
+        summary=None,
+        summarize_attempts=3,
+        summarize_error="invalid JSON returned by model",
+        excerpt="Short excerpt text.",
+    )
+    with db() as conn:
+        db_feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        items = conn.execute("SELECT * FROM items WHERE feed_id = ?", (feed_id,)).fetchall()
+    body = render_rss(db_feed, items, full_text=False).decode("utf-8")
+    assert "returned an unusable answer three times" in body
+    assert "kept failing" not in body
+
+
+def test_render_rss_exhausted_generic_error_note():
+    from pintxos.feed_out import render_rss
+
+    feed_id, _ = _seed_item(
+        "guid-generic-error",
+        summary=None,
+        summarize_attempts=3,
+        summarize_error="connection timed out",
+        excerpt="Short excerpt text.",
+    )
+    with db() as conn:
+        db_feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        items = conn.execute("SELECT * FROM items WHERE feed_id = ?", (feed_id,)).fetchall()
+    body = render_rss(db_feed, items, full_text=False).decode("utf-8")
+    assert "the AI service kept failing" in body
+    assert "unusable answer" not in body
+
+
+def test_render_rss_exhausted_full_text_off_shows_excerpt_no_model_byline():
+    from pintxos.feed_out import render_rss
+
+    feed_id, _ = _seed_item(
+        "guid-exhausted-excerpt",
+        summary=None,
+        summarize_attempts=3,
+        summarize_error="boom",
+        excerpt="This is the excerpt shown instead of a summary.",
+        model="gpt-4o",
+        text="Full article body.",
+    )
+    with db() as conn:
+        db_feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        items = conn.execute("SELECT * FROM items WHERE feed_id = ?", (feed_id,)).fetchall()
+    body = render_rss(db_feed, items, full_text=False).decode("utf-8")
+    assert "This is the excerpt shown instead of a summary." in body
+    assert "(gpt-4o)" not in body
+    assert "=== FULL TEXT BELOW ===" not in body
+
+
+def test_render_rss_exhausted_full_text_on_shows_full_text_no_excerpt():
+    from pintxos.feed_out import render_rss
+
+    feed_id, _ = _seed_item(
+        "guid-exhausted-fulltext",
+        summary=None,
+        summarize_attempts=3,
+        summarize_error="boom",
+        excerpt="Should not appear.",
+        text="Full article body line.",
+    )
+    with db() as conn:
+        db_feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        items = conn.execute("SELECT * FROM items WHERE feed_id = ?", (feed_id,)).fetchall()
+    body = render_rss(db_feed, items, full_text=True).decode("utf-8")
+    assert "=== FULL TEXT BELOW ===" in body
+    assert "Full article body line." in body
+    assert "Should not appear." not in body
+
+
+def test_render_rss_exhausted_full_text_on_but_no_text_shows_excerpt():
+    """Full-text is on, but there is nothing to show (text NULL): show the excerpt."""
+    from pintxos.feed_out import render_rss
+
+    feed_id, _ = _seed_item(
+        "guid-exhausted-notext",
+        summary=None,
+        summarize_attempts=3,
+        summarize_error="boom",
+        excerpt="Excerpt shown since the full text block will not render.",
+        text=None,
+    )
+    with db() as conn:
+        db_feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        items = conn.execute("SELECT * FROM items WHERE feed_id = ?", (feed_id,)).fetchall()
+    body = render_rss(db_feed, items, full_text=True).decode("utf-8")
+    assert "Excerpt shown since the full text block will not render." in body
+    assert "=== FULL TEXT BELOW ===" not in body
+
+
+def test_render_rss_exhausted_full_text_on_but_empty_text_shows_excerpt():
+    """Same as above, but text is an empty string rather than NULL."""
+    from pintxos.feed_out import render_rss
+
+    feed_id, _ = _seed_item(
+        "guid-exhausted-emptytext",
+        summary=None,
+        summarize_attempts=3,
+        summarize_error="boom",
+        excerpt="Excerpt shown for empty text too.",
+        text="",
+    )
+    with db() as conn:
+        db_feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        items = conn.execute("SELECT * FROM items WHERE feed_id = ?", (feed_id,)).fetchall()
+    body = render_rss(db_feed, items, full_text=True).decode("utf-8")
+    assert "Excerpt shown for empty text too." in body
+    assert "=== FULL TEXT BELOW ===" not in body
+
+
+def test_pause_warning_item_reason_credit():
+    from pintxos.feed_out import pause_warning_item
+
+    feed = {"id": 1, "title": "Feed", "url": "https://example.com/feed.xml"}
+    item = pause_warning_item(
+        feed,
+        paused_since="2026-09-11T08:15:00+00:00",
+        error="credit: OpenRouter HTTP 402: insufficient credit",
+        day="2026-09-11",
+        settings_url="https://pintxos.example/settings",
+    )
+    assert item["guid"] == "pintxos-paused-2026-09-11-2026-09-11"
+    assert item["title"] == (
+        "Pintxøs has stopped summarizing: your AI account needs attention"
+    )
+    assert item["link"] == "https://pintxos.example/settings"
+    assert "2026-09-11 08:15 UTC" in item["description"]
+    assert "Your AI provider reports that there is no credit left." in item["description"]
+    assert 'href="https://pintxos.example/settings"' in item["description"]
+    assert "checks again every 30 minutes" in item["description"]
+
+
+def test_pause_warning_item_legacy_error_without_prefix_is_generic():
+    """Text stored before the kind prefix existed has no "kind: " prefix at all;
+
+    it must fall back to the generic sentence rather than substring-matching
+    "credit balance" (or any other historical wording) inside it.
+    """
+    from pintxos.feed_out import pause_warning_item
+
+    feed = {"id": 1, "title": "Feed", "url": "https://example.com/feed.xml"}
+    item = pause_warning_item(
+        feed,
+        paused_since="2026-09-11T08:15:00+00:00",
+        error="Your credit balance is too low to access the Anthropic API",
+        day="2026-09-11",
+        settings_url="https://pintxos.example/settings",
+    )
+    assert "Your AI provider refused the request." in item["description"]
+    assert "no credit left" not in item["description"]
+
+
+def test_pause_warning_item_reason_unauthorized():
+    from pintxos.feed_out import pause_warning_item
+
+    feed = {"id": 1, "title": "Feed", "url": "https://example.com/feed.xml"}
+    item = pause_warning_item(
+        feed,
+        paused_since="2026-09-11T08:15:00+00:00",
+        error="key: OpenRouter HTTP 401: invalid api key",
+        day="2026-09-11",
+        settings_url="https://pintxos.example/settings",
+    )
+    assert "Your AI provider rejected the API key." in item["description"]
+
+
+def test_pause_warning_item_reason_key_does_not_false_positive_on_substring_402():
+    """A "key" classification must not be re-triggered as "credit" just because
+
+    the request body happens to contain the digits 402 somewhere in its text.
+    """
+    from pintxos.feed_out import pause_warning_item
+
+    feed = {"id": 1, "title": "Feed", "url": "https://example.com/feed.xml"}
+    item = pause_warning_item(
+        feed,
+        paused_since="2026-09-11T08:15:00+00:00",
+        error="key: OpenRouter HTTP 401: request 402abc",
+        day="2026-09-11",
+        settings_url="https://pintxos.example/settings",
+    )
+    assert "Your AI provider rejected the API key." in item["description"]
+    assert "no credit left" not in item["description"]
+
+
+def test_pause_warning_item_reason_other():
+    from pintxos.feed_out import pause_warning_item
+
+    feed = {"id": 1, "title": "Feed", "url": "https://example.com/feed.xml"}
+    item = pause_warning_item(
+        feed,
+        paused_since="2026-09-11T08:15:00+00:00",
+        error="OpenRouter HTTP 500: internal error",
+        day="2026-09-11",
+        settings_url="https://pintxos.example/settings",
+    )
+    assert "Your AI provider refused the request." in item["description"]
+    assert "no credit left" not in item["description"]
+    assert "rejected the API key" not in item["description"]
+
+
+def test_pause_warning_item_guid_remints_daily_while_paused():
+    from pintxos.feed_out import pause_warning_item
+
+    feed = {"id": 1, "title": "Feed", "url": "https://example.com/feed.xml"}
+    day_one = pause_warning_item(
+        feed,
+        paused_since="2026-09-11T08:15:00+00:00",
+        error="boom",
+        day="2026-09-11",
+        settings_url="https://pintxos.example/settings",
+    )
+    day_two = pause_warning_item(
+        feed,
+        paused_since="2026-09-11T08:15:00+00:00",
+        error="boom",
+        day="2026-09-12",
+        settings_url="https://pintxos.example/settings",
+    )
+    assert day_one["guid"] != day_two["guid"]
+    assert day_one["guid"] == "pintxos-paused-2026-09-11-2026-09-11"
+    assert day_two["guid"] == "pintxos-paused-2026-09-11-2026-09-12"
+
+
+def test_fallback_warning_item_fields():
+    from pintxos.feed_out import fallback_warning_item
+
+    feed = {"id": 1, "title": "Feed", "url": "https://example.com/feed.xml"}
+    item = fallback_warning_item(
+        feed,
+        used=3,
+        total=10,
+        fallback_model="deepseek/deepseek-v4-flash",
+        day="2026-09-11",
+        settings_url="https://pintxos.example/settings",
+    )
+    assert item["guid"] == "pintxos-fallback-2026-09-11"
+    assert item["title"] == "Your default model failed on 3 of 10 articles today"
+    assert item["link"] == "https://pintxos.example/settings"
+    assert "deepseek/deepseek-v4-flash" in item["description"]
+    assert "3 of 10 articles today" in item["description"]
+    assert 'href="https://pintxos.example/settings"' in item["description"]
+
+
+def test_render_rss_warnings_ordering_pause_then_fallback_then_volume():
+    from pintxos.feed_out import (
+        fallback_warning_item,
+        pause_warning_item,
+        render_rss,
+        warning_item,
+    )
+
+    feed_id = _seed()
+    feed = {"id": feed_id, "title": "Example Feed", "url": FEED_URL}
+    pause = pause_warning_item(
+        feed,
+        paused_since="2026-09-11T08:15:00+00:00",
+        error="boom",
+        day="2026-09-11",
+        settings_url="https://pintxos.example/settings",
+    )
+    fallback = fallback_warning_item(
+        feed,
+        used=3,
+        total=10,
+        fallback_model="deepseek/deepseek-v4-flash",
+        day="2026-09-11",
+        settings_url="https://pintxos.example/settings",
+    )
+    volume = warning_item(
+        feed,
+        level=50,
+        hard_level=180,
+        summaries_today=62,
+        day="2026-09-11",
+        feed_page_url="https://pintxos.example/feeds/1",
+        model="gpt-4o",
+        kept_today=40,
+    )
+
+    with db() as conn:
+        db_feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        items = conn.execute(
+            "SELECT * FROM items WHERE feed_id = ? ORDER BY published_at DESC, id DESC",
+            (feed_id,),
+        ).fetchall()
+
+    body = render_rss(db_feed, items, full_text=True, warnings=[pause, fallback, volume])
+    parsed = feedparser.parse(body)
+    assert len(parsed.entries) == 5
+    assert parsed.entries[0].title == pause["title"]
+    assert parsed.entries[1].title == fallback["title"]
+    assert parsed.entries[2].title == volume["title"]
+
+
+def test_render_rss_fallback_model_shows_bold_note_not_small_byline():
+    import xml.sax.saxutils
+
+    from pintxos.feed_out import render_rss
+
+    feed_id, _ = _seed_item(
+        "guid-fallback-model",
+        summary="A fallback summary.",
+        model="backup-model",
+        model_fallback=1,
+    )
+    with db() as conn:
+        db_feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        items = conn.execute("SELECT * FROM items WHERE feed_id = ?", (feed_id,)).fetchall()
+    body = xml.sax.saxutils.unescape(render_rss(db_feed, items, full_text=True).decode("utf-8"))
+    assert (
+        "<p><strong>Note: Pintxøs used backup-model as a fallback for this item."
+        "</strong></p>" in body
+    )
+    assert "<small" not in body
+
+
+def test_render_rss_ordinary_fallback_zero_keeps_small_byline():
+    from pintxos.feed_out import render_rss
+
+    feed_id, _ = _seed_item(
+        "guid-ordinary-model",
+        summary="An ordinary summary.",
+        model="primary-model",
+        model_fallback=0,
+    )
+    with db() as conn:
+        db_feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        items = conn.execute("SELECT * FROM items WHERE feed_id = ?", (feed_id,)).fetchall()
+    body = render_rss(db_feed, items, full_text=True).decode("utf-8")
+    assert "(primary-model)" in body
+    assert "Note: Pintxøs used" not in body
+
+
+def test_item_html_exhausted_head_and_full():
+    from pintxos.feed_out import item_html
+
+    _, item = _seed_item(
+        "guid-item-html-exhausted",
+        summary=None,
+        summarize_attempts=3,
+        summarize_error="bad JSON",
+        excerpt="Excerpt paragraph.",
+        model="gpt-4o",
+        text="Line one\nLine two",
+        original_title="Real Original",
+        headline="Old Headline",
+    )
+    head = item_html(item, full=False)
+    full = item_html(item, full=True)
+
+    assert "Real Original" in head
+    assert "Old Headline" not in head
+    assert "returned an unusable answer three times" in head
+    assert "Excerpt paragraph." in head
+    assert "(gpt-4o)" not in head
+    assert "<p>Line one</p>" not in head
+    assert full.startswith(head)
+    assert "<p>Line one</p>" in full
+    assert "<p>Line two</p>" in full
+
+
+def test_item_plain_exhausted_head_and_full():
+    from pintxos.feed_out import item_plain
+
+    _, item = _seed_item(
+        "guid-item-plain-exhausted",
+        summary=None,
+        summarize_attempts=3,
+        summarize_error="timeout",
+        excerpt="Plain excerpt.",
+        text="Plain line one\nPlain line two",
+    )
+    head = item_plain(item, full=False)
+    full = item_plain(item, full=True)
+
+    assert "the AI service kept failing" in head
+    assert "Plain excerpt." in head
+    assert full.startswith(head)
+    assert "Plain line one" in full
+    assert "Plain line two" in full
+
+
+def test_item_html_fallback_model_bold_note():
+    from pintxos.feed_out import item_html
+
+    _, item = _seed_item(
+        "guid-item-html-fallback",
+        summary="Fallback summary.",
+        model="backup-model",
+        model_fallback=1,
+    )
+    rendered = item_html(item, full=False)
+    assert (
+        "<p><strong>Note: Pintxøs used backup-model as a fallback for this item."
+        "</strong></p>" in rendered
+    )
+    assert "<small" not in rendered
+
+
+def test_item_plain_fallback_model_note_line():
+    from pintxos.feed_out import item_plain
+
+    _, item = _seed_item(
+        "guid-item-plain-fallback",
+        summary="Fallback summary.",
+        model="backup-model",
+        model_fallback=1,
+    )
+    rendered = item_plain(item, full=False)
+    assert "Note: Pintxøs used backup-model as a fallback for this item." in rendered
+
+
+def _seed_empty_feed():
+    with db() as conn:
+        feed_id = conn.execute(
+            "INSERT INTO feeds(url, title, created_at) VALUES (?, ?, ?)",
+            (FEED_URL, "Example Feed", now()),
+        ).lastrowid
+    return feed_id
+
+
+def _seed_summarized_items(feed_id, total, model_fallback_count):
+    """Insert `total` summarized items for `feed_id`, `model_fallback_count` of them
+    with model_fallback=1, all created "today" (created_at defaults to now())."""
+    with db() as conn:
+        for i in range(total):
+            conn.execute(
+                """INSERT INTO items
+                (feed_id, guid, link, original_title, published_at, headline, summary,
+                 fallback, model_fallback, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    feed_id,
+                    f"guid-fb-{i}",
+                    f"https://example.com/fb-{i}",
+                    f"Original {i}",
+                    "2026-09-11T12:00:00+00:00",
+                    f"Headline {i}",
+                    "Summary.",
+                    0,
+                    1 if i < model_fallback_count else 0,
+                    now(),
+                ),
+            )
+
+
+def test_feed_xml_pause_warning_present_for_402():
+    from pintxos import feedstats
+
+    feed_id = _seed()
+    with db() as conn:
+        conn.executemany(
+            "INSERT INTO settings(key, value) VALUES (?, ?)",
+            [
+                ("PINTXOS_PAUSED_UNTIL", "2026-09-11T09:00:00+00:00"),
+                ("PINTXOS_PAUSED_SINCE", "2026-09-11T08:15:00+00:00"),
+                ("PINTXOS_PAUSED_ERROR", "credit: OpenRouter HTTP 402: insufficient credit"),
+            ],
+        )
+    with TestClient(app) as c:
+        resp = c.get(f"/feeds/{feed_id}.xml")
+    body = resp.text
+    day = feedstats.today()
+    assert f"pintxos-paused-2026-09-11-{day}" in body
+    assert "Pintxøs has stopped summarizing" in body
+    assert "no credit left" in body
+
+
+def test_feed_xml_pause_warning_present_for_401():
+    feed_id = _seed()
+    with db() as conn:
+        conn.executemany(
+            "INSERT INTO settings(key, value) VALUES (?, ?)",
+            [
+                ("PINTXOS_PAUSED_UNTIL", "2026-09-11T09:00:00+00:00"),
+                ("PINTXOS_PAUSED_SINCE", "2026-09-11T08:15:00+00:00"),
+                ("PINTXOS_PAUSED_ERROR", "key: OpenRouter HTTP 401: invalid api key"),
+            ],
+        )
+    with TestClient(app) as c:
+        resp = c.get(f"/feeds/{feed_id}.xml")
+    assert "rejected the API key" in resp.text
+
+
+def test_feed_xml_pause_warning_present_for_other_error():
+    feed_id = _seed()
+    with db() as conn:
+        conn.executemany(
+            "INSERT INTO settings(key, value) VALUES (?, ?)",
+            [
+                ("PINTXOS_PAUSED_UNTIL", "2026-09-11T09:00:00+00:00"),
+                ("PINTXOS_PAUSED_SINCE", "2026-09-11T08:15:00+00:00"),
+                ("PINTXOS_PAUSED_ERROR", "OpenRouter HTTP 500: internal error"),
+            ],
+        )
+    with TestClient(app) as c:
+        resp = c.get(f"/feeds/{feed_id}.xml")
+    body = resp.text
+    assert "refused the request" in body
+    assert "no credit left" not in body
+    assert "rejected the API key" not in body
+
+
+def test_feed_xml_pause_warning_absent_when_unset():
+    feed_id = _seed()
+    with TestClient(app) as c:
+        resp = c.get(f"/feeds/{feed_id}.xml")
+    assert "Pintxøs has stopped summarizing" not in resp.text
+
+
+def test_feed_xml_fallback_warning_present_at_2_of_10():
+    feed_id = _seed_empty_feed()
+    _seed_summarized_items(feed_id, total=10, model_fallback_count=2)
+    with TestClient(app) as c:
+        resp = c.get(f"/feeds/{feed_id}.xml")
+    assert "Your default model failed on 2 of 10 articles today" in resp.text
+
+
+def test_feed_xml_fallback_warning_absent_at_1_of_10():
+    feed_id = _seed_empty_feed()
+    _seed_summarized_items(feed_id, total=10, model_fallback_count=1)
+    with TestClient(app) as c:
+        resp = c.get(f"/feeds/{feed_id}.xml")
+    assert "Your default model failed on" not in resp.text
+
+
+def test_feed_xml_fallback_warning_absent_below_volume_floor():
+    """1 of 5 is a 20% ratio, but total < 10 so the warning does not fire."""
+    feed_id = _seed_empty_feed()
+    _seed_summarized_items(feed_id, total=5, model_fallback_count=1)
+    with TestClient(app) as c:
+        resp = c.get(f"/feeds/{feed_id}.xml")
+    assert "Your default model failed on" not in resp.text
