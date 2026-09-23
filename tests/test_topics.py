@@ -25,22 +25,24 @@ EXPECTED_SLUGS = [
 
 
 class FakeComplete:
-    """Stands in for llm.complete: returns `text`, or raises `error` if given."""
+    """Stands in for llm.complete: returns a Completion carrying `text` and
+    `model`, or raises `error` if given."""
 
-    def __init__(self, text=None, error=None):
+    def __init__(self, text=None, error=None, model="test/model"):
         self._text = text
         self._error = error
+        self._model = model
         self.calls = []
 
     def __call__(self, *args, **kwargs):
         self.calls.append((args, kwargs))
         if self._error is not None:
             raise self._error
-        return self._text
+        return llm.Completion(self._text, self._model)
 
 
-def _patch_complete(monkeypatch, text=None, error=None):
-    fake = FakeComplete(text, error)
+def _patch_complete(monkeypatch, text=None, error=None, model="test/model"):
+    fake = FakeComplete(text, error, model)
     # classify_topic() calls llm.complete through the module object; patch it at the source.
     monkeypatch.setattr("pintxos.llm.complete", fake)
     return fake
@@ -168,4 +170,16 @@ def test_classify_topic_propagates_missing_api_key(monkeypatch, tmp_path):
     monkeypatch.setenv("PINTXOS_DATA_DIR", str(tmp_path))
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     with pytest.raises(MissingApiKey):
+        classify_topic("Big match", [], "")
+
+
+def test_classify_topic_ignores_the_answering_model(monkeypatch):
+    _patch_complete(monkeypatch, text="sport", model="vendor/cheap")
+    assert classify_topic("Big match", [], "") == "sport"
+
+
+def test_classify_topic_propagates_account_error(monkeypatch):
+    _patch_complete(monkeypatch, error=llm.AccountError("no credit"))
+    # Failing open here would hide an account outage from the poll.
+    with pytest.raises(llm.AccountError):
         classify_topic("Big match", [], "")
