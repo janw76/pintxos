@@ -1288,6 +1288,11 @@ def retry_fallback(feed_id: int, limit: int | None = None, only_blocked: bool = 
                             str(e)[:500], item_id,
                         ),
                     )
+                if _billed(e):
+                    # The provider answered and charged for it, so the feed's stats
+                    # must count it; a transport failure must not.
+                    with db() as conn:
+                        feedstats.bump(conn, feed_id, summaries=1)
                 continue  # left as a fallback item; a later retry can try again
 
             with db() as conn:  # commit per item: a crash keeps what we already paid for
