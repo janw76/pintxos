@@ -318,13 +318,17 @@ def test_account_error_is_an_llm_error_but_not_a_missing_key():
     assert not issubclass(llm.MissingApiKey, llm.AccountError)
 
 
-@pytest.mark.parametrize("status", [401, 402, 403])
-def test_openrouter_account_statuses_raise_account_error(monkeypatch, status):
+@pytest.mark.parametrize(
+    ("status", "expected_kind"), [(401, "key"), (402, "credit"), (403, "key")]
+)
+def test_openrouter_account_statuses_raise_account_error(monkeypatch, status, expected_kind):
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
     _patch_post(monkeypatch, FakeResponse(status_code=status, text="no credit left"))
 
     with pytest.raises(llm.AccountError) as excinfo:
         llm.complete("sys", "user", 10, "openai/gpt-5")
+    assert excinfo.value.kind == expected_kind
+    assert str(excinfo.value).startswith(f"{expected_kind}: ")
     assert str(status) in str(excinfo.value)
     assert "no credit left" in str(excinfo.value)
 
@@ -346,8 +350,10 @@ def test_anthropic_auth_status_raises_account_error(monkeypatch, status):
     error.status_code = status
     _patch_anthropic(monkeypatch, error=error)
 
-    with pytest.raises(llm.AccountError):
+    with pytest.raises(llm.AccountError) as excinfo:
         llm.complete("sys", "user", 10, "claude-haiku-4-5-20251001")
+    assert excinfo.value.kind == "key"
+    assert str(excinfo.value).startswith("key: ")
 
 
 def test_anthropic_credit_balance_message_raises_account_error(monkeypatch):
@@ -359,8 +365,10 @@ def test_anthropic_credit_balance_message_raises_account_error(monkeypatch):
     )
     _patch_anthropic(monkeypatch, error=error)
 
-    with pytest.raises(llm.AccountError, match="credit balance"):
+    with pytest.raises(llm.AccountError, match="credit balance") as excinfo:
         llm.complete("sys", "user", 10, "claude-haiku-4-5-20251001")
+    assert excinfo.value.kind == "credit"
+    assert str(excinfo.value).startswith("credit: ")
 
 
 def test_anthropic_server_error_stays_transient(monkeypatch):

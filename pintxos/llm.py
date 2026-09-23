@@ -21,10 +21,6 @@ REQUEST_TIMEOUT = 60
 # Models that reject reasoning: {"enabled": False} with HTTP 400; learned at runtime.
 _REASONING_MANDATORY: set[str] = set()
 
-# OpenRouter statuses that mean "your account", not "your request": no key, no
-# credit, key not allowed to use this model.
-_ACCOUNT_STATUS = {401, 402, 403}
-
 # Anthropic says this in the message body, not in a dedicated status code.
 _ANTHROPIC_CREDIT_MARKER = "credit balance is too low"
 
@@ -43,7 +39,14 @@ class AccountError(LLMError):
     No credit, a rejected or unauthorized key, a model the key may not use: retrying
     the same call cannot help, only a human can fix it. Every other failure (429,
     5xx, timeouts, an unusable body) stays a plain LLMError and is worth a retry.
+
+    `kind` classifies the reason ("credit", "key", or "other") so a caller can react
+    to the failure kind instead of pattern-matching the message text.
     """
+
+    def __init__(self, message: str, kind: str = "other") -> None:
+        self.kind = kind
+        super().__init__(f"{kind}: {message}")
 
 
 class Completion(NamedTuple):
@@ -101,8 +104,10 @@ def _complete_anthropic(
         )
     except anthropic.APIError as e:
         status = getattr(e, "status_code", None)
-        if status in (401, 403) or _ANTHROPIC_CREDIT_MARKER in str(e).lower():
-            raise AccountError(str(e)) from e
+        if status in (401, 403):
+            raise AccountError(str(e), kind="key") from e
+        if _ANTHROPIC_CREDIT_MARKER in str(e).lower():
+            raise AccountError(str(e), kind="credit") from e
         raise LLMError(str(e)) from e
     return Completion(response.content[0].text, getattr(response, "model", None) or model)
 
@@ -184,8 +189,10 @@ def _complete_openrouter(
 
     if not 200 <= response.status_code < 300:
         message = f"OpenRouter HTTP {response.status_code}: {response.text[:500]}"
-        if response.status_code in _ACCOUNT_STATUS:
-            raise AccountError(message)
+        if response.status_code == 402:
+            raise AccountError(message, kind="credit")
+        if response.status_code in (401, 403):
+            raise AccountError(message, kind="key")
         raise LLMError(message)
 
     try:

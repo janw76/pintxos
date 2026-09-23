@@ -3648,8 +3648,8 @@ def test_account_error_during_held_sweep_pauses_before_fetching_the_feed(feed_id
     row = row_by_id(held_id)
     assert row["summarize_attempts"] == 0  # not counted as a failed attempt
     assert row["last_attempt_at"] is None
-    assert feed_row(feed_id)["last_error"] == "no credit"
-    assert get_setting("PINTXOS_PAUSED_ERROR") == "no credit"
+    assert feed_row(feed_id)["last_error"] == "other: no credit"
+    assert get_setting("PINTXOS_PAUSED_ERROR") == "other: no credit"
     assert poll.paused_until() is not None
 
 
@@ -3677,7 +3677,7 @@ def test_account_error_from_classify_pauses_without_holding_the_entry(feed_id, m
 
     assert len(fetch_calls) == 1  # entries "two" and "three" never fetched
     assert items() == []  # no row: topic unknown, nothing to hold yet
-    assert feed_row(feed_id)["last_error"] == "no credit"
+    assert feed_row(feed_id)["last_error"] == "other: no credit"
     assert poll.paused_until() is not None
 
 
@@ -3705,12 +3705,12 @@ def test_account_error_from_summarize_pauses_and_holds_the_entry(feed_id, monkey
     assert row["link"] == "https://example.com/one"
     assert row["summarize_attempts"] == 0
     assert row["last_attempt_at"] is None
-    assert row["summarize_error"] == "no credit"
+    assert row["summarize_error"] == "other: no credit"
     assert row["headline"] is None
     assert row["summary"] is None
     assert row["model"] is None
-    assert feed_row(feed_id)["last_error"] == "no credit"
-    assert get_setting("PINTXOS_PAUSED_ERROR") == "no credit"
+    assert feed_row(feed_id)["last_error"] == "other: no credit"
+    assert get_setting("PINTXOS_PAUSED_ERROR") == "other: no credit"
 
 
 def test_poll_feed_skips_when_paused(feed_id, monkeypatch):
@@ -3753,7 +3753,7 @@ def test_retry_fallback_account_error_from_summarize_pauses_and_stops(feed_id, m
     poll.retry_fallback(feed_id)  # returns rather than raising
 
     assert len(summarize_calls) == 1  # stops after the first AccountError
-    assert get_setting("PINTXOS_PAUSED_ERROR") == "no credit"
+    assert get_setting("PINTXOS_PAUSED_ERROR") == "other: no credit"
     assert poll.paused_until() is not None
     for item_id in blocked_ids:
         assert row_by_id(item_id)["summarize_attempts"] == 0  # not counted as a failure
@@ -3805,4 +3805,4 @@ def test_probe_failure_extends_pause_but_keeps_since(feed_id, monkeypatch):
     assert get_setting("PINTXOS_PAUSED_SINCE") == since  # unchanged
     new_until = datetime.fromisoformat(get_setting("PINTXOS_PAUSED_UNTIL"))
     assert new_until > old_until  # moved forward
-    assert get_setting("PINTXOS_PAUSED_ERROR") == "still no credit"
+    assert get_setting("PINTXOS_PAUSED_ERROR") == "other: still no credit"

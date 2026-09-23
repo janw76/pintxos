@@ -236,9 +236,12 @@ def pause_reason(error: str | None) -> str:
     surfaces never drift out of sync on wording.
     """
     text = error or ""
-    if "402" in text or "credit balance" in text:
+    kind, sep, _rest = text.partition(": ")
+    if not sep or kind not in ("credit", "key", "other"):
+        kind = ""
+    if kind == "credit":
         return "Your AI provider reports that there is no credit left."
-    if "401" in text or "403" in text:
+    if kind == "key":
         return "Your AI provider rejected the API key."
     return "Your AI provider refused the request."
 

@@ -64,7 +64,7 @@ def test_index_pause_banner_shown_when_paused(monkeypatch):
             [
                 ("PINTXOS_PAUSED_UNTIL", "2026-09-11T09:00:00+00:00"),
                 ("PINTXOS_PAUSED_SINCE", "2026-09-11T08:15:00+00:00"),
-                ("PINTXOS_PAUSED_ERROR", "OpenRouter HTTP 402: insufficient credit"),
+                ("PINTXOS_PAUSED_ERROR", "credit: OpenRouter HTTP 402: insufficient credit"),
             ],
         )
     with TestClient(app) as c:

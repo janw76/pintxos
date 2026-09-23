@@ -1183,7 +1183,7 @@ def test_pause_warning_item_reason_credit():
     item = pause_warning_item(
         feed,
         paused_since="2026-09-11T08:15:00+00:00",
-        error="OpenRouter HTTP 402: insufficient credit",
+        error="credit: OpenRouter HTTP 402: insufficient credit",
         day="2026-09-11",
         settings_url="https://pintxos.example/settings",
     )
@@ -1198,7 +1198,12 @@ def test_pause_warning_item_reason_credit():
     assert "checks again every 30 minutes" in item["description"]
 
 
-def test_pause_warning_item_reason_credit_balance_phrase():
+def test_pause_warning_item_legacy_error_without_prefix_is_generic():
+    """Text stored before the kind prefix existed has no "kind: " prefix at all;
+
+    it must fall back to the generic sentence rather than substring-matching
+    "credit balance" (or any other historical wording) inside it.
+    """
     from pintxos.feed_out import pause_warning_item
 
     feed = {"id": 1, "title": "Feed", "url": "https://example.com/feed.xml"}
@@ -1209,7 +1214,8 @@ def test_pause_warning_item_reason_credit_balance_phrase():
         day="2026-09-11",
         settings_url="https://pintxos.example/settings",
     )
-    assert "Your AI provider reports that there is no credit left." in item["description"]
+    assert "Your AI provider refused the request." in item["description"]
+    assert "no credit left" not in item["description"]
 
 
 def test_pause_warning_item_reason_unauthorized():
@@ -1219,11 +1225,30 @@ def test_pause_warning_item_reason_unauthorized():
     item = pause_warning_item(
         feed,
         paused_since="2026-09-11T08:15:00+00:00",
-        error="OpenRouter HTTP 401: invalid api key",
+        error="key: OpenRouter HTTP 401: invalid api key",
         day="2026-09-11",
         settings_url="https://pintxos.example/settings",
     )
     assert "Your AI provider rejected the API key." in item["description"]
+
+
+def test_pause_warning_item_reason_key_does_not_false_positive_on_substring_402():
+    """A "key" classification must not be re-triggered as "credit" just because
+
+    the request body happens to contain the digits 402 somewhere in its text.
+    """
+    from pintxos.feed_out import pause_warning_item
+
+    feed = {"id": 1, "title": "Feed", "url": "https://example.com/feed.xml"}
+    item = pause_warning_item(
+        feed,
+        paused_since="2026-09-11T08:15:00+00:00",
+        error="key: OpenRouter HTTP 401: request 402abc",
+        day="2026-09-11",
+        settings_url="https://pintxos.example/settings",
+    )
+    assert "Your AI provider rejected the API key." in item["description"]
+    assert "no credit left" not in item["description"]
 
 
 def test_pause_warning_item_reason_other():
@@ -1498,7 +1523,7 @@ def test_feed_xml_pause_warning_present_for_402():
             [
                 ("PINTXOS_PAUSED_UNTIL", "2026-09-11T09:00:00+00:00"),
                 ("PINTXOS_PAUSED_SINCE", "2026-09-11T08:15:00+00:00"),
-                ("PINTXOS_PAUSED_ERROR", "OpenRouter HTTP 402: insufficient credit"),
+                ("PINTXOS_PAUSED_ERROR", "credit: OpenRouter HTTP 402: insufficient credit"),
             ],
         )
     with TestClient(app) as c:
@@ -1518,7 +1543,7 @@ def test_feed_xml_pause_warning_present_for_401():
             [
                 ("PINTXOS_PAUSED_UNTIL", "2026-09-11T09:00:00+00:00"),
                 ("PINTXOS_PAUSED_SINCE", "2026-09-11T08:15:00+00:00"),
-                ("PINTXOS_PAUSED_ERROR", "OpenRouter HTTP 401: invalid api key"),
+                ("PINTXOS_PAUSED_ERROR", "key: OpenRouter HTTP 401: invalid api key"),
             ],
         )
     with TestClient(app) as c:
