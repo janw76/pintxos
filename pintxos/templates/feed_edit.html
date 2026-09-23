@@ -118,6 +118,18 @@
   {% endif %}
   <div class="muted">Rule changes apply from the next poll.</div>
 </div>
+{% if unreadable_items %}
+<div class="field filter-log">
+  <label>Unreadable</label>
+  <ul class="filter-log-list">
+    {% for entry in unreadable_items %}
+    <li>
+      <span><a href="{{ entry.link }}" target="_blank" rel="noopener">{{ entry.title }}</a> <span class="mono muted">{{ entry.fetch_status or 'error' }}</span></span>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
 <h2>Status</h2>
 <p>{% with fetch_status=fetch_status %}{% include "_fetch_status.html" %}{% endwith %}</p>
 <div class="muted">Summaries: {{ summaries_today }} paid today, {{ kept_today }} new items kept, {{ summaries_total }} total</div>
