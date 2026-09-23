@@ -19,7 +19,7 @@ from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from pintxos import feedstats, llm, poll, topics
-from pintxos.config import DEFAULTS, db_path
+from pintxos.config import DEFAULTS, db_path, get_setting
 from pintxos.cookies import cookie_path
 from pintxos.db import connect, db, now
 from pintxos.summarize import MissingApiKey, SummarizeError
@@ -1321,6 +1321,16 @@ def test_retry_fallback_pops_queued_sentinel_on_error(feed_id, monkeypatch):
     poll._status[feed_id] = poll._QUEUED
     with pytest.raises(RuntimeError):
         poll.retry_fallback(feed_id)
+    assert feed_id not in poll._status
+
+
+def test_retry_fallback_pops_queued_sentinel_when_paused(feed_id):
+    """The pause gate at the top of retry_fallback must clear the Queued sentinel
+    retry_one stamped before scheduling it, same as a normal run does -- otherwise
+    a manual retry while paused leaves the feed showing 'Queued' forever."""
+    poll._pause("no credit")
+    poll._status[feed_id] = poll._QUEUED
+    poll.retry_fallback(feed_id)
     assert feed_id not in poll._status
 
 
@@ -3507,3 +3517,262 @@ def test_retry_fallback_only_blocked_ignores_held_rows(feed_id, monkeypatch):
     )
 
     poll.retry_fallback(feed_id, limit=3, only_blocked=True)
+
+
+# --- Global pause on account errors (pintxos-6en.4) -------------------------------
+
+
+def test_pause_sets_until_since_and_error():
+    poll._pause("no credit")
+    with db() as conn:
+        until = datetime.fromisoformat(get_setting("PINTXOS_PAUSED_UNTIL", conn))
+        since = datetime.fromisoformat(get_setting("PINTXOS_PAUSED_SINCE", conn))
+        error = get_setting("PINTXOS_PAUSED_ERROR", conn)
+    assert error == "no credit"
+    assert since <= datetime.now(UTC)
+    delta = (until - since).total_seconds()
+    assert abs(delta - poll.PAUSE_MINUTES * 60) < 5
+
+
+def test_pause_truncates_error_to_500_chars():
+    poll._pause("x" * 600)
+    assert len(get_setting("PINTXOS_PAUSED_ERROR")) == 500
+
+
+def test_pause_again_extends_until_but_keeps_since():
+    poll._pause("first")
+    since1 = get_setting("PINTXOS_PAUSED_SINCE")
+    until1 = datetime.fromisoformat(get_setting("PINTXOS_PAUSED_UNTIL"))
+
+    poll._pause("second")
+    since2 = get_setting("PINTXOS_PAUSED_SINCE")
+    until2 = datetime.fromisoformat(get_setting("PINTXOS_PAUSED_UNTIL"))
+
+    assert since2 == since1
+    assert until2 >= until1
+    assert get_setting("PINTXOS_PAUSED_ERROR") == "second"
+
+
+def test_unpause_clears_all_three_keys():
+    poll._pause("no credit")
+    poll._unpause()
+    assert get_setting("PINTXOS_PAUSED_UNTIL") is None
+    assert get_setting("PINTXOS_PAUSED_SINCE") is None
+    assert get_setting("PINTXOS_PAUSED_ERROR") is None
+
+
+def test_paused_until_none_when_unset():
+    assert poll.paused_until() is None
+
+
+def test_paused_until_parses_the_stored_value():
+    poll._pause("no credit")
+    until = poll.paused_until()
+    assert isinstance(until, datetime)
+    assert until.tzinfo is not None
+
+
+def test_paused_until_none_when_unparseable():
+    with db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
+            ("PINTXOS_PAUSED_UNTIL", "not-a-date"),
+        )
+    assert poll.paused_until() is None
+
+
+def _seed_pause(minutes_until: float, minutes_since: float, error: str = "no credit") -> None:
+    """Install PINTXOS_PAUSED_* settings directly, as if a real pause had happened
+    `minutes_since` minutes ago and is due to lift `minutes_until` minutes from now
+    (negative = already in the past)."""
+    with db() as conn:
+        conn.executemany(
+            "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
+            [
+                (
+                    "PINTXOS_PAUSED_UNTIL",
+                    (datetime.now(UTC) + timedelta(minutes=minutes_until)).isoformat(),
+                ),
+                (
+                    "PINTXOS_PAUSED_SINCE",
+                    (datetime.now(UTC) - timedelta(minutes=minutes_since)).isoformat(),
+                ),
+                ("PINTXOS_PAUSED_ERROR", error),
+            ],
+        )
+
+
+def test_account_error_during_held_sweep_pauses_before_fetching_the_feed(feed_id, monkeypatch):
+    held_id = _seed_held_item(feed_id, attempts=0)
+    monkeypatch.setattr(
+        poll, "_get", lambda url: pytest.fail(f"unexpected GET {url}")
+    )
+
+    def boom(*_args, **_kwargs):
+        raise llm.AccountError("no credit")
+
+    monkeypatch.setattr(poll, "summarize", boom)
+
+    assert poll.poll_feed(feed_id) is False
+
+    row = row_by_id(held_id)
+    assert row["summarize_attempts"] == 0  # not counted as a failed attempt
+    assert row["last_attempt_at"] is None
+    assert feed_row(feed_id)["last_error"] == "no credit"
+    assert get_setting("PINTXOS_PAUSED_ERROR") == "no credit"
+    assert poll.paused_until() is not None
+
+
+def test_account_error_from_classify_pauses_without_holding_the_entry(feed_id, monkeypatch):
+    """No topic is known yet, so no row is inserted at all -- an inserted-but-
+    unclassified row would be `seen` forever and skip classification (and so
+    mute_topics) on every later poll. Leaving it unseen means the next poll
+    re-fetches and re-classifies it from scratch."""
+    set_feed(feed_id, classify_topics=1)
+    monkeypatch.setattr(poll, "_get", lambda url: FakeResponse(SAMPLE))
+    fetch_calls = []
+    monkeypatch.setattr(
+        poll, "fetch_article", lambda link: (fetch_calls.append(link), (None, "error", []))[1]
+    )
+    monkeypatch.setattr(
+        poll, "summarize", lambda *a, **k: pytest.fail("summarize should not be reached")
+    )
+
+    def boom_classify(title, labels, lead, model=None):
+        raise llm.AccountError("no credit")
+
+    monkeypatch.setattr(topics, "classify_topic", boom_classify)
+
+    assert poll.poll_feed(feed_id) is False
+
+    assert len(fetch_calls) == 1  # entries "two" and "three" never fetched
+    assert items() == []  # no row: topic unknown, nothing to hold yet
+    assert feed_row(feed_id)["last_error"] == "no credit"
+    assert poll.paused_until() is not None
+
+
+def test_account_error_from_summarize_pauses_and_holds_the_entry(feed_id, monkeypatch):
+    monkeypatch.setattr(poll, "_get", lambda url: FakeResponse(SAMPLE))
+    fetch_calls = []
+    monkeypatch.setattr(
+        poll, "fetch_article", lambda link: (fetch_calls.append(link), (None, "error", []))[1]
+    )
+    summarize_calls = []
+
+    def boom_summarize(*args, **kwargs):
+        summarize_calls.append(args)
+        raise llm.AccountError("no credit")
+
+    monkeypatch.setattr(poll, "summarize", boom_summarize)
+
+    assert poll.poll_feed(feed_id) is False
+
+    assert len(summarize_calls) == 1
+    assert len(fetch_calls) == 1  # entries "two" and "three" never fetched
+    rows = items()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["link"] == "https://example.com/one"
+    assert row["summarize_attempts"] == 0
+    assert row["last_attempt_at"] is None
+    assert row["summarize_error"] == "no credit"
+    assert row["headline"] is None
+    assert row["summary"] is None
+    assert row["model"] is None
+    assert feed_row(feed_id)["last_error"] == "no credit"
+    assert get_setting("PINTXOS_PAUSED_ERROR") == "no credit"
+
+
+def test_poll_feed_skips_when_paused(feed_id, monkeypatch):
+    poll._pause("no credit")
+    monkeypatch.setattr(poll, "_get", lambda url: pytest.fail("unexpected feed fetch"))
+    monkeypatch.setattr(
+        poll, "fetch_article", lambda link: pytest.fail("unexpected article fetch")
+    )
+    monkeypatch.setattr(
+        poll, "summarize", lambda *a, **k: pytest.fail("unexpected summarize call")
+    )
+
+    assert poll.poll_feed(feed_id) is True
+    assert items() == []
+
+
+def test_poll_feed_pops_queued_sentinel_when_paused(feed_id):
+    """A manual poll_one queues the feed with the Queued sentinel before poll_feed
+    runs; if the pause gate returns before that sentinel is popped, the feed shows
+    'Queued' forever."""
+    poll._pause("no credit")
+    poll._status[feed_id] = poll._QUEUED
+    assert poll.poll_feed(feed_id) is True
+    assert feed_id not in poll._status
+
+
+def test_retry_fallback_account_error_from_summarize_pauses_and_stops(feed_id, monkeypatch):
+    """retry_fallback must catch AccountError around its own summarize call, same as
+    poll_feed does, or a blocked-item retry's account error escapes uncaught."""
+    blocked_ids = _seed_blocked_items(feed_id, 3)
+    monkeypatch.setattr(poll, "fetch_article", lambda link: ("FULL ARTICLE TEXT " * 20, "ok", []))
+    summarize_calls = []
+
+    def boom(*args, **kwargs):
+        summarize_calls.append(args)
+        raise llm.AccountError("no credit")
+
+    monkeypatch.setattr(poll, "summarize", boom)
+
+    poll.retry_fallback(feed_id)  # returns rather than raising
+
+    assert len(summarize_calls) == 1  # stops after the first AccountError
+    assert get_setting("PINTXOS_PAUSED_ERROR") == "no credit"
+    assert poll.paused_until() is not None
+    for item_id in blocked_ids:
+        assert row_by_id(item_id)["summarize_attempts"] == 0  # not counted as a failure
+
+
+def test_retry_fallback_skips_when_paused(feed_id, monkeypatch):
+    poll._pause("no credit")
+    monkeypatch.setattr(
+        poll, "fetch_article", lambda link: pytest.fail("unexpected article fetch")
+    )
+
+    poll.retry_fallback(feed_id)  # returns without raising: gated before any DB/fetch work
+
+
+def test_poll_all_skips_when_paused(feed_id, monkeypatch):
+    poll._pause("no credit")
+    monkeypatch.setattr(poll, "_get", lambda url: pytest.fail("unexpected feed fetch"))
+
+    poll.poll_all()
+    assert items() == []
+
+
+def test_probe_success_unpauses(feed_id, calls):
+    _seed_pause(minutes_until=-1, minutes_since=31)
+
+    poll.poll_all()
+
+    assert len(calls) == 3  # the poll proceeded normally, cooldown already elapsed
+    assert get_setting("PINTXOS_PAUSED_UNTIL") is None
+    assert get_setting("PINTXOS_PAUSED_SINCE") is None
+    assert get_setting("PINTXOS_PAUSED_ERROR") is None
+
+
+def test_probe_failure_extends_pause_but_keeps_since(feed_id, monkeypatch):
+    _seed_pause(minutes_until=-1, minutes_since=31)
+    since = get_setting("PINTXOS_PAUSED_SINCE")
+    old_until = datetime.fromisoformat(get_setting("PINTXOS_PAUSED_UNTIL"))
+
+    monkeypatch.setattr(poll, "_get", lambda url: FakeResponse(SAMPLE))
+    monkeypatch.setattr(poll, "fetch_article", lambda link: (None, "error", []))
+
+    def boom(*_args, **_kwargs):
+        raise llm.AccountError("still no credit")
+
+    monkeypatch.setattr(poll, "summarize", boom)
+
+    assert poll.poll_feed(feed_id) is False
+
+    assert get_setting("PINTXOS_PAUSED_SINCE") == since  # unchanged
+    new_until = datetime.fromisoformat(get_setting("PINTXOS_PAUSED_UNTIL"))
+    assert new_until > old_until  # moved forward
+    assert get_setting("PINTXOS_PAUSED_ERROR") == "still no credit"
