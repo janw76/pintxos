@@ -63,15 +63,25 @@ def provider(model: str) -> str:
 
 
 def complete(
-    system: str, user: str, max_tokens: int, model: str, json: bool = False
+    system: str,
+    user: str,
+    max_tokens: int,
+    model: str,
+    json: bool = False,
+    fallback: bool = True,
 ) -> Completion:
     """Return the model's reply for one system + one user message.
 
     `json` asks the provider for a JSON object reply where it supports that
     (OpenRouter's response_format); the Anthropic branch relies on the prompt.
+
+    `fallback` controls whether PINTXOS_FALLBACK_MODEL is added to OpenRouter's
+    "models" list; pass False when the caller specifically wants to know
+    whether `model` itself works (e.g. the settings health check), since a
+    configured fallback would otherwise mask a broken primary model.
     """
     if provider(model) == "openrouter":
-        return _complete_openrouter(system, user, max_tokens, model, json)
+        return _complete_openrouter(system, user, max_tokens, model, json, fallback)
     return _complete_anthropic(system, user, max_tokens, model)
 
 
@@ -121,7 +131,7 @@ def _empty_response_error(response: httpx.Response) -> LLMError:
 
 
 def _complete_openrouter(
-    system: str, user: str, max_tokens: int, model: str, json: bool
+    system: str, user: str, max_tokens: int, model: str, json: bool, fallback: bool = True
 ) -> Completion:
     api_key = get_setting("OPENROUTER_API_KEY")
     if not api_key:
@@ -140,9 +150,11 @@ def _complete_openrouter(
     }
     # OpenRouter routes to the first model of "models" that answers, so a dead or
     # rate-limited primary degrades to the fallback instead of failing the item.
-    fallback = get_setting("PINTXOS_FALLBACK_MODEL")
-    if fallback and fallback != model:
-        body["models"] = [model, fallback]
+    # `fallback=False` callers (the settings health check) want to know whether
+    # `model` itself works, so the fallback would only mask a broken primary.
+    fallback_model = get_setting("PINTXOS_FALLBACK_MODEL") if fallback else None
+    if fallback_model and fallback_model != model:
+        body["models"] = [model, fallback_model]
     if json:
         body["response_format"] = {"type": "json_object"}
 

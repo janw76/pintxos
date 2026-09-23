@@ -636,6 +636,7 @@ def _key_available(key_name: str, submitted: str, conn: sqlite3.Connection) -> b
 def settings_page(request: Request) -> Response:
     with db() as conn:
         model = get_setting("PINTXOS_MODEL", conn)
+        fallback_model = get_setting("PINTXOS_FALLBACK_MODEL", conn) or ""
         poll_minutes = get_setting("PINTXOS_POLL_MINUTES", conn)
         items_per_feed = get_setting("PINTXOS_ITEMS_PER_FEED", conn)
         filter_ads = get_setting("PINTXOS_FILTER_ADS", conn)
@@ -664,6 +665,7 @@ def settings_page(request: Request) -> Response:
     keep_patterns_env = env_pinned("PINTXOS_AD_KEEP_PATTERNS")
     warn_env = env_pinned("PINTXOS_WARN_AT")
     warn_hard_env = env_pinned("PINTXOS_WARN_HARD_AT")
+    fallback_model_env = env_pinned("PINTXOS_FALLBACK_MODEL")
     jar = get_jar()
     cookie_domains = summary(jar) if jar else []
     cookie_file = str(cookie_path())
@@ -678,6 +680,8 @@ def settings_page(request: Request) -> Response:
         "settings.html",
         {
             "model": model,
+            "fallback_model": fallback_model,
+            "fallback_model_env": fallback_model_env,
             "poll_minutes": poll_minutes,
             "items_per_feed": items_per_feed,
             "env_key_set": env_key_set,
@@ -711,6 +715,7 @@ def settings_page(request: Request) -> Response:
 @app.post("/settings")
 def save_settings(
     model: str = Form(...),
+    fallback_model: str = Form(""),
     poll_minutes: str = Form(...),
     items_per_feed: str = Form(...),
     api_key: str = Form(""),
@@ -816,6 +821,8 @@ def save_settings(
         ("PINTXOS_POLL_MINUTES", str(poll_minutes_i)),
         ("PINTXOS_ITEMS_PER_FEED", str(items_per_feed_i)),
     ]
+    if not env_pinned("PINTXOS_FALLBACK_MODEL"):
+        pairs.append(("PINTXOS_FALLBACK_MODEL", fallback_model.strip()))
     if api_key and not env_pinned("ANTHROPIC_API_KEY"):
         pairs.append(("ANTHROPIC_API_KEY", api_key))
     if openrouter_api_key and not env_pinned("OPENROUTER_API_KEY"):
@@ -854,7 +861,13 @@ def test_settings() -> Response:
     with db() as conn:
         model = get_setting("PINTXOS_MODEL", conn)
     try:
-        text = llm.complete("You are a health check.", "Reply with the single word OK.", 50, model)
+        text = llm.complete(
+            "You are a health check.",
+            "Reply with the single word OK.",
+            50,
+            model,
+            fallback=False,
+        )
     except llm.LLMError as e:
         return _redirect("/settings", err=f"{model}: {e}")
     return _redirect("/settings", msg=f"{model} answered: {text.text.strip()}")

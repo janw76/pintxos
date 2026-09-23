@@ -10,6 +10,12 @@
   </div>
   {% include "_model_presets.html" %}
   <div class="field">
+    <label for="fallback_model">Fallback model</label>
+    <input type="text" id="fallback_model" name="fallback_model" value="{{ fallback_model }}" {% if fallback_model_env %}disabled{% endif %}>
+    <div class="muted">Used automatically when the default model fails; empty means the built-in default.</div>
+    {% if fallback_model_env %}<div class="muted">Set by PINTXOS_FALLBACK_MODEL in the environment.</div>{% endif %}
+  </div>
+  <div class="field">
     <label for="api_key">Anthropic API key</label>
     {% if env_key_set %}
       <input type="password" id="api_key" name="api_key" value="" disabled>

@@ -723,6 +723,94 @@ def test_settings_page_shows_model_presets_and_key_fields():
     assert "<summary>Model presets</summary>" not in page
 
 
+def test_settings_page_shows_fallback_model_field():
+    with TestClient(app) as c:
+        page = c.get("/settings").text
+
+    assert 'name="fallback_model"' in page
+    assert 'value="deepseek/deepseek-v4-flash"' in page
+    assert "Used automatically when the default model fails; empty means the built-in default." in page
+
+
+def test_settings_post_saves_fallback_model():
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "z-ai/glm-5.3-flash",
+                "fallback_model": "vendor/cheap",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "",
+                "openrouter_api_key": "sk-or-test",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "err=" not in resp.headers["location"]
+
+    assert get_setting("PINTXOS_FALLBACK_MODEL") == "vendor/cheap"
+
+
+def test_settings_post_empty_fallback_model_saves_empty_string():
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "z-ai/glm-5.3-flash",
+                "fallback_model": "",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "",
+                "openrouter_api_key": "sk-or-test",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "err=" not in resp.headers["location"]
+
+    from pintxos.db import db
+
+    with db() as conn:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key = ?", ("PINTXOS_FALLBACK_MODEL",)
+        ).fetchone()
+    assert row is not None and row["value"] == ""
+    # An empty value falls through to the built-in default: get_setting treats
+    # "" as unset, so the fallback cannot be disabled from the UI (by design).
+    from pintxos.config import get_setting
+
+    assert get_setting("PINTXOS_FALLBACK_MODEL") == "deepseek/deepseek-v4-flash"
+
+
+def test_settings_post_env_pinned_fallback_model_not_overwritten(monkeypatch):
+    monkeypatch.setenv("PINTXOS_FALLBACK_MODEL", "vendor/pinned")
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "z-ai/glm-5.3-flash",
+                "fallback_model": "vendor/should-not-be-stored",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+                "api_key": "",
+                "openrouter_api_key": "sk-or-test",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "err=" not in resp.headers["location"]
+
+    monkeypatch.delenv("PINTXOS_FALLBACK_MODEL")
+    from pintxos.db import db
+
+    with db() as conn:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key = ?", ("PINTXOS_FALLBACK_MODEL",)
+        ).fetchone()
+    assert row is None
+
+
 def test_settings_post_openrouter_model_without_key_rejected_and_model_unchanged():
     with TestClient(app) as c:
         resp = c.post(
@@ -845,6 +933,7 @@ def test_settings_test_route_success(monkeypatch):
     (args, kwargs) = calls[0]
     max_tokens = kwargs.get("max_tokens", args[2] if len(args) > 2 else None)
     assert max_tokens == 50
+    assert kwargs.get("fallback") is False
 
 
 def test_settings_test_route_llm_error(monkeypatch):
