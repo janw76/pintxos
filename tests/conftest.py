@@ -28,6 +28,12 @@ def _isolated_data_dir(tmp_path, monkeypatch):
     # the default-vs-env-pinned assertions in the settings tests.
     monkeypatch.delenv("PINTXOS_WARN_AT", raising=False)
     monkeypatch.delenv("PINTXOS_WARN_HARD_AT", raising=False)
+    # Fallback model and pause state (pintxos-6en): the settings and pause tests
+    # assert on defaults and stored values, so a developer shell must not pin them.
+    monkeypatch.delenv("PINTXOS_FALLBACK_MODEL", raising=False)
+    monkeypatch.delenv("PINTXOS_PAUSED_UNTIL", raising=False)
+    monkeypatch.delenv("PINTXOS_PAUSED_SINCE", raising=False)
+    monkeypatch.delenv("PINTXOS_PAUSED_ERROR", raising=False)
 
 
 def write_cookies(text: str) -> None:
