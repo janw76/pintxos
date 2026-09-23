@@ -18,7 +18,7 @@ import trafilatura
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from pintxos import adfilter, feedstats, pagemarkers, topics
+from pintxos import adfilter, feedstats, llm, pagemarkers, topics
 from pintxos.config import DEFAULTS, get_setting, is_truthy
 from pintxos.cookies import get_jar, has_cookies_for, save_jar
 from pintxos.db import db, now
@@ -327,6 +327,7 @@ class ArticleInput:
     link: str
     labels: list[str]
     text: str
+    excerpt: str
     fetch_status: str
     auth: str | None
     word_count: int | None
@@ -357,9 +358,13 @@ def article_input(entry, jar: MozillaCookieJar | None) -> ArticleInput:
     labels = _dedupe_labels(_rss_labels(entry) + page_labels)
     fallback = False
     title_only = False
+    # The feed's own body, stripped of HTML: what the reader is shown while an item
+    # is held, and what a retry summarizes when no article text was ever stored.
+    # Always computed (may be ""), even when the full fetch succeeded.
+    excerpt = _entry_text(entry)
     if text is None:
         fallback = True
-        text = _entry_text(entry)
+        text = excerpt
         if len(text) < MIN_FALLBACK_CHARS:
             text = title
             title_only = True
@@ -367,7 +372,7 @@ def article_input(entry, jar: MozillaCookieJar | None) -> ArticleInput:
         # A short page that declares itself free but yields no extracted text at
         # all (e.g. a pure video embed): not a fallback -- the fetch succeeded --
         # but there is nothing to summarize but the feed's own excerpt or title.
-        text = _entry_text(entry)
+        text = excerpt
         if len(text) < MIN_FALLBACK_CHARS:
             text = title
             title_only = True
@@ -376,6 +381,7 @@ def article_input(entry, jar: MozillaCookieJar | None) -> ArticleInput:
         link=link,
         labels=labels,
         text=text,
+        excerpt=excerpt,
         fetch_status=fetch_status,
         auth=auth,
         word_count=words,
@@ -428,6 +434,17 @@ def _set_error(feed_id: int, message: str, polled: bool = True) -> None:
             )
 
 
+def _billed(e: SummarizeError) -> bool:
+    """True when the provider answered (and charged) even though the result was unusable.
+
+    summarize() wraps a transport or HTTP failure and keeps the llm.LLMError as the
+    cause; a reply that arrived but could not be used (truncated/invalid JSON, no
+    headline) carries a json.JSONDecodeError or no cause at all. Only the latter cost
+    money, so only the latter may bump feed_stats and the daily budget.
+    """
+    return not isinstance(e.__cause__, llm.LLMError)
+
+
 def _insert_item(
     conn,
     feed_id: int,
@@ -442,23 +459,33 @@ def _insert_item(
     labels_json: str | None,
     topic: str | None,
     model: str | None,
+    model_fallback: bool = False,
+    summarize_attempts: int = 0,
+    last_attempt_at: str | None = None,
+    summarize_error: str | None = None,
 ) -> None:
     """Insert one item row for poll_feed's main loop: the normal successful-summarize
-    path and the persistent-summarize-failure fallback path share this single
-    17-column INSERT so the two never drift apart. Always muted=0 here -- a muted
-    entry is inserted by its own branch above, before summarize is ever attempted.
+    path and the held (summarize-failed) path share this single INSERT so the two
+    never drift apart. Always muted=0 here -- a muted entry is inserted by its own
+    branch above, before summarize is ever attempted.
+
+    A held row is inserted with headline/summary/model NULL and the
+    summarize_attempts/last_attempt_at/summarize_error bookkeeping the retry sweep
+    reads; a summarized row leaves all three at their defaults.
     """
     conn.execute(
         "INSERT OR IGNORE INTO items(feed_id, guid, link, original_title, "
         "published_at, headline, summary, fallback, word_count, auth, "
-        "fetch_status, text, created_at, labels, topic, muted, model) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "fetch_status, text, created_at, labels, topic, muted, model, excerpt, "
+        "model_fallback, summarize_attempts, last_attempt_at, summarize_error) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             feed_id, guid, link or "", original_title, _published_at(entry),
             headline, summary, int(fallback), article.word_count,
             article.auth, article.fetch_status,
             None if article.title_only else article.text, now(), labels_json,
-            topic, 0, model,
+            topic, 0, model, article.excerpt, int(model_fallback),
+            summarize_attempts, last_attempt_at, summarize_error,
         ),
     )
 
@@ -479,6 +506,110 @@ def _resolve_entry_links(parsed, feed_url: str) -> None:
         link = entry.get("link")
         if link and urlparse(link).scheme == "":
             entry["link"] = urljoin(base, link)
+
+
+def _retry_due(attempts: int, last_attempt_at: str | None, poll_minutes: int) -> bool:
+    """Is a held row due for another summarize attempt?
+
+    Never attempted (attempts 0, e.g. an item the account pause held before any call
+    was made) or no recorded attempt time: due now. Otherwise the wait doubles per
+    attempt -- one poll interval after the first failure, two after the second -- so
+    a row that keeps failing backs off instead of costing a call every poll. An
+    unparseable timestamp is treated as due: retrying once is cheaper than a row
+    stuck forever.
+    """
+    if attempts <= 0 or not last_attempt_at:
+        return True
+    try:
+        last = datetime.fromisoformat(last_attempt_at)
+    except ValueError:
+        return True
+    if last.tzinfo is None:  # pre-UTC rows: read naive timestamps as UTC
+        last = last.replace(tzinfo=UTC)
+    return datetime.now(UTC) - last >= timedelta(minutes=poll_minutes * 2 ** (attempts - 1))
+
+
+def _retry_held(
+    feed_id: int,
+    respect_language: bool | None,
+    feed_model: str,
+    daily_budget: int | None,
+    summaries_today: int,
+) -> int:
+    """Re-summarize this feed's held rows (summary NULL, fewer than 3 attempts) that
+    are due per _retry_due, before the poll looks at new entries.
+
+    Returns how many of the calls it made counted against today's budget -- i.e. the
+    billed ones (see _billed) -- so the caller can add it to its running
+    summaries_today. Rows that reach 3 attempts are exhausted: the query stops
+    selecting them and only the manual retry button can revive them. Holds no write
+    transaction across a summarize call. MissingApiKey propagates to the caller
+    (which stops the whole poll), as does AccountError.
+    """
+    poll_minutes = int(get_setting("PINTXOS_POLL_MINUTES"))
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT id, link, original_title, text, excerpt, fetch_status, "
+            "summarize_attempts, last_attempt_at FROM items "
+            "WHERE feed_id = ? AND muted = 0 AND summary IS NULL "
+            "AND summarize_attempts < 3 ORDER BY id",
+            (feed_id,),
+        ).fetchall()
+
+    due = [
+        row
+        for row in rows
+        if _retry_due(row["summarize_attempts"], row["last_attempt_at"], poll_minutes)
+    ]
+    billed = 0
+    total = len(due)
+    for i, row in enumerate(due, 1):
+        if daily_budget is not None and summaries_today + billed >= daily_budget:
+            log.info(
+                "feed %s: daily budget %d reached, stopping held retries",
+                feed_id, daily_budget,
+            )
+            break
+        _status[feed_id] = f"Retrying held {i}/{total}"
+        # The stored article text if the fetch ever produced one; otherwise the feed's
+        # own excerpt when it is long enough to summarize, and the title as the floor.
+        text = row["text"]
+        if text is None:
+            excerpt = row["excerpt"] or ""
+            text = excerpt if len(excerpt) >= MIN_FALLBACK_CHARS else (row["original_title"] or "")
+        try:
+            headline, summary, model_used = summarize(
+                text,
+                row["original_title"],
+                row["link"],
+                respect_language=respect_language,
+                model=feed_model,
+            )
+        except SummarizeError as e:
+            log.warning("held retry failed for %s: %s", row["link"], e)
+            with db() as conn:
+                conn.execute(
+                    "UPDATE items SET summarize_attempts = summarize_attempts + 1, "
+                    "last_attempt_at = ?, summarize_error = ? WHERE id = ?",
+                    (now(), str(e)[:500], row["id"]),
+                )
+            if _billed(e):
+                with db() as conn:
+                    feedstats.bump(conn, feed_id, summaries=1)
+                billed += 1
+            continue
+
+        with db() as conn:  # commit per item: a crash keeps what we already paid for
+            # attempts is left as it is: it records the failures this row survived.
+            conn.execute(
+                "UPDATE items SET headline = ?, summary = ?, model = ?, "
+                "model_fallback = ?, summarize_error = NULL WHERE id = ?",
+                (headline, summary, model_used, int(model_used != feed_model), row["id"]),
+            )
+        with db() as conn:
+            feedstats.bump(conn, feed_id, summaries=1)
+        billed += 1
+    return billed
 
 
 def poll_feed(feed_id: int) -> bool:
@@ -509,6 +640,18 @@ def poll_feed(feed_id: int) -> bool:
         summaries_today = feedstats.totals(conn, feed_id)[0]
 
     try:
+        # Held rows first, before any new entry: a row that failed a poll ago is
+        # older news than anything in the feed, and its retry runs even when the
+        # feed fetch below fails.
+        try:
+            summaries_today += _retry_held(
+                feed_id, respect_language, feed_model, daily_budget, summaries_today
+            )
+        except MissingApiKey as e:
+            log.error("%s, stopping poll", e)
+            _set_error(feed_id, str(e), polled=False)
+            return False
+
         try:
             _status[feed_id] = "Fetching feed…"
             resp = _get(url)
@@ -612,14 +755,15 @@ def poll_feed(feed_id: int) -> bool:
                     conn.execute(
                         "INSERT OR IGNORE INTO items(feed_id, guid, link, original_title, "
                         "published_at, headline, summary, fallback, word_count, auth, "
-                        "fetch_status, text, created_at, labels, topic, muted, model) "
-                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "fetch_status, text, created_at, labels, topic, muted, model, "
+                        "excerpt) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (
                             feed_id, guid, link or "", original_title, _published_at(entry),
                             None, None, int(article.fallback), article.word_count,
                             article.auth, article.fetch_status,
                             None if article.title_only else article.text, now(), labels_json,
-                            topic, 1, None,
+                            topic, 1, None, article.excerpt,
                         ),
                     )
                 filtered.append(
@@ -640,7 +784,7 @@ def poll_feed(feed_id: int) -> bool:
             log.info("summarizing %s", link)
             _status[feed_id] = f"Summarizing {i}/{total}"
             try:
-                headline, summary, *_ = summarize(  # ponytail: 6en.3 uses the model
+                headline, summary, model_used = summarize(
                     article.text,
                     original_title,
                     link,
@@ -653,37 +797,31 @@ def poll_feed(feed_id: int) -> bool:
                 return False
             except SummarizeError as e:
                 log.warning("summarize failed for %s: %s", link, e)
-                # Some failures are deterministic (e.g. a page whose extracted text
-                # never yields parseable JSON) and would otherwise pay for the same
-                # summarize call on every poll forever. Store the row as a fallback
-                # item instead -- headline/summary come from the article itself, not
-                # the LLM -- and never auto-retry it; only the manual
-                # retry-fallback button re-summarizes it.
-                fallback_summary = (
-                    original_title
-                    if article.title_only
-                    else " ".join(article.text.split()[:80])
-                )
+                # Held, not faked: the row is stored with no headline/summary at all
+                # and the retry sweep above gives it two more tries on later polls.
+                # `fallback` keeps its fetch-only meaning -- whatever the fetch said.
                 with db() as conn:  # commit per item: a crash keeps what we already paid for
                     _insert_item(
                         conn, feed_id, guid, link, original_title, entry,
-                        original_title, fallback_summary, True, article, labels_json,
-                        topic, None,
+                        None, None, article.fallback, article, labels_json,
+                        topic, None, summarize_attempts=1, last_attempt_at=now(),
+                        summarize_error=str(e)[:500],
                     )
                 if topic is not None:
                     _bump_topic_count(feed_id, topic)
-                # The call was made and paid for even though it failed -- unlike the
-                # "not inserted" case this replaces, today's budget/stats must count it.
-                with db() as conn:
-                    feedstats.bump(conn, feed_id, summaries=1)
-                summaries_today += 1
+                if _billed(e):
+                    # The provider answered and charged for it, so today's budget and
+                    # the feed's stats must count it; a transport failure must not.
+                    with db() as conn:
+                        feedstats.bump(conn, feed_id, summaries=1)
+                    summaries_today += 1
                 continue
 
             with db() as conn:  # commit per item: a crash keeps what we already paid for
                 _insert_item(
                     conn, feed_id, guid, link, original_title, entry,
                     headline, summary, article.fallback, article, labels_json,
-                    topic, feed_model,
+                    topic, model_used, model_fallback=model_used != feed_model,
                 )
 
             if topic is not None:
@@ -704,9 +842,16 @@ def poll_feed(feed_id: int) -> bool:
             retry_fallback(feed_id, limit=_BLOCKED_RETRIES, only_blocked=True)
 
         with db() as conn:
+            # Held rows (still waiting for a summary, not yet exhausted) are invisible
+            # to the FIFO window: neither deleted nor counted as one of the `keep`
+            # survivors, so a row cannot be pruned before it was ever summarized.
+            # Muted rows, which also have no summary, stay prunable -- nothing is
+            # pending for them. Exhausted rows (3 attempts) rejoin the window.
+            held = "(summary IS NULL AND summarize_attempts < 3 AND muted = 0)"
             conn.execute(
-                "DELETE FROM items WHERE feed_id = ? AND id NOT IN "
-                "(SELECT id FROM items WHERE feed_id = ? ORDER BY id DESC LIMIT ?)",
+                f"DELETE FROM items WHERE feed_id = ? AND NOT {held} AND id NOT IN "
+                f"(SELECT id FROM items WHERE feed_id = ? AND NOT {held} "
+                "ORDER BY id DESC LIMIT ?)",
                 (feed_id, feed_id, keep),
             )
             conn.execute(
@@ -808,7 +953,7 @@ def summarize_item(feed_id: int, guid: str) -> str | None:
         if row is not None and row["muted"]:
             text = row["text"] if row["text"] is not None else row["original_title"]
             try:
-                headline, summary, *_ = summarize(  # ponytail: 6en.3 uses the model
+                headline, summary, model_used = summarize(
                     text,
                     row["original_title"],
                     row["link"],
@@ -822,9 +967,12 @@ def summarize_item(feed_id: int, guid: str) -> str | None:
             with db() as conn:
                 # a row pruned meanwhile is a harmless no-op
                 conn.execute(
-                    "UPDATE items SET headline = ?, summary = ?, muted = 0, model = ? "
-                    "WHERE id = ?",
-                    (headline, summary, feed_model, row["id"]),
+                    "UPDATE items SET headline = ?, summary = ?, muted = 0, model = ?, "
+                    "model_fallback = ?, summarize_error = NULL WHERE id = ?",
+                    (
+                        headline, summary, model_used,
+                        int(model_used != feed_model), row["id"],
+                    ),
                 )
             with db() as conn:
                 feedstats.bump(conn, feed_id, summaries=1)
@@ -849,7 +997,7 @@ def summarize_item(feed_id: int, guid: str) -> str | None:
             article = article_input(minimal_entry, jar)
             labels_json = json.dumps(article.labels) if article.labels else None
             try:
-                headline, summary, *_ = summarize(  # ponytail: 6en.3 uses the model
+                headline, summary, model_used = summarize(
                     article.text, article.title, article.link,
                     respect_language=respect_language,
                     model=feed_model,
@@ -862,14 +1010,16 @@ def summarize_item(feed_id: int, guid: str) -> str | None:
                 conn.execute(
                     "INSERT OR IGNORE INTO items(feed_id, guid, link, original_title, "
                     "published_at, headline, summary, fallback, word_count, auth, "
-                    "fetch_status, text, created_at, labels, topic, muted, model) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "fetch_status, text, created_at, labels, topic, muted, model, "
+                    "excerpt, model_fallback) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         feed_id, guid, article.link or "", article.title,
                         entry.get("published_at") or now(), headline, summary,
                         int(article.fallback), article.word_count, article.auth,
                         article.fetch_status, None if article.title_only else article.text,
-                        now(), labels_json, None, 0, feed_model,
+                        now(), labels_json, None, 0, model_used, article.excerpt,
+                        int(model_used != feed_model),
                     ),
                 )
             with db() as conn:
@@ -901,10 +1051,17 @@ def summarize_one(feed_id: int, guid: str) -> None:
 
 
 def retry_fallback(feed_id: int, limit: int | None = None, only_blocked: bool = False) -> None:
-    """Re-fetch and re-summarize this feed's fallback items in place; never deletes."""
+    """Re-fetch and re-summarize this feed's fallback items in place; never deletes.
+
+    The manual (not only_blocked) mode also picks up rows with no summary at all,
+    whatever their fallback flag: the ones the poll is still holding and the
+    exhausted ones its sweep has given up on. This button is the only way back for
+    an exhausted row, so a success resets its attempt counter to zero.
+    """
     sql = (
         "SELECT id, link, original_title, labels FROM items "
-        "WHERE feed_id = ? AND fallback = 1 AND muted = 0"
+        "WHERE feed_id = ? AND muted = 0 AND "
+        + ("fallback = 1" if only_blocked else "(fallback = 1 OR summary IS NULL)")
     )
     params: list[object] = [feed_id]
     if only_blocked:
@@ -983,7 +1140,7 @@ def retry_fallback(feed_id: int, limit: int | None = None, only_blocked: bool = 
             stored_text = None if fetch_status == "short" and text == "" else text
 
             try:
-                headline, summary, *_ = summarize(  # ponytail: 6en.3 uses the model
+                headline, summary, model_used = summarize(
                     summarize_text,
                     original_title,
                     link,
@@ -998,24 +1155,32 @@ def retry_fallback(feed_id: int, limit: int | None = None, only_blocked: bool = 
                 log.warning("summarize failed for %s: %s", link, e)
                 with db() as conn:
                     # fetch succeeded even though summarize didn't: record the fresh
-                    # auth/fetch_status/labels so the UI doesn't report stale data, but
-                    # leave fallback = 1, headline, and summary untouched so a later
-                    # retry still picks this item up.
+                    # auth/fetch_status/labels so the UI doesn't report stale data, and
+                    # the attempt itself, but leave fallback = 1, headline, and summary
+                    # untouched so a later retry still picks this item up.
                     conn.execute(
-                        "UPDATE items SET auth = ?, fetch_status = ?, labels = ? WHERE id = ?",
-                        (auth, fetch_status, merged_labels, item_id),
+                        "UPDATE items SET auth = ?, fetch_status = ?, labels = ?, "
+                        "summarize_attempts = summarize_attempts + 1, "
+                        "last_attempt_at = ?, summarize_error = ? WHERE id = ?",
+                        (
+                            auth, fetch_status, merged_labels, now(),
+                            str(e)[:500], item_id,
+                        ),
                     )
                 continue  # left as a fallback item; a later retry can try again
 
             with db() as conn:  # commit per item: a crash keeps what we already paid for
-                # a row pruned meanwhile is a harmless no-op
+                # a row pruned meanwhile is a harmless no-op. attempts back to 0: the
+                # row has a summary again, and a future failure starts a fresh backoff.
                 conn.execute(
                     "UPDATE items SET headline = ?, summary = ?, fallback = 0, auth = ?, "
-                    "word_count = ?, fetch_status = ?, text = ?, labels = ?, model = ? "
+                    "word_count = ?, fetch_status = ?, text = ?, labels = ?, model = ?, "
+                    "model_fallback = ?, summarize_attempts = 0, summarize_error = NULL "
                     "WHERE id = ?",
                     (
                         headline, summary, auth, words, fetch_status,
-                        stored_text, merged_labels, feed_model, item_id,
+                        stored_text, merged_labels, model_used,
+                        int(model_used != feed_model), item_id,
                     ),
                 )
             with db() as conn:
