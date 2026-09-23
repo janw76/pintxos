@@ -33,6 +33,15 @@ _FETCH_NOTES = {
     ),
 }
 
+_EXHAUSTED_JSON_NOTE = (
+    "Not summarized: the AI service returned an unusable answer three times. "
+    "Pintxøs will not retry on its own; use Retry on the feed page."
+)
+_EXHAUSTED_GENERIC_NOTE = (
+    "Not summarized: the AI service kept failing. "
+    "Pintxøs will not retry on its own; use Retry on the feed page."
+)
+
 _TITLE_NORM_TABLE = str.maketrans(
     {
         "‘": "'",
@@ -73,6 +82,55 @@ def _topic_name(item: sqlite3.Row) -> str | None:
     if not slug:
         return None
     return TOPIC_NAMES.get(slug)
+
+
+def _is_exhausted(item: sqlite3.Row) -> bool:
+    """True when this item was never summarized and has used up its retries.
+
+    Tolerates rows selected without 'summarize_attempts' (older callers): absent
+    means never attempted, so not exhausted.
+    """
+    try:
+        attempts = item["summarize_attempts"]
+    except (IndexError, KeyError):
+        attempts = 0
+    return item["summary"] is None and (attempts or 0) >= 3
+
+
+def _not_summarized_note(item: sqlite3.Row) -> str:
+    """The plain-language note explaining why an exhausted item has no summary."""
+    try:
+        error = item["summarize_error"]
+    except (IndexError, KeyError):
+        error = None
+    if error and "JSON" in error:
+        return _EXHAUSTED_JSON_NOTE
+    return _EXHAUSTED_GENERIC_NOTE
+
+
+def _exhausted_headline(item: sqlite3.Row) -> str | None:
+    """The headline for an exhausted item: original_title, else item['headline']."""
+    return item["original_title"] or item["headline"]
+
+
+def _excerpt_text(item: sqlite3.Row) -> str | None:
+    """item['excerpt'], tolerating rows selected without that column."""
+    try:
+        return item["excerpt"]
+    except (IndexError, KeyError):
+        return None
+
+
+def _is_model_fallback(item: sqlite3.Row) -> bool:
+    """True when this item's summary was produced by the fallback model.
+
+    Tolerates rows selected without 'model_fallback' (older callers): absent
+    means not a fallback.
+    """
+    try:
+        return bool(item["model_fallback"])
+    except (IndexError, KeyError):
+        return False
 
 
 def positive_int_setting(key: str, conn=None) -> int:
@@ -206,21 +264,36 @@ def item_html(item: sqlite3.Row, *, full: bool) -> str:
     """
     paragraphs: list[str] = []
 
-    headline = item["headline"]
+    exhausted = _is_exhausted(item)
+    headline = _exhausted_headline(item) if exhausted else item["headline"]
     if headline:
         paragraphs.append(
             f'<p><b style="font-size:1.15em">{html.escape(headline)}</b></p>'
         )
 
-    summary = item["summary"]
-    if summary:
-        model = item["model"] if "model" in item.keys() else None
-        if model:
-            paragraphs.append(
-                f"<p>{html.escape(summary)} <small>({html.escape(model)})</small></p>"
-            )
-        else:
-            paragraphs.append(f"<p>{html.escape(summary)}</p>")
+    if exhausted:
+        note = _not_summarized_note(item)
+        paragraphs.append(f"<p>{html.escape(note)}</p>")
+        excerpt = _excerpt_text(item)
+        if excerpt:
+            paragraphs.append(f"<p>{html.escape(excerpt)}</p>")
+    else:
+        summary = item["summary"]
+        if summary:
+            model = item["model"] if "model" in item.keys() else None
+            if model and _is_model_fallback(item):
+                paragraphs.append(f"<p>{html.escape(summary)}</p>")
+                model_esc = html.escape(model)
+                paragraphs.append(
+                    f"<p><strong>Note: Pintxøs used {model_esc} as a fallback "
+                    "for this item.</strong></p>"
+                )
+            elif model:
+                paragraphs.append(
+                    f"<p>{html.escape(summary)} <small>({html.escape(model)})</small></p>"
+                )
+            else:
+                paragraphs.append(f"<p>{html.escape(summary)}</p>")
 
     original_title = item["original_title"]
     if original_title:
@@ -258,17 +331,27 @@ def item_plain(item: sqlite3.Row, *, full: bool) -> str:
     """
     paragraphs: list[str] = []
 
-    headline = item["headline"]
+    exhausted = _is_exhausted(item)
+    headline = _exhausted_headline(item) if exhausted else item["headline"]
     if headline:
         paragraphs.append(headline)
 
-    summary = item["summary"]
-    if summary:
-        model = item["model"] if "model" in item.keys() else None
-        if model:
-            paragraphs.append(f"{summary} ({model})")
-        else:
-            paragraphs.append(summary)
+    if exhausted:
+        paragraphs.append(_not_summarized_note(item))
+        excerpt = _excerpt_text(item)
+        if excerpt:
+            paragraphs.append(excerpt)
+    else:
+        summary = item["summary"]
+        if summary:
+            model = item["model"] if "model" in item.keys() else None
+            if model and _is_model_fallback(item):
+                paragraphs.append(summary)
+                paragraphs.append(f"Note: Pintxøs used {model} as a fallback for this item.")
+            elif model:
+                paragraphs.append(f"{summary} ({model})")
+            else:
+                paragraphs.append(summary)
 
     original_title = item["original_title"]
     if original_title:
@@ -321,21 +404,41 @@ def render_rss(
         if _is_muted(item):  # muted topic: stored, but never published
             continue
         entry = ET.SubElement(channel, "item")
-        ET.SubElement(entry, "title").text = item["headline"]
+        exhausted = _is_exhausted(item)
+        title_text = _exhausted_headline(item) if exhausted else item["headline"]
+        ET.SubElement(entry, "title").text = title_text
         ET.SubElement(entry, "link").text = item["link"]
         guid = ET.SubElement(entry, "guid", {"isPermaLink": "false"})
         guid.text = item["guid"]
         pub_date = format_datetime(datetime.fromisoformat(item["published_at"]))
         ET.SubElement(entry, "pubDate").text = pub_date
 
-        model = item["model"] if "model" in item.keys() else None
-        if model:
-            description = (
-                f"<p>{item['summary']} "
-                f'<small style="color:#888">({html.escape(model)})</small></p>'
-            )
+        if exhausted:
+            note = _not_summarized_note(item)
+            description = f"<p>{html.escape(note)}</p>"
+            if not full_text:
+                excerpt = _excerpt_text(item)
+                if excerpt:
+                    description += f"<p>{html.escape(excerpt)}</p>"
         else:
-            description = f"<p>{item['summary']}</p>"
+            summary = item["summary"]
+            model = item["model"] if "model" in item.keys() else None
+            if summary is None:
+                description = ""
+            elif model and _is_model_fallback(item):
+                model_esc = html.escape(model)
+                description = f"<p>{summary}</p>"
+                description += (
+                    f"<p><strong>Note: Pintxøs used {model_esc} as a fallback "
+                    "for this item.</strong></p>"
+                )
+            elif model:
+                description = (
+                    f"<p>{summary} "
+                    f'<small style="color:#888">({html.escape(model)})</small></p>'
+                )
+            else:
+                description = f"<p>{summary}</p>"
         auth = item["auth"]
         fetch_status = item["fetch_status"]
         if auth == "used":
