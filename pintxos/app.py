@@ -126,6 +126,7 @@ def feed_xml(request: Request, feed_id: int) -> Response:
         # unmuted rows, so growing the retained history never grows the RSS body.
         items = conn.execute(
             "SELECT * FROM items WHERE feed_id = ? AND muted = 0 "
+            "AND NOT (summary IS NULL AND summarize_attempts < 3) "
             "ORDER BY published_at DESC, id DESC LIMIT ?",
             (feed_id, int(get_setting("PINTXOS_ITEMS_PER_FEED", conn))),
         ).fetchall()
@@ -387,6 +388,8 @@ def item_page(request: Request, item_id: int) -> Response:
     with db() as conn:
         item = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
         if item is None:
+            raise HTTPException(status_code=404, detail="item not found")
+        if item["summary"] is None and item["summarize_attempts"] < 3:
             raise HTTPException(status_code=404, detail="item not found")
 
         head_html = feed_out.item_html(item, full=False)

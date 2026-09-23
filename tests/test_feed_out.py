@@ -950,3 +950,305 @@ def test_render_rss_without_base_url_unchanged():
 
     body = render_rss(db_feed, items, full_text=True)
     assert "/items/" not in body.decode("utf-8")
+
+
+def _seed_item(guid, **overrides):
+    """Insert one feed + one item row with sensible defaults, returning (feed_id, item)."""
+    defaults = dict(
+        original_title="Original Title",
+        published_at="2026-09-10T12:00:00+00:00",
+        headline="A Headline",
+        summary="A summary.",
+        fallback=0,
+        word_count=None,
+        text=None,
+        model=None,
+        summarize_attempts=0,
+        summarize_error=None,
+        excerpt=None,
+        model_fallback=0,
+    )
+    defaults.update(overrides)
+    with db() as conn:
+        feed_id = conn.execute(
+            "INSERT INTO feeds(url, title, created_at) VALUES (?, ?, ?)",
+            (FEED_URL, "Example Feed", now()),
+        ).lastrowid
+        conn.execute(
+            """INSERT INTO items
+            (feed_id, guid, link, original_title, published_at, headline, summary,
+             fallback, word_count, text, model, summarize_attempts, summarize_error,
+             excerpt, model_fallback, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                feed_id,
+                guid,
+                f"https://example.com/{guid}",
+                defaults["original_title"],
+                defaults["published_at"],
+                defaults["headline"],
+                defaults["summary"],
+                defaults["fallback"],
+                defaults["word_count"],
+                defaults["text"],
+                defaults["model"],
+                defaults["summarize_attempts"],
+                defaults["summarize_error"],
+                defaults["excerpt"],
+                defaults["model_fallback"],
+                now(),
+            ),
+        )
+    with db() as conn:
+        item = conn.execute(
+            "SELECT * FROM items WHERE feed_id = ? AND guid = ?", (feed_id, guid)
+        ).fetchone()
+    return feed_id, item
+
+
+def test_feed_xml_excludes_held_item():
+    """A held item (no summary, attempts < 3) never appears in the output feed."""
+    _seed_item("guid-held", summary=None, summarize_attempts=1)
+    with TestClient(app) as c:
+        resp = c.get("/feeds/1.xml")
+    parsed = feedparser.parse(resp.content)
+    assert len(parsed.entries) == 0
+    assert "guid-held" not in resp.text
+
+
+def test_feed_xml_includes_exhausted_item():
+    """An exhausted item (no summary, attempts >= 3) appears, unlike a held one."""
+    _seed_item("guid-exhausted", summary=None, summarize_attempts=3)
+    with TestClient(app) as c:
+        resp = c.get("/feeds/1.xml")
+    parsed = feedparser.parse(resp.content)
+    assert len(parsed.entries) == 1
+
+
+def test_render_rss_exhausted_uses_original_title_as_headline():
+    from pintxos.feed_out import render_rss
+
+    feed_id, _ = _seed_item(
+        "guid-exhausted-title",
+        summary=None,
+        summarize_attempts=3,
+        original_title="The Real Title",
+        headline="Stale Headline",
+    )
+    with db() as conn:
+        db_feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        items = conn.execute("SELECT * FROM items WHERE feed_id = ?", (feed_id,)).fetchall()
+    parsed = feedparser.parse(render_rss(db_feed, items, full_text=True))
+    assert parsed.entries[0].title == "The Real Title"
+
+
+def test_render_rss_exhausted_falls_back_to_headline_when_no_original_title():
+    from pintxos.feed_out import render_rss
+
+    feed_id, _ = _seed_item(
+        "guid-exhausted-nofallback",
+        summary=None,
+        summarize_attempts=3,
+        original_title=None,
+        headline="Only Headline",
+    )
+    with db() as conn:
+        db_feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        items = conn.execute("SELECT * FROM items WHERE feed_id = ?", (feed_id,)).fetchall()
+    parsed = feedparser.parse(render_rss(db_feed, items, full_text=True))
+    assert parsed.entries[0].title == "Only Headline"
+
+
+def test_render_rss_exhausted_json_error_note():
+    from pintxos.feed_out import render_rss
+
+    feed_id, _ = _seed_item(
+        "guid-json-error",
+        summary=None,
+        summarize_attempts=3,
+        summarize_error="invalid JSON returned by model",
+        excerpt="Short excerpt text.",
+    )
+    with db() as conn:
+        db_feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        items = conn.execute("SELECT * FROM items WHERE feed_id = ?", (feed_id,)).fetchall()
+    body = render_rss(db_feed, items, full_text=False).decode("utf-8")
+    assert "returned an unusable answer three times" in body
+    assert "kept failing" not in body
+
+
+def test_render_rss_exhausted_generic_error_note():
+    from pintxos.feed_out import render_rss
+
+    feed_id, _ = _seed_item(
+        "guid-generic-error",
+        summary=None,
+        summarize_attempts=3,
+        summarize_error="connection timed out",
+        excerpt="Short excerpt text.",
+    )
+    with db() as conn:
+        db_feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        items = conn.execute("SELECT * FROM items WHERE feed_id = ?", (feed_id,)).fetchall()
+    body = render_rss(db_feed, items, full_text=False).decode("utf-8")
+    assert "the AI service kept failing" in body
+    assert "unusable answer" not in body
+
+
+def test_render_rss_exhausted_full_text_off_shows_excerpt_no_model_byline():
+    from pintxos.feed_out import render_rss
+
+    feed_id, _ = _seed_item(
+        "guid-exhausted-excerpt",
+        summary=None,
+        summarize_attempts=3,
+        summarize_error="boom",
+        excerpt="This is the excerpt shown instead of a summary.",
+        model="gpt-4o",
+        text="Full article body.",
+    )
+    with db() as conn:
+        db_feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        items = conn.execute("SELECT * FROM items WHERE feed_id = ?", (feed_id,)).fetchall()
+    body = render_rss(db_feed, items, full_text=False).decode("utf-8")
+    assert "This is the excerpt shown instead of a summary." in body
+    assert "(gpt-4o)" not in body
+    assert "=== FULL TEXT BELOW ===" not in body
+
+
+def test_render_rss_exhausted_full_text_on_shows_full_text_no_excerpt():
+    from pintxos.feed_out import render_rss
+
+    feed_id, _ = _seed_item(
+        "guid-exhausted-fulltext",
+        summary=None,
+        summarize_attempts=3,
+        summarize_error="boom",
+        excerpt="Should not appear.",
+        text="Full article body line.",
+    )
+    with db() as conn:
+        db_feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        items = conn.execute("SELECT * FROM items WHERE feed_id = ?", (feed_id,)).fetchall()
+    body = render_rss(db_feed, items, full_text=True).decode("utf-8")
+    assert "=== FULL TEXT BELOW ===" in body
+    assert "Full article body line." in body
+    assert "Should not appear." not in body
+
+
+def test_render_rss_fallback_model_shows_bold_note_not_small_byline():
+    import xml.sax.saxutils
+
+    from pintxos.feed_out import render_rss
+
+    feed_id, _ = _seed_item(
+        "guid-fallback-model",
+        summary="A fallback summary.",
+        model="backup-model",
+        model_fallback=1,
+    )
+    with db() as conn:
+        db_feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        items = conn.execute("SELECT * FROM items WHERE feed_id = ?", (feed_id,)).fetchall()
+    body = xml.sax.saxutils.unescape(render_rss(db_feed, items, full_text=True).decode("utf-8"))
+    assert (
+        "<p><strong>Note: Pintxøs used backup-model as a fallback for this item."
+        "</strong></p>" in body
+    )
+    assert "<small" not in body
+
+
+def test_render_rss_ordinary_fallback_zero_keeps_small_byline():
+    from pintxos.feed_out import render_rss
+
+    feed_id, _ = _seed_item(
+        "guid-ordinary-model",
+        summary="An ordinary summary.",
+        model="primary-model",
+        model_fallback=0,
+    )
+    with db() as conn:
+        db_feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        items = conn.execute("SELECT * FROM items WHERE feed_id = ?", (feed_id,)).fetchall()
+    body = render_rss(db_feed, items, full_text=True).decode("utf-8")
+    assert "(primary-model)" in body
+    assert "Note: Pintxøs used" not in body
+
+
+def test_item_html_exhausted_head_and_full():
+    from pintxos.feed_out import item_html
+
+    _, item = _seed_item(
+        "guid-item-html-exhausted",
+        summary=None,
+        summarize_attempts=3,
+        summarize_error="bad JSON",
+        excerpt="Excerpt paragraph.",
+        model="gpt-4o",
+        text="Line one\nLine two",
+        original_title="Real Original",
+        headline="Old Headline",
+    )
+    head = item_html(item, full=False)
+    full = item_html(item, full=True)
+
+    assert "Real Original" in head
+    assert "Old Headline" not in head
+    assert "returned an unusable answer three times" in head
+    assert "Excerpt paragraph." in head
+    assert "(gpt-4o)" not in head
+    assert "<p>Line one</p>" not in head
+    assert full.startswith(head)
+    assert "<p>Line one</p>" in full
+    assert "<p>Line two</p>" in full
+
+
+def test_item_plain_exhausted_head_and_full():
+    from pintxos.feed_out import item_plain
+
+    _, item = _seed_item(
+        "guid-item-plain-exhausted",
+        summary=None,
+        summarize_attempts=3,
+        summarize_error="timeout",
+        excerpt="Plain excerpt.",
+        text="Plain line one\nPlain line two",
+    )
+    head = item_plain(item, full=False)
+    full = item_plain(item, full=True)
+
+    assert "the AI service kept failing" in head
+    assert "Plain excerpt." in head
+    assert full.startswith(head)
+    assert "Plain line one" in full
+    assert "Plain line two" in full
+
+
+def test_item_html_fallback_model_bold_note():
+    from pintxos.feed_out import item_html
+
+    _, item = _seed_item(
+        "guid-item-html-fallback",
+        summary="Fallback summary.",
+        model="backup-model",
+        model_fallback=1,
+    )
+    rendered = item_html(item, full=False)
+    assert (
+        "<p><strong>Note: Pintxøs used backup-model as a fallback for this item."
+        "</strong></p>" in rendered
+    )
+    assert "<small" not in rendered
+
+
+def test_item_plain_fallback_model_note_line():
+    from pintxos.feed_out import item_plain
+
+    _, item = _seed_item(
+        "guid-item-plain-fallback",
+        summary="Fallback summary.",
+        model="backup-model",
+        model_fallback=1,
+    )
+    rendered = item_plain(item, full=False)
+    assert "Note: Pintxøs used backup-model as a fallback for this item." in rendered
