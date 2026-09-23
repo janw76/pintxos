@@ -2944,6 +2944,7 @@ def test_retry_fallback_updates_row_in_place_on_success_or_records_auth_on_failu
             lambda text, original_title, url, respect_language=None, model=None: (
                 "New Headline",
                 "New summary",
+                model,
             ),
         )
     else:
@@ -2984,7 +2985,7 @@ def test_retry_fallback_error_paths(monkeypatch, error):
             raise MissingApiKey("ANTHROPIC_API_KEY not set")
         if len(calls) == 1:
             raise SummarizeError("API said no")
-        return "New Headline", "New summary"
+        return "New Headline", "New summary", model
 
     monkeypatch.setattr(poll, "summarize", fake_summarize)
 
@@ -3039,7 +3040,7 @@ def test_retry_fallback_route_clears_status_and_reenables_poll_now(monkeypatch):
     monkeypatch.setattr(poll, "scheduler", sync_scheduler)
     monkeypatch.setattr(poll, "fetch_article", lambda link: ("FULL ARTICLE TEXT " * 20, "ok", []))
     monkeypatch.setattr(
-        poll, "summarize", lambda text, title, url, **kwargs: ("H", "S")
+        poll, "summarize", lambda text, title, url, **kwargs: ("H", "S", kwargs.get("model"))
     )
 
     with TestClient(app) as c:
