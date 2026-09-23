@@ -804,7 +804,7 @@ def test_settings_test_route_success(monkeypatch):
 
     def fake_complete(*args, **kwargs):
         calls.append((args, kwargs))
-        return "OK"
+        return llm.Completion("OK", "m")
 
     monkeypatch.setattr(llm, "complete", fake_complete)
     with TestClient(app) as c:

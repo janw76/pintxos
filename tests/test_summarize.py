@@ -4,6 +4,7 @@ import pytest
 
 from pintxos import llm
 from pintxos.summarize import (
+    AccountError,
     LANGUAGE_RULE_OFF,
     LANGUAGE_RULE_ON,
     MissingApiKey,
@@ -13,22 +14,24 @@ from pintxos.summarize import (
 
 
 class FakeComplete:
-    """Stands in for llm.complete: records every call, returns `text` or raises `error`."""
+    """Stands in for llm.complete: records every call, returns a Completion
+    carrying `text` and `model`, or raises `error`."""
 
-    def __init__(self, text=None, error=None):
+    def __init__(self, text=None, error=None, model="test/model"):
         self._text = text
         self._error = error
+        self._model = model
         self.calls = []
 
     def __call__(self, *args, **kwargs):
         self.calls.append((args, kwargs))
         if self._error is not None:
             raise self._error
-        return self._text
+        return llm.Completion(self._text, self._model)
 
 
-def _patch_complete(monkeypatch, text=None, error=None):
-    fake = FakeComplete(text, error)
+def _patch_complete(monkeypatch, text=None, error=None, model="test/model"):
+    fake = FakeComplete(text, error, model)
     # summarize() calls llm.complete through the module object, so patch it at the source.
     monkeypatch.setattr("pintxos.llm.complete", fake)
     return fake
@@ -50,7 +53,7 @@ def _one_call(fake):
 def test_plain_json(monkeypatch):
     raw = json.dumps({"headline": "Netflix renews Supacell for season 2", "summary": "Short summary."})
     _patch_complete(monkeypatch, raw)
-    headline, summary = summarize("some article text", "Original Title", "https://x")
+    headline, summary, _model = summarize("some article text", "Original Title", "https://x")
     assert headline == "Netflix renews Supacell for season 2"
     assert summary == "Short summary."
 
@@ -58,7 +61,7 @@ def test_plain_json(monkeypatch):
 def test_fenced_json(monkeypatch):
     raw = '```json\n{"headline": "Fact happened", "summary": "It happened."}\n```'
     _patch_complete(monkeypatch, raw)
-    headline, summary = summarize("text", "Title", "https://x")
+    headline, summary, _model = summarize("text", "Title", "https://x")
     assert headline == "Fact happened"
     assert summary == "It happened."
 
@@ -66,7 +69,7 @@ def test_fenced_json(monkeypatch):
 def test_fenced_without_json_tag(monkeypatch):
     raw = '```\n{"headline": "Fact happened", "summary": "It happened."}\n```'
     _patch_complete(monkeypatch, raw)
-    headline, summary = summarize("text", "Title", "https://x")
+    headline, summary, _model = summarize("text", "Title", "https://x")
     assert headline == "Fact happened"
 
 
@@ -75,7 +78,7 @@ def test_long_summary_passes_through_verbatim(monkeypatch):
     long_summary = " ".join(words)
     raw = json.dumps({"headline": "Headline", "summary": long_summary})
     _patch_complete(monkeypatch, raw)
-    headline, summary = summarize("text", "Title", "https://x")
+    headline, summary, _model = summarize("text", "Title", "https://x")
     assert summary == long_summary
     assert not summary.endswith("…")
     assert summary.split() == words
@@ -87,7 +90,7 @@ def test_summary_whitespace_is_normalised(monkeypatch):
         {"headline": "Headline", "summary": "First  sentence.\n\nSecond\tsentence."}
     )
     _patch_complete(monkeypatch, raw)
-    headline, summary = summarize("text", "Title", "https://x")
+    headline, summary, _model = summarize("text", "Title", "https://x")
     assert summary == "First sentence. Second sentence."
 
 
@@ -114,7 +117,7 @@ def test_empty_headline_raises(monkeypatch):
 def test_missing_summary_defaults_to_empty(monkeypatch):
     raw = json.dumps({"headline": "Headline only"})
     _patch_complete(monkeypatch, raw)
-    headline, summary = summarize("text", "Title", "https://x")
+    headline, summary, _model = summarize("text", "Title", "https://x")
     assert headline == "Headline only"
     assert summary == ""
 
@@ -220,7 +223,7 @@ def test_reply_with_language_field_parses_headline_and_summary(monkeypatch):
         {"language": "de", "headline": "Bundestag beschließt X", "summary": "Kurz."}
     )
     _patch_complete(monkeypatch, raw)
-    headline, summary = summarize("text", "Title", "https://x")
+    headline, summary, _model = summarize("text", "Title", "https://x")
     assert headline == "Bundestag beschließt X"
     assert summary == "Kurz."
 
@@ -252,3 +255,32 @@ def test_explicit_model_overrides_the_setting(monkeypatch):
     summarize("text", "Title", "https://x", model="x/y")
 
     assert _one_call(fake)["model"] == "x/y"
+
+
+def test_returns_the_model_that_answered(monkeypatch):
+    raw = json.dumps({"headline": "Headline", "summary": "Summary."})
+    _patch_complete(monkeypatch, raw, model="vendor/cheap")
+
+    headline, summary, model_used = summarize("text", "Title", "https://x")
+
+    assert (headline, summary) == ("Headline", "Summary.")
+    assert model_used == "vendor/cheap"
+
+
+def test_account_error_is_re_exported_from_llm():
+    assert AccountError is llm.AccountError
+
+
+def test_account_error_passes_through_unwrapped(monkeypatch):
+    _patch_complete(monkeypatch, error=llm.AccountError("no credit"))
+
+    # Not a SummarizeError: only a human can fix this, and poll.py pauses on it.
+    with pytest.raises(llm.AccountError, match="no credit"):
+        summarize("text", "Title", "https://x")
+
+
+def test_unparseable_reply_is_still_a_summarize_error(monkeypatch):
+    _patch_complete(monkeypatch, '{"headline": "cut off in the mid')
+
+    with pytest.raises(SummarizeError):
+        summarize("text", "Title", "https://x")

@@ -640,7 +640,7 @@ def poll_feed(feed_id: int) -> bool:
             log.info("summarizing %s", link)
             _status[feed_id] = f"Summarizing {i}/{total}"
             try:
-                headline, summary = summarize(
+                headline, summary, *_ = summarize(  # ponytail: 6en.3 uses the model
                     article.text,
                     original_title,
                     link,
@@ -808,7 +808,7 @@ def summarize_item(feed_id: int, guid: str) -> str | None:
         if row is not None and row["muted"]:
             text = row["text"] if row["text"] is not None else row["original_title"]
             try:
-                headline, summary = summarize(
+                headline, summary, *_ = summarize(  # ponytail: 6en.3 uses the model
                     text,
                     row["original_title"],
                     row["link"],
@@ -849,7 +849,7 @@ def summarize_item(feed_id: int, guid: str) -> str | None:
             article = article_input(minimal_entry, jar)
             labels_json = json.dumps(article.labels) if article.labels else None
             try:
-                headline, summary = summarize(
+                headline, summary, *_ = summarize(  # ponytail: 6en.3 uses the model
                     article.text, article.title, article.link,
                     respect_language=respect_language,
                     model=feed_model,
@@ -983,7 +983,7 @@ def retry_fallback(feed_id: int, limit: int | None = None, only_blocked: bool = 
             stored_text = None if fetch_status == "short" and text == "" else text
 
             try:
-                headline, summary = summarize(
+                headline, summary, *_ = summarize(  # ponytail: 6en.3 uses the model
                     summarize_text,
                     original_title,
                     link,

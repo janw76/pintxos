@@ -407,8 +407,8 @@ def test_poll_feed_with_null_model_carries_global_model(feed_id, monkeypatch):
     def fake_complete(system, user, max_tokens, model, json=False):
         used_models.append(model)
         if json:
-            return '{"headline": "H", "summary": "S"}'
-        return "science"
+            return llm.Completion('{"headline": "H", "summary": "S"}', model)
+        return llm.Completion("science", model)
 
     monkeypatch.setattr(llm, "complete", fake_complete)
 

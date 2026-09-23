@@ -792,7 +792,7 @@ def test_settings() -> Response:
         text = llm.complete("You are a health check.", "Reply with the single word OK.", 50, model)
     except llm.LLMError as e:
         return _redirect("/settings", err=f"{model}: {e}")
-    return _redirect("/settings", msg=f"{model} answered: {text.strip()}")
+    return _redirect("/settings", msg=f"{model} answered: {text.text.strip()}")
 
 
 @app.post("/settings/cookies")
