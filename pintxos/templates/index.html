@@ -1,6 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Feeds · Pintxøs{% endblock %}
 {% block content %}
+{% if paused %}
+<div class="error" role="alert">
+  <p><strong>Pintxøs has stopped summarizing: your AI account needs attention.</strong></p>
+  <p>Since {{ paused.since_display }}. {{ paused.reason }}</p>
+  <p>Pintxøs checks again every 30 minutes and resumes by itself. Top up or fix the key in <a href="/settings">Settings</a>.</p>
+</div>
+{% endif %}
 <h1>Feeds (<span id="feed-count">{{ feeds|length }}</span>)</h1>
 
 <form class="add-form" method="post" action="/feeds">

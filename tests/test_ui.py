@@ -48,6 +48,34 @@ def test_index_shows_feed_count_in_heading(monkeypatch):
         assert '<h1>Feeds (<span id="feed-count">1</span>)</h1>' in page
 
 
+def test_index_pause_banner_absent_when_not_paused(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        page = c.get("/").text
+    assert 'role="alert"' not in page
+    assert "needs attention" not in page
+
+
+def test_index_pause_banner_shown_when_paused(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with db() as conn:
+        conn.executemany(
+            "INSERT INTO settings(key, value) VALUES (?, ?)",
+            [
+                ("PINTXOS_PAUSED_UNTIL", "2026-09-11T09:00:00+00:00"),
+                ("PINTXOS_PAUSED_SINCE", "2026-09-11T08:15:00+00:00"),
+                ("PINTXOS_PAUSED_ERROR", "OpenRouter HTTP 402: insufficient credit"),
+            ],
+        )
+    with TestClient(app) as c:
+        page = c.get("/").text
+    assert 'class="error" role="alert"' in page
+    assert "Pintxøs has stopped summarizing: your AI account needs attention." in page
+    assert "2026-09-11 08:15 UTC" in page
+    assert "Your AI provider reports that there is no credit left." in page
+    assert 'href="/settings"' in page
+
+
 def test_index_search_box_has_no_match_row_and_non_url_input(monkeypatch):
     monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
     with TestClient(app) as c:

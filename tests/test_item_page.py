@@ -217,3 +217,25 @@ def test_index_still_has_header():
     with TestClient(app) as c:
         resp = c.get("/")
     assert 'class="wordmark"' in resp.text
+
+
+def test_item_page_title_falls_back_to_original_title_when_headline_is_null():
+    """Exhausted rows have no headline; the <title> tag must not fall straight to
+    the generic "Pintxøs" while a real original_title is available."""
+    item_id = _seed_exhausted(headline=None)
+    with TestClient(app) as c:
+        resp = c.get(f"/items/{item_id}")
+    assert resp.status_code == 200
+    body = resp.text
+    title = body[body.index("<title>") + len("<title>") : body.index("</title>")]
+    assert title == "Real Original"
+
+
+def test_item_page_title_falls_back_to_generic_when_neither_present():
+    item_id = _seed_exhausted(headline=None, original_title=None)
+    with TestClient(app) as c:
+        resp = c.get(f"/items/{item_id}")
+    assert resp.status_code == 200
+    body = resp.text
+    title = body[body.index("<title>") + len("<title>") : body.index("</title>")]
+    assert title == "Pintxøs"

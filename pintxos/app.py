@@ -132,6 +132,45 @@ def feed_xml(request: Request, feed_id: int) -> Response:
         ).fetchall()
         full_text = is_truthy(get_setting("PINTXOS_FULL_TEXT", conn))
         base_url = get_setting("PINTXOS_BASE_URL", conn) or str(request.base_url).rstrip("/")
+        settings_url = f"{base_url}/settings"
+        day = feedstats.today()
+
+        warnings: list[dict] = []
+
+        paused = _paused_context(conn)
+        if paused is not None:
+            warnings.append(
+                feed_out.pause_warning_item(
+                    feed,
+                    paused_since=paused["since"],
+                    error=paused["error"],
+                    day=day,
+                    settings_url=settings_url,
+                )
+            )
+
+        # Across all feeds, not just this one: the fallback model is a global setting,
+        # so overuse is a global condition, and re-appears once per day on every feed's
+        # output until the underlying problem is fixed.
+        fallback_counts = conn.execute(
+            "SELECT COUNT(*) AS total, SUM(model_fallback = 1) AS used FROM items "
+            "WHERE summary IS NOT NULL AND muted = 0 AND substr(created_at, 1, 10) = ?",
+            (day,),
+        ).fetchone()
+        fb_total = fallback_counts["total"] or 0
+        fb_used = fallback_counts["used"] or 0
+        if fb_total >= 10 and fb_used * 10 > fb_total:
+            fallback_model = get_setting("PINTXOS_FALLBACK_MODEL", conn)
+            warnings.append(
+                feed_out.fallback_warning_item(
+                    feed,
+                    used=fb_used,
+                    total=fb_total,
+                    fallback_model=fallback_model,
+                    day=day,
+                    settings_url=settings_url,
+                )
+            )
 
         warn_on = feed["warn_volume"] is None or feed["warn_volume"] == 1
         summaries_today = feedstats.totals(conn, feed_id)[0]
@@ -140,21 +179,42 @@ def feed_xml(request: Request, feed_id: int) -> Response:
         if warn_on and level is not None:
             feed_page_url = f"{base_url}/feeds/{feed_id}"
             model = feed["model"] or get_setting("PINTXOS_MODEL", conn)
-            warning = feed_out.warning_item(
-                feed,
-                level=level,
-                hard_level=levels[1],
-                summaries_today=summaries_today,
-                day=feedstats.today(),
-                feed_page_url=feed_page_url,
-                model=model,
-                kept_today=feedstats.kept_today(conn, feed_id),
+            warnings.append(
+                feed_out.warning_item(
+                    feed,
+                    level=level,
+                    hard_level=levels[1],
+                    summaries_today=summaries_today,
+                    day=day,
+                    feed_page_url=feed_page_url,
+                    model=model,
+                    kept_today=feedstats.kept_today(conn, feed_id),
+                )
             )
-        else:
-            warning = None
 
-        body = render_rss(feed, items, full_text=full_text, warning=warning, base_url=base_url)
+        body = render_rss(feed, items, full_text=full_text, warnings=warnings, base_url=base_url)
     return Response(content=body, media_type="application/rss+xml; charset=utf-8")
+
+
+def _paused_context(conn: sqlite3.Connection) -> dict | None:
+    """The current global-pause state, or None when not paused.
+
+    Shared by feed_xml() (to build the pause warning article) and index() (to render
+    the admin banner), so the plain-language reason (feed_out.pause_reason) is
+    computed in exactly one place.
+    """
+    paused_until_value = get_setting("PINTXOS_PAUSED_UNTIL", conn)
+    if paused_until_value is None:
+        return None
+    paused_since = get_setting("PINTXOS_PAUSED_SINCE", conn) or paused_until_value
+    error = get_setting("PINTXOS_PAUSED_ERROR", conn) or ""
+    return {
+        "since": paused_since,
+        "error": error,
+        "until": paused_until_value,
+        "since_display": feed_out.paused_since_display(paused_since),
+        "reason": feed_out.pause_reason(error),
+    }
 
 
 def _redirect(path: str, *, msg: str | None = None, err: str | None = None) -> RedirectResponse:
@@ -466,10 +526,12 @@ def _load_feed_rows(request: Request, feed_id: int | None = None) -> list[dict]:
 
 @app.get("/")
 def index(request: Request) -> Response:
+    with db() as conn:
+        paused = _paused_context(conn)
     return templates.TemplateResponse(
         request,
         "index.html",
-        {"feeds": _load_feed_rows(request), "status": dict(poll_status)},
+        {"feeds": _load_feed_rows(request), "status": dict(poll_status), "paused": paused},
     )
 
 
