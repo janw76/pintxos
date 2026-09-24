@@ -7,12 +7,15 @@ own, so callers stay in charge of commit/rollback (see `db.db()`).
 from __future__ import annotations
 
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 
 def today() -> str:
     """The current UTC date as YYYY-MM-DD, the key used by the `day` column."""
     return datetime.now(UTC).strftime("%Y-%m-%d")
+
+
+_today = today  # kept for functions whose `today` parameter shadows the module function
 
 
 def bump(
@@ -51,6 +54,30 @@ def kept_today(conn: sqlite3.Connection, feed_id: int) -> int:
         (feed_id, today()),
     ).fetchone()
     return int(row[0])
+
+
+def item_stats(conn: sqlite3.Connection, feed_id: int, *, today: str | None = None) -> dict:
+    """Basic live stats for a feed's items: volume, age spread, and average length.
+
+    `days` counts UTC calendar days from the feed's earliest item through `today`
+    (default: today()), inclusive, floored at 1. `avg_words` is rounded and only
+    covers rows with a known `word_count`; it is None when none do. Zero items yields
+    items=0, days=1, per_day=0.0, avg_words=None.
+    """
+    today = today or _today()
+    row = conn.execute(
+        "SELECT COUNT(*) AS n, MIN(created_at) AS earliest,"
+        " AVG(word_count) AS avg_words FROM items WHERE feed_id = ?",
+        (feed_id,),
+    ).fetchone()
+    items = int(row["n"])
+    if items == 0:
+        return {"items": 0, "days": 1, "per_day": 0.0, "avg_words": None}
+    earliest_day = date.fromisoformat(row["earliest"][:10])
+    today_day = date.fromisoformat(today)
+    days = max(1, (today_day - earliest_day).days + 1)
+    avg_words = round(row["avg_words"]) if row["avg_words"] is not None else None
+    return {"items": items, "days": days, "per_day": items / days, "avg_words": avg_words}
 
 
 def totals(conn: sqlite3.Connection, feed_id: int) -> tuple[int, int]:

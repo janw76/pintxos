@@ -1784,6 +1784,36 @@ def test_feed_edit_page_shows_summaries_today_and_total(monkeypatch):
     assert "Summaries: 3 paid today, 2 new items kept, 8 total" in page
 
 
+def test_feed_edit_page_shows_item_stats_line(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        with db() as conn:
+            conn.execute(
+                "INSERT INTO items (feed_id, guid, link, created_at, word_count)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (1, "guid-1", "https://example.com/1", db_now(), 100),
+            )
+            conn.execute(
+                "INSERT INTO items (feed_id, guid, link, created_at, word_count)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (1, "guid-2", "https://example.com/2", db_now(), 200),
+            )
+        page = c.get("/feeds/1").text
+
+    assert "items over" in page
+    assert "words per fetched article" in page
+
+
+def test_feed_edit_page_hides_item_stats_line_when_no_items(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        page = c.get("/feeds/1").text
+
+    assert "items over" not in page
+
+
 def _first_item_block(xml_text: str) -> str:
     start = xml_text.index("<item>")
     end = xml_text.index("</item>", start) + len("</item>")

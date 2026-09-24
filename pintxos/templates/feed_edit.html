@@ -133,6 +133,7 @@
 <h2>Status</h2>
 <p>{% with fetch_status=fetch_status %}{% include "_fetch_status.html" %}{% endwith %}</p>
 <div class="muted">Summaries: {{ summaries_today }} paid today, {{ kept_today }} new items kept, {{ summaries_total }} total</div>
+{% if item_stats['items'] %}<div class="muted">{{ item_stats['items'] }} items over {{ item_stats.days }} days ({{ item_stats.per_day|round(1) }}/day){% if item_stats.avg_words is not none %} · avg {{ item_stats.avg_words }} words per fetched article{% endif %}</div>{% endif %}
 {% if fallback_count > 0 %}
 <form method="post" action="/feeds/{{ feed.id }}/retry-fallback" class="retry-fallback">
   <button type="submit" class="btn-tint-neutral">Retry {{ fallback_count }} fallback item{{ "s" if fallback_count != 1 else "" }}</button>

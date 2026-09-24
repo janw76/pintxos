@@ -266,6 +266,7 @@ def feed_edit_page(request: Request, feed_id: int) -> Response:
         daily_budget = feed["daily_budget"]
         summaries_today, summaries_total = feedstats.totals(conn, feed_id)
         kept_today = feedstats.kept_today(conn, feed_id)
+        item_stats = feedstats.item_stats(conn, feed_id)
         global_filter_ads_on = is_truthy(get_setting("PINTXOS_FILTER_ADS", conn))
         global_patterns = get_setting("PINTXOS_AD_TITLE_PATTERNS", conn) or ""
         global_respect_language_on = is_truthy(get_setting("PINTXOS_RESPECT_LANGUAGE", conn))
@@ -363,6 +364,7 @@ def feed_edit_page(request: Request, feed_id: int) -> Response:
             "summaries_today": summaries_today,
             "summaries_total": summaries_total,
             "kept_today": kept_today,
+            "item_stats": item_stats,
             "global_model": global_model,
             "warn_at": warn_at,
         },
