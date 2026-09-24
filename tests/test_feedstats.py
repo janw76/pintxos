@@ -1,7 +1,7 @@
 import pytest
 
 from pintxos.db import connect, init_db, now
-from pintxos.feedstats import bump, kept_today, today, totals
+from pintxos.feedstats import bump, item_stats, kept_today, today, totals
 
 
 @pytest.fixture
@@ -137,3 +137,56 @@ def test_bump_does_not_commit_on_its_own(db):
     assert db.in_transaction
     db.rollback()
     assert rows(db, feed_id) == []
+
+
+def add_item_with_words(conn, feed_id, guid, created_at, word_count=None):
+    conn.execute(
+        "INSERT INTO items (feed_id, guid, link, created_at, word_count)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (feed_id, guid, f"https://example.com/{guid}", created_at, word_count),
+    )
+    conn.commit()
+
+
+def test_item_stats_across_two_days_with_some_null_word_counts(db):
+    feed_id = add_feed(db)
+    add_item_with_words(db, feed_id, "g1", "2026-09-10T00:00:00.000000+00:00", 100)
+    add_item_with_words(db, feed_id, "g2", "2026-09-10T12:00:00.000000+00:00", 200)
+    add_item_with_words(db, feed_id, "g3", "2026-09-11T00:00:00.000000+00:00", None)
+    stats = item_stats(db, feed_id, today="2026-09-11")
+    assert stats["items"] == 3
+    assert stats["days"] == 2
+    assert stats["per_day"] == pytest.approx(1.5)
+    assert stats["avg_words"] == 150
+
+
+def test_item_stats_days_extend_through_today(db):
+    feed_id = add_feed(db)
+    add_item_with_words(db, feed_id, "g1", "2026-09-10T00:00:00.000000+00:00", 10)
+    stats = item_stats(db, feed_id, today="2026-09-14")
+    assert stats["days"] == 5
+    assert stats["per_day"] == pytest.approx(1 / 5)
+
+
+def test_item_stats_no_items_is_zero(db):
+    feed_id = add_feed(db)
+    stats = item_stats(db, feed_id, today="2026-09-11")
+    assert stats["items"] == 0
+
+
+def test_item_stats_all_null_word_counts_gives_none(db):
+    feed_id = add_feed(db)
+    add_item_with_words(db, feed_id, "g1", "2026-09-10T00:00:00.000000+00:00", None)
+    add_item_with_words(db, feed_id, "g2", "2026-09-10T01:00:00.000000+00:00", None)
+    stats = item_stats(db, feed_id, today="2026-09-10")
+    assert stats["avg_words"] is None
+
+
+def test_item_stats_ignores_other_feeds(db):
+    a = add_feed(db, "https://example.com/a.xml")
+    b = add_feed(db, "https://example.com/b.xml")
+    add_item_with_words(db, a, "g1", "2026-09-10T00:00:00.000000+00:00", 50)
+    add_item_with_words(db, b, "g2", "2026-09-10T00:00:00.000000+00:00", 999)
+    stats = item_stats(db, a, today="2026-09-10")
+    assert stats["items"] == 1
+    assert stats["avg_words"] == 50
