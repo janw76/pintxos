@@ -6,20 +6,20 @@
      Colour: base tokens (--text, --text-muted, --border, --surface). --accent only on the two hero
        figures, today's sparkline bar and the first stacked segment; pastels #aab4f7 #9fd8c2 #f6c8a0
        #d4b8f0 then slate #c3ccd9 for the rest. White cards, 1px --border, 10px radius, no shadow.
-     Type: system sans. Hero words at body size, figures 3rem/700 tabular -0.02em in --accent.
+     Type: system sans. Hero words at body size, figures 2.25rem/700 tabular -0.02em in --accent.
        KPI figures 3rem/700 in --text; labels 0.8125rem muted, sentence case.
      Layout:  Stats / past 7 days, 19 to 25 Sep 2026
-              This week Pintxøs read [312] articles for you and saved [4 h 12 min] of reading.
+              This week Pintxøs read [312] articles for you, corresponding to [4h and 12m] of reading.
               [Summarized ▂▅▃] [Filtered out] [Unreadable] [Average article]
               [Topics ======== (wide)] [Models ====== (wide)]  [Paywalls (wide)] [Feeds 2x2 (wide)]
      Principle: one loud sentence; everything below it is quiet and left-aligned. */
   .stats-head h1 { margin-bottom: 0.25rem; }
   .stats-head p { margin: 0; color: var(--text-muted); font-size: 0.875rem; }
 
-  .hero { font-size: 1rem; line-height: 1.35; max-width: 46rem; margin: 2rem 0 2.5rem; }
+  .hero { font-size: 1rem; line-height: 1.35; margin: 2rem 0 2.5rem; }
   .hero .fig {
     color: var(--accent);
-    font-size: 3rem;
+    font-size: 2.25rem;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
     letter-spacing: -0.02em;
@@ -103,7 +103,7 @@
 </div>
 
 {% if s.summarized %}
-<p class="hero">This week Pintxøs read <strong class="fig">{{ s.summarized }}</strong> articles for you and saved <strong class="fig">{{ time_saved }}</strong> of reading.</p>
+<p class="hero">This week Pintxøs read <strong class="fig">{{ s.summarized }}</strong> articles for you, corresponding to <strong class="fig">{{ time_saved }}</strong> of reading.</p>
 {% else %}
 <p class="hero empty-state">Nothing to count yet. Add a feed and Pintxøs starts tallying after the first poll.</p>
 {% endif %}
