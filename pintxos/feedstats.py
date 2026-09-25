@@ -24,21 +24,41 @@ def bump(
     *,
     summaries: int = 0,
     classifications: int = 0,
+    filtered_ads: int = 0,
+    filtered_keywords: int = 0,
+    filtered_budget: int = 0,
+    filtered_topic: int = 0,
     day: str | None = None,
 ) -> None:
-    """Add `summaries`/`classifications` to a feed's counters for `day` (default: today).
+    """Add the given amounts to a feed's counters for `day` (default: today).
 
-    Both counters zero is a no-op: no row is created for a feed that did no work.
+    `summaries`/`classifications` count paid LLM calls; the `filtered_*` counters count
+    entries dropped that day by kind (built-in ad rule, feed keyword pattern, daily
+    budget, muted topic). All counters zero is a no-op: no row is created for a feed
+    that did no work.
     """
-    if not summaries and not classifications:
+    counters = (
+        summaries,
+        classifications,
+        filtered_ads,
+        filtered_keywords,
+        filtered_budget,
+        filtered_topic,
+    )
+    if not any(counters):
         return
     conn.execute(
-        "INSERT INTO feed_stats (feed_id, day, summaries, classifications)"
-        " VALUES (?, ?, ?, ?)"
+        "INSERT INTO feed_stats (feed_id, day, summaries, classifications,"
+        " filtered_ads, filtered_keywords, filtered_budget, filtered_topic)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
         " ON CONFLICT(feed_id, day) DO UPDATE SET"
         " summaries = summaries + excluded.summaries,"
-        " classifications = classifications + excluded.classifications",
-        (feed_id, day or today(), summaries, classifications),
+        " classifications = classifications + excluded.classifications,"
+        " filtered_ads = filtered_ads + excluded.filtered_ads,"
+        " filtered_keywords = filtered_keywords + excluded.filtered_keywords,"
+        " filtered_budget = filtered_budget + excluded.filtered_budget,"
+        " filtered_topic = filtered_topic + excluded.filtered_topic",
+        (feed_id, day or today(), *counters),
     )
 
 
