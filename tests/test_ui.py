@@ -3339,3 +3339,48 @@ def test_feed_xml_caps_items_at_items_per_feed(monkeypatch):
     assert "guid-0" not in body
     for n in range(1, per_feed + 1):
         assert f"guid-{n}" in body
+
+
+def test_stats_page_empty_db_shows_empty_state_and_nav():
+    with TestClient(app) as c:
+        resp = c.get("/stats")
+    assert resp.status_code == 200
+    page = resp.text
+    assert (
+        "Nothing to count yet. Add a feed and Pintxøs starts tallying after the first poll."
+        in page
+    )
+    assert '<a href="/stats" aria-current="page">Stats</a>' in page
+    nav = page[page.index("<nav>") : page.index("</nav>")]
+    assert nav.index(">Feeds<") < nav.index(">Stats<") < nav.index(">Settings<")
+
+
+def test_stats_page_hero_counts_kept_items_today():
+    summary_text = " ".join(["word"] * 50)
+    created = f"{feedstats.today()}T09:00:00+00:00"
+    with db() as conn:
+        feed_id = conn.execute(
+            "INSERT INTO feeds (url, title, created_at) VALUES (?, ?, ?)",
+            ("https://example.com/feed.xml", "Example", created),
+        ).lastrowid
+        for guid in ("a", "b"):
+            conn.execute(
+                "INSERT INTO items (feed_id, guid, link, created_at, muted, word_count, summary)"
+                " VALUES (?, ?, ?, ?, 0, 500, ?)",
+                (feed_id, guid, f"https://example.com/{guid}", created, summary_text),
+            )
+    with TestClient(app) as c:
+        page = c.get("/stats").text
+
+    assert re.search(r'<strong class="fig">2</strong>\s+articles', page)
+    saved = re.search(r'saved <strong class="fig">([^<]+)</strong> of reading', page)
+    assert saved and saved.group(1) != "0 min"
+    assert len(re.findall(r'class="spark-bar[ "]', page)) == 7
+    assert "Nothing to count yet" not in page
+
+
+@pytest.mark.parametrize(
+    ("minutes", "expected"), [(0, "0 min"), (38, "38 min"), (60, "1 h 0 min"), (252, "4 h 12 min")]
+)
+def test_format_minutes(minutes, expected):
+    assert app_module.format_minutes(minutes) == expected

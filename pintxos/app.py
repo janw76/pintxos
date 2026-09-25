@@ -7,7 +7,7 @@ import os
 import sqlite3
 import tempfile
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
@@ -17,7 +17,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 import pintxos
-from pintxos import adfilter, feed_out, feedstats, llm
+from pintxos import adfilter, dashboard, feed_out, feedstats, llm
 from pintxos.config import DEFAULTS, data_dir, get_setting, is_truthy
 from pintxos.cookies import cookie_path, expiry_for, get_jar, has_cookies_for, load_jar, summary
 from pintxos.db import db, init_db, now
@@ -653,6 +653,39 @@ def _key_available(key_name: str, submitted: str, conn: sqlite3.Connection) -> b
         return True
     row = conn.execute("SELECT value FROM settings WHERE key = ?", (key_name,)).fetchone()
     return bool(row and row["value"])
+
+
+def format_minutes(minutes: int) -> str:
+    """Time saved as the Stats page shows it: "0 min", "38 min", "4 h 12 min"."""
+    hours, rest = divmod(max(int(minutes), 0), 60)
+    return f"{hours} h {rest} min" if hours else f"{rest} min"
+
+
+def window_label(start: str, end: str) -> str:
+    """ "19 to 25 Sep 2026"; month and year appear only where they change."""
+    a, b = date.fromisoformat(start), date.fromisoformat(end)
+    if a.year != b.year:
+        head = f"{a.day} {a:%b %Y}"
+    elif a.month != b.month:
+        head = f"{a.day} {a:%b}"
+    else:
+        head = str(a.day)
+    return f"{head} to {b.day} {b:%b %Y}"
+
+
+@app.get("/stats")
+def stats_page(request: Request) -> Response:
+    with db() as conn:
+        s = dashboard.summary(conn)
+    return templates.TemplateResponse(
+        request,
+        "stats.html",
+        {
+            "s": s,
+            "window_label": window_label(s["window_start"], s["window_end"]),
+            "time_saved": format_minutes(s["minutes_saved"]),
+        },
+    )
 
 
 @app.get("/settings")
