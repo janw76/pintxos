@@ -656,9 +656,13 @@ def _key_available(key_name: str, submitted: str, conn: sqlite3.Connection) -> b
 
 
 def format_minutes(minutes: int) -> str:
-    """Time saved as the Stats page shows it: "0 min", "38 min", "4 h 12 min"."""
+    """Time saved as the Stats page shows it: "0m", "38m", "1h", "4h and 12m"."""
     hours, rest = divmod(max(int(minutes), 0), 60)
-    return f"{hours} h {rest} min" if hours else f"{rest} min"
+    if not hours:
+        return f"{rest}m"
+    if not rest:
+        return f"{hours}h"
+    return f"{hours}h and {rest}m"
 
 
 def window_label(start: str, end: str) -> str:

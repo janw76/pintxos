@@ -65,17 +65,27 @@ def _per_day(conn: sqlite3.Connection, window_start: str, today: str) -> list[di
 
 
 def _filtered(conn: sqlite3.Connection, window_start: str, today: str) -> dict:
+    # topic is counted from stored items, not from feed_stats: topic-muted
+    # articles are kept (items.muted = 1, set only on the topic-mute path in
+    # poll.py), so the count is exact and covers the whole window immediately.
+    # ads, keywords and budget entries are never inserted into items, so they
+    # can only be counted at poll time via feed_stats, and only from the day
+    # those counters shipped. feed_stats.filtered_topic is still bumped by
+    # poll for consistency with the filter log, but it is not read here.
     row = conn.execute(
         "SELECT COALESCE(SUM(filtered_ads), 0) AS ads,"
         " COALESCE(SUM(filtered_keywords), 0) AS keywords,"
-        " COALESCE(SUM(filtered_budget), 0) AS budget,"
-        " COALESCE(SUM(filtered_topic), 0) AS topic"
+        " COALESCE(SUM(filtered_budget), 0) AS budget"
         " FROM feed_stats WHERE day BETWEEN ? AND ?",
         (window_start, today),
     ).fetchone()
-    ads, keywords, budget, topic = int(row["ads"]), int(row["keywords"]), int(row["budget"]), int(
-        row["topic"]
-    )
+    ads, keywords, budget = int(row["ads"]), int(row["keywords"]), int(row["budget"])
+    topic_row = conn.execute(
+        "SELECT COUNT(*) AS n FROM items"
+        " WHERE muted = 1 AND substr(created_at, 1, 10) BETWEEN ? AND ?",
+        (window_start, today),
+    ).fetchone()
+    topic = int(topic_row["n"])
     return {
         "ads": ads,
         "keywords": keywords,

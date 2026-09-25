@@ -130,6 +130,14 @@ def test_full_dashboard_exact_dict(db):
         fetch_status="ok",
     )
     add_item(db, feed_a, "a6", "2026-09-18T00:00:00+00:00", fetch_status="ok")
+    add_item(
+        db,
+        feed_a,
+        "a7-muted-outside",
+        "2026-09-13T00:00:00+00:00",
+        muted=1,
+        topic="science",
+    )
 
     # Feed B: today, today-3, today-6.
     add_item(
@@ -161,8 +169,10 @@ def test_full_dashboard_exact_dict(db):
     )
 
     # feed_stats filter counters: inside the window, plus one row before it.
+    # filtered_topic is seeded with a large, wrong-looking value to prove the
+    # dashboard no longer reads it: "topic" below comes from muted items only.
     bump(db, feed_a, filtered_ads=2, filtered_keywords=1, day="2026-09-17")
-    bump(db, feed_b, filtered_budget=3, filtered_topic=4, day="2026-09-14")
+    bump(db, feed_b, filtered_budget=3, filtered_topic=99, day="2026-09-14")
     bump(db, feed_a, filtered_ads=100, day="2026-09-13")  # outside window
     db.commit()
 
@@ -183,7 +193,9 @@ def test_full_dashboard_exact_dict(db):
             {"day": "2026-09-19", "n": 0},
             {"day": "2026-09-20", "n": 2},
         ],
-        "filtered": {"ads": 2, "keywords": 1, "budget": 3, "topic": 4, "total": 10},
+        # topic = 1: only a5-muted falls inside the window; a7-muted-outside
+        # (2026-09-13, before window_start) is excluded even though muted.
+        "filtered": {"ads": 2, "keywords": 1, "budget": 3, "topic": 1, "total": 7},
         "unreadable": 1,
         "avg_words": 500,
         "words_saved": 800,
@@ -367,12 +379,18 @@ def test_filtered_sums_only_include_rows_inside_window(db):
     bump(db, feed_id, filtered_ads=5, day="2026-09-13")  # day before window_start
     bump(db, feed_id, filtered_keywords=7, day="2026-09-14")  # window_start
     bump(db, feed_id, filtered_budget=9, day="2026-09-20")  # today
-    bump(db, feed_id, filtered_topic=11, day="2026-09-21")  # after today
+    # Seeded inside the window with a large value to prove topic ignores
+    # feed_stats.filtered_topic entirely; topic instead comes from items.
+    bump(db, feed_id, filtered_topic=99, day="2026-09-17")
+    add_item(db, feed_id, "muted-window-start", "2026-09-14T00:00:00+00:00", muted=1)
+    add_item(db, feed_id, "muted-today", "2026-09-20T00:00:00+00:00", muted=1)
+    add_item(db, feed_id, "muted-before-window", "2026-09-13T00:00:00+00:00", muted=1)
+    add_item(db, feed_id, "muted-after-today", "2026-09-21T00:00:00+00:00", muted=1)
     db.commit()
 
     result = summary(db, today=TODAY, days=7)
 
-    assert result["filtered"] == {"ads": 0, "keywords": 7, "budget": 9, "topic": 0, "total": 16}
+    assert result["filtered"] == {"ads": 0, "keywords": 7, "budget": 9, "topic": 2, "total": 18}
 
 
 def test_topics_top_five_plus_other(db):
