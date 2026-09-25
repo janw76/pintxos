@@ -392,3 +392,50 @@ def test_topics_top_five_plus_other(db):
     total = sum(len(slugs) - i for i in range(len(slugs)))  # 7+6+5+4+3+2+1 = 28
     assert topics[5]["n"] == 3  # arts (2) + weather (1)
     assert sum(t["n"] for t in topics) == total
+
+
+def test_buckets_match_app_bucket_sql(db):
+    """dashboard._BUCKET_CASE is a hand-copy of app._BUCKET_SQL; compute the same
+    buckets with app's own SQL and assert dashboard.summary() agrees, so the two
+    copies can't silently drift apart."""
+    from pintxos import app as app_module
+
+    feed_id = add_feed(db)
+    # (guid, auth, fetch_status, fallback, muted) covering every bucket and the
+    # gaps between them.
+    rows = [
+        ("used-ok", "used", "ok", 0, 0),  # used only
+        ("paywalled-missing-teaser", "missing", "teaser", 0, 0),  # paywalled (auth missing)
+        ("paywalled-null-blocked", None, "blocked", 0, 0),  # paywalled (auth NULL)
+        ("login-failed", "failed", "error", 1, 0),  # login_failed; not unreadable (auth != missing/NULL)
+        ("unreadable-missing-error", "missing", "error", 1, 0),  # unreadable (fetch_status = 'error')
+        ("unreadable-null-null", None, None, 1, 0),  # unreadable (fetch_status IS NULL)
+        ("not-unreadable-fallback0", "missing", "error", 0, 0),  # nowhere: fallback = 0
+        ("used-teaser-not-paywalled", "used", "teaser", 0, 0),  # used; not paywalled (auth = used)
+        ("muted-used-ok", "used", "ok", 0, 1),  # muted: must count in neither
+    ]
+    for guid, auth, fetch_status, fallback, muted in rows:
+        add_item(
+            db,
+            feed_id,
+            guid,
+            f"{TODAY}T00:00:00+00:00",
+            auth=auth,
+            fetch_status=fetch_status,
+            fallback=fallback,
+            muted=muted,
+        )
+
+    expected_row = db.execute(
+        f"SELECT {app_module._bucket_sql('')} FROM items WHERE feed_id = ? AND muted = 0",
+        (feed_id,),
+    ).fetchone()
+
+    result = summary(db, today=TODAY, days=7)
+
+    assert result["paywall"] == {
+        "used": int(expected_row["used"] or 0),
+        "paywalled": int(expected_row["paywalled"] or 0),
+        "login_failed": int(expected_row["login_failed"] or 0),
+    }
+    assert result["unreadable"] == int(expected_row["unreadable"] or 0)
