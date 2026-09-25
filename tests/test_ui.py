@@ -3373,14 +3373,14 @@ def test_stats_page_hero_counts_kept_items_today():
         page = c.get("/stats").text
 
     assert re.search(r'<strong class="fig">2</strong>\s+articles', page)
-    saved = re.search(r'saved <strong class="fig">([^<]+)</strong> of reading', page)
-    assert saved and saved.group(1) != "0 min"
+    saved = re.search(r'corresponding to <strong class="fig">([^<]+)</strong> of reading', page)
+    assert saved and saved.group(1) != "0m"
     assert len(re.findall(r'class="spark-bar[ "]', page)) == 7
     assert "Nothing to count yet" not in page
 
 
 @pytest.mark.parametrize(
-    ("minutes", "expected"), [(0, "0 min"), (38, "38 min"), (60, "1 h 0 min"), (252, "4 h 12 min")]
+    ("minutes", "expected"), [(0, "0m"), (17, "17m"), (180, "3h"), (5237, "87h and 17m")]
 )
 def test_format_minutes(minutes, expected):
     assert app_module.format_minutes(minutes) == expected
