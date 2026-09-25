@@ -190,3 +190,71 @@ def test_item_stats_ignores_other_feeds(db):
     stats = item_stats(db, a, today="2026-09-10")
     assert stats["items"] == 1
     assert stats["avg_words"] == 50
+
+
+def filter_row(conn, feed_id):
+    return conn.execute(
+        "SELECT summaries, classifications, filtered_ads, filtered_keywords,"
+        " filtered_budget, filtered_topic FROM feed_stats WHERE feed_id = ?",
+        (feed_id,),
+    ).fetchone()
+
+
+@pytest.mark.parametrize(
+    ("counter", "expected"),
+    [
+        ("filtered_ads", (0, 0, 1, 0, 0, 0)),
+        ("filtered_keywords", (0, 0, 0, 1, 0, 0)),
+        ("filtered_budget", (0, 0, 0, 0, 1, 0)),
+        ("filtered_topic", (0, 0, 0, 0, 0, 1)),
+    ],
+)
+def test_bump_each_filter_counter(db, counter, expected):
+    feed_id = add_feed(db)
+    bump(db, feed_id, **{counter: 1})
+    assert tuple(filter_row(db, feed_id)) == expected
+
+
+def test_bump_filter_counters_accumulate_and_leave_summaries_alone(db):
+    feed_id = add_feed(db)
+    bump(db, feed_id, summaries=2, classifications=1)
+    bump(db, feed_id, filtered_ads=1, filtered_keywords=2, filtered_budget=3, filtered_topic=4)
+    bump(db, feed_id, filtered_ads=1, filtered_keywords=1, filtered_budget=1, filtered_topic=1)
+    assert tuple(filter_row(db, feed_id)) == (2, 1, 2, 3, 4, 5)
+
+
+def test_bump_all_zero_filter_counters_is_a_noop(db):
+    feed_id = add_feed(db)
+    bump(db, feed_id, filtered_ads=0, filtered_keywords=0, filtered_budget=0, filtered_topic=0)
+    assert rows(db, feed_id) == []
+
+
+def test_connect_adds_filter_columns_to_an_old_feed_stats_table(tmp_path, monkeypatch):
+    import sqlite3
+
+    from pintxos.config import db_path
+
+    monkeypatch.setenv("PINTXOS_DATA_DIR", str(tmp_path))
+    old = sqlite3.connect(db_path())
+    old.executescript(
+        "CREATE TABLE feed_stats ("
+        " feed_id INTEGER, day TEXT NOT NULL,"
+        " summaries INTEGER NOT NULL DEFAULT 0,"
+        " classifications INTEGER NOT NULL DEFAULT 0,"
+        " PRIMARY KEY(feed_id, day));"
+        "INSERT INTO feed_stats (feed_id, day, summaries) VALUES (1, '2026-09-10', 3);"
+    )
+    old.close()
+    conn = connect()
+    try:
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(feed_stats)")}
+        assert {"filtered_ads", "filtered_keywords", "filtered_budget", "filtered_topic"} <= cols
+        row = conn.execute("SELECT * FROM feed_stats").fetchone()
+        assert (row["summaries"], row["filtered_ads"], row["filtered_topic"]) == (3, 0, 0)
+    finally:
+        conn.close()
+
+
+def test_fresh_db_has_filter_columns(db):
+    cols = {r["name"] for r in db.execute("PRAGMA table_info(feed_stats)")}
+    assert {"filtered_ads", "filtered_keywords", "filtered_budget", "filtered_topic"} <= cols

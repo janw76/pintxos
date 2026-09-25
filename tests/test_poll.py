@@ -3806,3 +3806,81 @@ def test_probe_failure_extends_pause_but_keeps_since(feed_id, monkeypatch):
     new_until = datetime.fromisoformat(get_setting("PINTXOS_PAUSED_UNTIL"))
     assert new_until > old_until  # moved forward
     assert get_setting("PINTXOS_PAUSED_ERROR") == "other: still no credit"
+
+
+def filter_stats_today(feed_id):
+    """(ads, keywords, budget, topic) filtered for `feed_id` today; None if no row."""
+    with db() as conn:
+        row = conn.execute(
+            "SELECT filtered_ads, filtered_keywords, filtered_budget, filtered_topic"
+            " FROM feed_stats WHERE feed_id = ? AND day = ?",
+            (feed_id, feedstats.today()),
+        ).fetchone()
+    return tuple(row) if row is not None else None
+
+
+def test_builtin_ad_rule_bumps_filtered_ads(feed_id, calls_with_ad, monkeypatch):
+    monkeypatch.setenv("PINTXOS_FILTER_ADS", "1")
+    assert poll.poll_feed(feed_id) is True
+    assert filter_stats_today(feed_id) == (1, 0, 0, 0)
+
+
+def test_feed_keyword_pattern_bumps_filtered_keywords(feed_id, monkeypatch, serve_feed):
+    monkeypatch.setenv("PINTXOS_FILTER_ADS", "1")
+    xml = (
+        SAMPLE_WITH_AD.decode()
+        .replace("Groupon Promo Codes: 60% Off in September 2026", "Best Labor Day Deals 2026")
+        .replace("<category>coupons</category>", "")
+        .encode()
+    )
+    serve_feed(xml)
+    set_feed(feed_id, ad_patterns_mode=1, ad_title_patterns="best .* deals")
+    assert poll.poll_feed(feed_id) is True
+    # The log keeps its "ad" kind and reason; only the counter tells keywords apart.
+    (entry,) = json.loads(feed_row(feed_id)["last_filtered"])
+    assert (entry["kind"], entry["reason"]) == ("ad", "ad: title:best .* deals")
+    assert filter_stats_today(feed_id) == (0, 1, 0, 0)
+
+
+def test_muted_topic_bumps_filtered_topic(feed_id, calls, monkeypatch):
+    set_feed(feed_id, classify_topics=1, mute_topics=json.dumps(["sport"]))
+    mock_classify(monkeypatch, lambda title: "sport" if "rocket" in title else "economy")
+    assert poll.poll_feed(feed_id) is True
+    assert filter_stats_today(feed_id) == (0, 0, 0, 1)
+
+
+def test_budget_skip_bumps_filtered_budget(feed_id, calls, monkeypatch):
+    set_feed(feed_id, daily_budget=2)
+    assert poll.poll_feed(feed_id) is True
+    assert filter_stats_today(feed_id) == (0, 0, 1, 0)
+    assert feed_stats_today(feed_id) == (2, 0)
+
+
+def test_ad_refiltered_on_second_poll_is_counted_once(feed_id, calls_with_ad, monkeypatch):
+    monkeypatch.setenv("PINTXOS_FILTER_ADS", "1")
+    assert poll.poll_feed(feed_id) is True
+    assert poll.poll_feed(feed_id) is True  # same ad entry filtered again
+    assert filter_stats_today(feed_id) == (1, 0, 0, 0)
+    assert len(json.loads(feed_row(feed_id)["last_filtered"])) == 1  # log unchanged
+
+
+def test_budget_skip_on_second_poll_is_counted_once(feed_id, calls, monkeypatch):
+    set_feed(feed_id, daily_budget=2)
+    assert poll.poll_feed(feed_id) is True
+    assert poll.poll_feed(feed_id) is True  # budget still reached, same entry skipped
+    assert filter_stats_today(feed_id) == (0, 0, 1, 0)
+    assert len(json.loads(feed_row(feed_id)["last_filtered"])) == 1
+
+
+def test_poll_with_nothing_filtered_leaves_filter_counters_zero(feed_id, calls):
+    assert poll.poll_feed(feed_id) is True
+    # The summaries bump creates the row; the filter bump adds nothing to it.
+    assert filter_stats_today(feed_id) == (0, 0, 0, 0)
+
+
+def test_poll_with_nothing_filtered_creates_no_stats_row(feed_id, calls):
+    poll.poll_feed(feed_id)
+    with db() as conn:
+        conn.execute("DELETE FROM feed_stats")
+    assert poll.poll_feed(feed_id) is True  # second poll: everything seen, nothing filtered
+    assert filter_stats_today(feed_id) is None

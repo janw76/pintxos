@@ -69,6 +69,11 @@ CREATE TABLE IF NOT EXISTS feed_stats (
     day TEXT NOT NULL,
     summaries INTEGER NOT NULL DEFAULT 0,
     classifications INTEGER NOT NULL DEFAULT 0,
+    -- Counts of entries dropped that day, by kind (ad rule, keyword pattern, budget, muted topic).
+    filtered_ads INTEGER NOT NULL DEFAULT 0,
+    filtered_keywords INTEGER NOT NULL DEFAULT 0,
+    filtered_budget INTEGER NOT NULL DEFAULT 0,
+    filtered_topic INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY(feed_id, day)
 );
 """
@@ -150,6 +155,18 @@ def connect() -> sqlite3.Connection:
     ):
         if name not in item_cols:
             conn.execute(f"ALTER TABLE items ADD COLUMN {name} {ddl}")
+
+    stats_cols = {r["name"] for r in conn.execute("PRAGMA table_info(feed_stats)")}
+    for name, ddl in (
+        # Entries dropped that day, by kind: built-in ad rule, feed keyword pattern,
+        # daily budget reached, muted topic.
+        ("filtered_ads", "INTEGER NOT NULL DEFAULT 0"),
+        ("filtered_keywords", "INTEGER NOT NULL DEFAULT 0"),
+        ("filtered_budget", "INTEGER NOT NULL DEFAULT 0"),
+        ("filtered_topic", "INTEGER NOT NULL DEFAULT 0"),
+    ):
+        if name not in stats_cols:
+            conn.execute(f"ALTER TABLE feed_stats ADD COLUMN {name} {ddl}")
     return conn
 
 
