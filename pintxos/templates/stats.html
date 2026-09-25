@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}Stats · Pintxøs{% endblock %}
+{% block head %}
+<style>
+  /* Design plan: Stats
+     Colour: base tokens (--text, --text-muted, --border, --surface). --accent only on the two hero
+       figures, today's sparkline bar and the first stacked segment; pastels #aab4f7 #9fd8c2 #f6c8a0
+       #d4b8f0 then slate #c3ccd9 for the rest. White cards, 1px --border, 10px radius, no shadow.
+     Type: system sans. Hero words at body size, figures 3rem/700 tabular -0.02em in --accent.
+       KPI figures 3rem/700 in --text; labels 0.8125rem muted, sentence case.
+     Layout:  Stats / past 7 days, 19 to 25 Sep 2026
+              This week Pintxøs read [312] articles for you and saved [4 h 12 min] of reading.
+              [Summarized ▂▅▃] [Filtered out] [Unreadable] [Average article]
+              [Topics ======== (wide)] [Models ====== (wide)]  [Paywalls (wide)] [Feeds 2x2 (wide)]
+     Principle: one loud sentence; everything below it is quiet and left-aligned. */
+  .stats-head h1 { margin-bottom: 0.25rem; }
+  .stats-head p { margin: 0; color: var(--text-muted); font-size: 0.875rem; }
+
+  .hero { font-size: 1rem; line-height: 1.35; max-width: 46rem; margin: 2rem 0 2.5rem; }
+  .hero .fig {
+    color: var(--accent);
+    font-size: 3rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+    white-space: nowrap;
+  }
+  .hero.empty-state { font-size: 1.125rem; color: var(--text); }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 1rem; }
+  .card { padding: 1.25rem; border: 1px solid var(--border); border-radius: 10px; min-width: 0; }
+  @media (min-width: 720px) { .card.wide { grid-column: span 2; } }
+  .card h2 {
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    margin: 0 0 0.5rem;
+    padding: 0;
+    border: 0;
+  }
+  .kpi {
+    font-size: 3rem;
+    font-weight: 700;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+    margin: 0;
+  }
+  .kpi .unit { font-size: 1rem; font-weight: 400; letter-spacing: 0; color: var(--text-muted); }
+  .none { color: var(--text-muted); font-size: 0.875rem; margin: 0; }
+
+  .spark { display: flex; align-items: flex-end; gap: 3px; height: 2.5rem; margin-top: 0.75rem; }
+  .spark-bar { flex: 1; min-height: 2px; background: #c3ccd9; border-radius: 2px 2px 0 0; }
+  .spark-bar.today { background: var(--accent); }
+
+  .split { list-style: none; padding: 0; margin: 0.75rem 0 0; font-size: 0.875rem; }
+  .split li { display: flex; justify-content: space-between; gap: 1rem; padding: 0.125rem 0; }
+  .split span:last-child, .legend .pct { font-variant-numeric: tabular-nums; color: var(--text-muted); }
+
+  .stack { display: flex; height: 0.75rem; border-radius: 999px; overflow: hidden; margin: 0.5rem 0 0.875rem; }
+  .stack span:last-child { flex-grow: 1; }
+  .legend { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 0.375rem 1.25rem; font-size: 0.875rem; }
+  .legend li { display: flex; align-items: center; gap: 0.4rem; min-width: 0; overflow-wrap: anywhere; }
+  .swatch { flex: none; width: 0.625rem; height: 0.625rem; border-radius: 3px; }
+  .note { font-size: 0.875rem; margin: 0.75rem 0 0; }
+
+  .extremes { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem 1.5rem; margin: 0.25rem 0 0; }
+  @media (max-width: 600px) { .extremes { grid-template-columns: 1fr; } }
+  .extremes dt { font-size: 0.8125rem; color: var(--text-muted); }
+  .extremes dd { margin: 0.125rem 0 0; font-weight: 600; overflow-wrap: anywhere; }
+  .extremes dd .val { font-weight: 400; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+</style>
+{% endblock %}
+
+{% block content %}
+{% macro stacked(rows, label_key, cap=false) %}
+  {% set colours = ['var(--accent)', '#aab4f7', '#9fd8c2', '#f6c8a0', '#d4b8f0', '#c3ccd9'] %}
+  <div class="stack" aria-hidden="true">
+    {% for r in rows %}<span style="width: {{ r.percent }}%; background: {{ r.colour or colours[loop.index0 % 6] }}"></span>{% endfor %}
+  </div>
+  <ul class="legend">
+    {% for r in rows %}
+    <li>{% set label = r[label_key] %}<span class="swatch" style="background: {{ r.colour or colours[loop.index0 % 6] }}"></span>{{ (label[:1] | upper ~ label[1:]) if cap else label }} <span class="pct">{{ r.percent }}%</span></li>
+    {% endfor %}
+  </ul>
+{% endmacro %}
+
+{% macro extreme(label, e, kind) %}
+  <div>
+    <dt>{{ label }}</dt>
+    {% if e %}
+    <dd>{{ e.title }} <span class="val">{% if kind == 'per_day' %}{{ '%.1f' | format(e.value) }} per day{% else %}{{ e.value }} words{% endif %}</span></dd>
+    {% else %}
+    <dd class="none">&ndash;</dd>
+    {% endif %}
+  </div>
+{% endmacro %}
+
+<div class="stats-head">
+  <h1>Stats</h1>
+  <p>Past 7 days, {{ window_label }}</p>
+</div>
+
+{% if s.summarized %}
+<p class="hero">This week Pintxøs read <strong class="fig">{{ s.summarized }}</strong> articles for you and saved <strong class="fig">{{ time_saved }}</strong> of reading.</p>
+{% else %}
+<p class="hero empty-state">Nothing to count yet. Add a feed and Pintxøs starts tallying after the first poll.</p>
+{% endif %}
+
+<div class="cards">
+  <section class="card">
+    <h2>Articles summarized</h2>
+    <p class="kpi">{{ s.summarized }}</p>
+    {% set peak = s.per_day | map(attribute='n') | max %}
+    <div class="spark" role="img" aria-label="Articles per day, oldest first: {{ s.per_day | map(attribute='n') | join(', ') }}">
+      {% for d in s.per_day %}<div class="spark-bar{{ ' today' if loop.last }}" style="height: {{ (100 * d.n / peak) | round | int if peak else 0 }}%"></div>{% endfor %}
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Filtered out</h2>
+    <p class="kpi">{{ s.filtered.total }}</p>
+    <ul class="split">
+      <li><span>Ads</span><span>{{ s.filtered.ads }}</span></li>
+      <li><span>Keywords</span><span>{{ s.filtered.keywords }}</span></li>
+      <li><span>Topic</span><span>{{ s.filtered.topic }}</span></li>
+      <li><span>Budget</span><span>{{ s.filtered.budget }}</span></li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2>Unreadable</h2>
+    <p class="kpi">{{ s.unreadable }}</p>
+  </section>
+
+  <section class="card">
+    <h2>Average article</h2>
+    {% if s.avg_words is not none %}
+    <p class="kpi">{{ s.avg_words }} <span class="unit">words</span></p>
+    {% else %}
+    <p class="none">no data</p>
+    {% endif %}
+  </section>
+
+  <section class="card wide">
+    <h2>Topics</h2>
+    {% if s.topics %}{{ stacked(s.topics, 'name', cap=true) }}{% else %}<p class="none">Nothing yet</p>{% endif %}
+  </section>
+
+  <section class="card wide">
+    <h2>Models</h2>
+    {% if s.models %}{{ stacked(s.models, 'model') }}{% else %}<p class="none">Nothing yet</p>{% endif %}
+  </section>
+
+  <section class="card wide">
+    <h2>Paywalls</h2>
+    {% set pw = s.paywall %}
+    {% set pw_total = pw.used + pw.paywalled + pw.login_failed %}
+    {% if pw_total %}
+    {% set pw_rows = [
+      {'name': 'Got in', 'colour': 'var(--accent)', 'percent': (100 * pw.used / pw_total) | round | int},
+      {'name': 'Paywalled', 'colour': '#c3ccd9', 'percent': (100 * pw.paywalled / pw_total) | round | int},
+      {'name': 'Login failed', 'colour': '#f6c8a0', 'percent': (100 * pw.login_failed / pw_total) | round | int},
+    ] %}
+    {{ stacked(pw_rows, 'name') }}
+    <p class="note">Pintxøs got past the paywall {{ pw.used }} time{{ 's' if pw.used != 1 }}.</p>
+    {% else %}
+    <p class="none">Nothing yet</p>
+    {% endif %}
+  </section>
+
+  <section class="card wide">
+    <h2>Feeds</h2>
+    {% set fx = s.feed_extremes %}
+    <dl class="extremes">
+      {{ extreme('Busiest feed', fx.most_per_day, 'per_day') }}
+      {{ extreme('Quietest feed', fx.least_per_day, 'per_day') }}
+      {{ extreme('Longest reads', fx.longest, 'words') }}
+      {{ extreme('Shortest reads', fx.shortest, 'words') }}
+    </dl>
+  </section>
+</div>
+{% endblock %}
