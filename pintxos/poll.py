@@ -761,14 +761,40 @@ def poll_feed(feed_id: int) -> bool:
         # Ad/coupon entries are filtered before fetch/summarize, but never inserted or
         # otherwise recorded as seen -- they are simply re-evaluated on the next poll.
         filtered = []
+        # Per-kind counts for this poll, bumped into feed_stats alongside last_filtered.
+        filter_counts = {"ads": 0, "keywords": 0, "budget": 0, "topic": 0}
+        # Counters are history and must count an article once. Ad/budget entries are
+        # never stored, so they are re-filtered every poll: the previous last_filtered
+        # log is the "already counted" set, and an entry re-filtered on the next poll is
+        # not counted again (one that leaves the feed and later returns counts again).
+        try:
+            prev_log = json.loads(feed["last_filtered"] or "[]")
+            if not isinstance(prev_log, list):
+                raise ValueError("last_filtered is not a list")
+        except ValueError:
+            prev_log = []
+        already_counted = {e.get("guid") for e in prev_log if isinstance(e, dict)}
+
+        def count_filtered(kind: str, guid: str) -> None:
+            if guid not in already_counted:
+                filter_counts[kind] += 1
+
         kept = new_entries
         if filter_ads:
             kept = []
+            extra_pattern_strings = {p.pattern for p in extra_ad_patterns}
             for guid, link, entry in new_entries:
                 reason = adfilter.is_ad(entry, extra_ad_patterns, keep_patterns=keep_patterns)
                 if reason is None:
                     kept.append((guid, link, entry))
                 else:
+                    if (
+                        reason.startswith("title:")
+                        and reason.removeprefix("title:") in extra_pattern_strings
+                    ):
+                        count_filtered("keywords", guid)
+                    else:
+                        count_filtered("ads", guid)
                     filtered.append(
                         {
                             "kind": "ad",
@@ -791,6 +817,7 @@ def poll_feed(feed_id: int) -> bool:
         for i, (guid, link, entry) in enumerate(kept, 1):
             if daily_budget is not None and summaries_today >= daily_budget:
                 budget_skipped += 1
+                count_filtered("budget", guid)
                 filtered.append(
                     {
                         "kind": "budget",
@@ -851,6 +878,7 @@ def poll_feed(feed_id: int) -> bool:
                             topic, 1, None, article.excerpt,
                         ),
                     )
+                count_filtered("topic", guid)
                 filtered.append(
                     {
                         "kind": "topic",
@@ -957,6 +985,14 @@ def poll_feed(feed_id: int) -> bool:
                 "last_filtered = ? WHERE id = ?",
                 (now(), len(filtered), json.dumps(filtered), feed_id),
             )
+            feedstats.bump(
+                conn,
+                feed_id,
+                filtered_ads=filter_counts["ads"],
+                filtered_keywords=filter_counts["keywords"],
+                filtered_budget=filter_counts["budget"],
+                filtered_topic=filter_counts["topic"],
+            )
         return True
     finally:
         _status.pop(feed_id, None)
@@ -982,6 +1018,7 @@ def _drop_filtered_entry(feed_id: int, guid: str) -> None:
                 raise ValueError("last_filtered is not a list")
         except ValueError:
             return
+        # feed_stats.filtered_* are not decremented here: they are history, the log is live.
         remaining = [entry for entry in filtered if entry.get("guid") != guid]
         if len(remaining) == len(filtered):
             return  # not present: nothing removed, so nothing to decrement
