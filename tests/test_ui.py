@@ -3384,3 +3384,46 @@ def test_stats_page_hero_counts_kept_items_today():
 )
 def test_format_minutes(minutes, expected):
     assert app_module.format_minutes(minutes) == expected
+
+
+def test_settings_post_local_model_saves_without_any_key(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with TestClient(app) as c:
+        resp = c.post(
+            "/settings",
+            data={
+                "model": "local:glm4:9b",
+                "local_llm_url": " http://host.docker.internal:11434/v1 ",
+                "poll_minutes": "30",
+                "items_per_feed": "50",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "err=" not in resp.headers["location"]
+        page = c.get("/settings").text
+
+    assert get_setting("PINTXOS_MODEL") == "local:glm4:9b"
+    assert get_setting("PINTXOS_LOCAL_LLM_URL") == "http://host.docker.internal:11434/v1"
+    assert "http://host.docker.internal:11434/v1" in page
+
+
+def test_settings_test_route_exercises_local_endpoint(monkeypatch):
+    seen = []
+
+    def fake_post(url, **kwargs):
+        seen.append(url)
+        return type("R", (), {
+            "status_code": 200,
+            "text": "",
+            "json": lambda self: {"choices": [{"message": {"content": "OK"}}]},
+        })()
+
+    monkeypatch.setenv("PINTXOS_MODEL", "local:m")
+    monkeypatch.setenv("PINTXOS_LOCAL_LLM_URL", "http://127.0.0.1:9/v1")
+    monkeypatch.setattr("pintxos.llm.httpx.post", fake_post)
+    with TestClient(app) as c:
+        resp = c.post("/settings/test", follow_redirects=False)
+        assert "err=" not in resp.headers["location"]
+    assert seen == ["http://127.0.0.1:9/v1/chat/completions"]

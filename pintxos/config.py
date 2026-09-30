@@ -21,6 +21,12 @@ DEFAULTS: dict[str, str | None] = {
     "PINTXOS_BASE_URL": None,
     # Model to retry with when the primary PINTXOS_MODEL summarize attempt fails.
     "PINTXOS_FALLBACK_MODEL": "deepseek/deepseek-v4-flash",
+    # Any OpenAI-compatible server (Ollama, llama.cpp, vLLM, ...), used by "local:" models.
+    "PINTXOS_LOCAL_LLM_URL": "http://127.0.0.1:11434/v1",
+    # Optional bearer token for that server; most local servers need none.
+    "PINTXOS_LOCAL_LLM_KEY": None,
+    # Seconds; CPU inference is slow. Environment/DB only, no UI field.
+    "PINTXOS_LOCAL_LLM_TIMEOUT": "300",
     # Set (by the app) when summarization is paused after repeated failures; None = not paused.
     "PINTXOS_PAUSED_UNTIL": None,
     "PINTXOS_PAUSED_SINCE": None,

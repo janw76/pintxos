@@ -142,6 +142,9 @@ to the database. `PINTXOS_BASE_URL`, `PINTXOS_DATA_DIR`, `PINTXOS_HOST`,
 |---|---|---|
 | `ANTHROPIC_API_KEY` | *(none)* | Anthropic API key. Needed only for models without a slash in the name (Anthropic direct). See note below. |
 | `OPENROUTER_API_KEY` | *(none)* | OpenRouter API key. Needed for the default model and any model with a slash in the name. |
+| `PINTXOS_LOCAL_LLM_URL` | `http://127.0.0.1:11434/v1` | Base URL of an OpenAI-compatible server (Ollama, llama.cpp, vLLM, LM Studio) used by models named `local:<model>`. See "Local models". |
+| `PINTXOS_LOCAL_LLM_KEY` | *(none)* | Optional bearer token for that server. Most local servers need none. |
+| `PINTXOS_LOCAL_LLM_TIMEOUT` | `300` | Seconds to wait for a local model's reply; CPU inference is slow. Invalid values fall back to 300. No UI field. |
 | `PINTXOS_MODEL` | `z-ai/glm-5.3-flash` | Default model. Names with a slash go to OpenRouter, names without go to Anthropic. Feeds can override it. |
 | `PINTXOS_POLL_MINUTES` | `30` | How often feeds are polled, in minutes. |
 | `PINTXOS_ITEMS_PER_FEED` | `50` | Items in each output feed, and the most feed entries considered per poll. |
@@ -339,6 +342,14 @@ Prices are OpenRouter's as of September 2026 and drift; see the full list at [op
 Each feed can override the model on its Edit page — e.g., a premium model for one feed, the cheapest for another; leaving it blank uses the global default.
 
 Save the model on the Settings page first, then click "Test saved model" to run a tiny completion with it and the saved key.
+
+## Local models
+
+Any OpenAI-compatible server works, with no API key. With Ollama: `ollama pull <model>`, then set the model to `local:<model>` (e.g. `local:glm4:9b`).
+The `local:` prefix is stripped before the name is sent to the server, and it wins over the slash rule, so names like `local:hf.co/org/model` work.
+The server address is `PINTXOS_LOCAL_LLM_URL` (Settings page: "Local LLM URL"); the fallback model is not used for `local:` models.
+In Docker, `127.0.0.1` is the container itself: use `http://host.docker.internal:11434/v1` (add `extra_hosts: ["host.docker.internal:host-gateway"]` on Linux) or the host's IP, and make Ollama listen on it (`OLLAMA_HOST=0.0.0.0`).
+The same setup runs on Linux and macOS; expect slow replies on CPU-only machines.
 
 ## Development
 

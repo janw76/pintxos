@@ -430,7 +430,9 @@ def feed_edit_save(
 
     with db() as conn:
         if model_value is not None:
-            if llm.provider(model_value) == "openrouter":
+            if llm.provider(model_value) == "local":
+                pass  # a local endpoint needs no API key
+            elif llm.provider(model_value) == "openrouter":
                 if not _key_available("OPENROUTER_API_KEY", "", conn):
                     return _redirect(
                         f"/feeds/{feed_id}",
@@ -697,6 +699,7 @@ def settings_page(request: Request) -> Response:
     with db() as conn:
         model = get_setting("PINTXOS_MODEL", conn)
         fallback_model = get_setting("PINTXOS_FALLBACK_MODEL", conn) or ""
+        local_llm_url = get_setting("PINTXOS_LOCAL_LLM_URL", conn) or ""
         poll_minutes = get_setting("PINTXOS_POLL_MINUTES", conn)
         items_per_feed = get_setting("PINTXOS_ITEMS_PER_FEED", conn)
         filter_ads = get_setting("PINTXOS_FILTER_ADS", conn)
@@ -726,6 +729,7 @@ def settings_page(request: Request) -> Response:
     warn_env = env_pinned("PINTXOS_WARN_AT")
     warn_hard_env = env_pinned("PINTXOS_WARN_HARD_AT")
     fallback_model_env = env_pinned("PINTXOS_FALLBACK_MODEL")
+    local_llm_url_env = env_pinned("PINTXOS_LOCAL_LLM_URL")
     jar = get_jar()
     cookie_domains = summary(jar) if jar else []
     cookie_file = str(cookie_path())
@@ -742,6 +746,8 @@ def settings_page(request: Request) -> Response:
             "model": model,
             "fallback_model": fallback_model,
             "fallback_model_env": fallback_model_env,
+            "local_llm_url": local_llm_url,
+            "local_llm_url_env": local_llm_url_env,
             "poll_minutes": poll_minutes,
             "items_per_feed": items_per_feed,
             "env_key_set": env_key_set,
@@ -776,6 +782,7 @@ def settings_page(request: Request) -> Response:
 def save_settings(
     model: str = Form(...),
     fallback_model: str = Form(""),
+    local_llm_url: str = Form(""),
     poll_minutes: str = Form(...),
     items_per_feed: str = Form(...),
     api_key: str = Form(""),
@@ -864,7 +871,9 @@ def save_settings(
         return _redirect("/settings", err="Model is required")
 
     with db() as conn:
-        if llm.provider(model) == "openrouter":
+        if llm.provider(model) == "local":
+            pass  # a local endpoint needs no API key
+        elif llm.provider(model) == "openrouter":
             if not _key_available("OPENROUTER_API_KEY", openrouter_api_key, conn):
                 return _redirect(
                     "/settings",
@@ -883,6 +892,8 @@ def save_settings(
     ]
     if not env_pinned("PINTXOS_FALLBACK_MODEL"):
         pairs.append(("PINTXOS_FALLBACK_MODEL", fallback_model.strip()))
+    if not env_pinned("PINTXOS_LOCAL_LLM_URL"):
+        pairs.append(("PINTXOS_LOCAL_LLM_URL", local_llm_url.strip()))
     if api_key and not env_pinned("ANTHROPIC_API_KEY"):
         pairs.append(("ANTHROPIC_API_KEY", api_key))
     if openrouter_api_key and not env_pinned("OPENROUTER_API_KEY"):

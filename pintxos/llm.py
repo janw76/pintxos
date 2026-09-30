@@ -1,7 +1,9 @@
-"""One LLM call, two providers: Anthropic directly or any model via OpenRouter.
+"""One LLM call, three providers: Anthropic directly, OpenRouter, or a local server.
 
-The model name is the router: a slash in it ("openai/gpt-5", "anthropic/claude-...")
-means OpenRouter, a bare name ("claude-haiku-4-5-20251001") means the Anthropic SDK.
+The model name is the router: a "local:" prefix ("local:glm4:9b") means any
+OpenAI-compatible server (Ollama, llama.cpp, vLLM, ...), a slash in it
+("openai/gpt-5", "anthropic/claude-...") means OpenRouter, a bare name
+("claude-haiku-4-5-20251001") means the Anthropic SDK.
 """
 
 from __future__ import annotations
@@ -14,6 +16,10 @@ import httpx
 from pintxos.config import get_setting
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+LOCAL_PREFIX = "local:"
+DEFAULT_LOCAL_URL = "http://127.0.0.1:11434/v1"  # Ollama's default
+DEFAULT_LOCAL_TIMEOUT = 300.0  # CPU inference is slow
 
 # Generous but finite: a hung provider must not hold a poll worker forever.
 REQUEST_TIMEOUT = 60
@@ -61,8 +67,14 @@ class Completion(NamedTuple):
 
 
 def provider(model: str) -> str:
-    """Return "openrouter" for slash-qualified model names, else "anthropic"."""
-    return "openrouter" if "/" in (model or "") else "anthropic"
+    """Return "local" for "local:" names, "openrouter" for slash-qualified ones, else "anthropic".
+
+    "local:" is checked first: local model names may themselves contain "/" or ":".
+    """
+    model = model or ""
+    if model.startswith(LOCAL_PREFIX):
+        return "local"
+    return "openrouter" if "/" in model else "anthropic"
 
 
 def complete(
@@ -81,8 +93,11 @@ def complete(
     `fallback` controls whether PINTXOS_FALLBACK_MODEL is added to OpenRouter's
     "models" list; pass False when the caller specifically wants to know
     whether `model` itself works (e.g. the settings health check), since a
-    configured fallback would otherwise mask a broken primary model.
+    configured fallback would otherwise mask a broken primary model. It is
+    ignored for "local:" models, which have no fallback routing.
     """
+    if provider(model) == "local":
+        return _complete_local(system, user, max_tokens, model, json)
     if provider(model) == "openrouter":
         return _complete_openrouter(system, user, max_tokens, model, json, fallback)
     return _complete_anthropic(system, user, max_tokens, model)
@@ -204,3 +219,52 @@ def _complete_openrouter(
         raise _empty_response_error(response)
     answered = payload.get("model") if isinstance(payload, dict) else None
     return Completion(content, answered or model)
+
+
+def _complete_local(
+    system: str, user: str, max_tokens: int, model: str, json: bool
+) -> Completion:
+    base = (get_setting("PINTXOS_LOCAL_LLM_URL") or "").strip().rstrip("/")
+    base = base or DEFAULT_LOCAL_URL
+    try:
+        timeout = float(get_setting("PINTXOS_LOCAL_LLM_TIMEOUT") or DEFAULT_LOCAL_TIMEOUT)
+        if timeout <= 0:
+            raise ValueError
+    except ValueError:
+        timeout = DEFAULT_LOCAL_TIMEOUT
+    # Unlike the hosted providers, a missing key is fine: most local servers have none.
+    api_key = get_setting("PINTXOS_LOCAL_LLM_KEY")
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+    served_model = model[len(LOCAL_PREFIX):]
+    body: dict = {
+        "model": served_model,
+        "max_tokens": max_tokens,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    }
+    if json:
+        body["response_format"] = {"type": "json_object"}
+
+    try:
+        response = httpx.post(
+            f"{base}/chat/completions", headers=headers, json=body, timeout=timeout
+        )
+    except httpx.HTTPError as e:
+        raise LLMError(f"local LLM at {base} unreachable: {e}") from e
+
+    if not 200 <= response.status_code < 300:
+        raise LLMError(f"local LLM HTTP {response.status_code}: {response.text[:500]}")
+
+    try:
+        payload = response.json()
+        content = payload["choices"][0]["message"]["content"]
+    except (ValueError, KeyError, IndexError, TypeError) as e:
+        raise _empty_response_error(response) from e
+    if not content:
+        raise _empty_response_error(response)
+    # The caller's full name, "local:" prefix included: the poller compares it to the
+    # configured model to detect fallback use, and a local model has no fallback.
+    return Completion(content, model)

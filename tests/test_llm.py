@@ -532,3 +532,138 @@ def test_completion_is_a_named_tuple_of_text_and_model(monkeypatch):
     text, model = llm.complete("sys", "user", 10, "openai/gpt-5")
 
     assert (text, model) == ("sport", "vendor/cheap")
+
+
+# --- local provider -------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "name",
+    ["local:glm4:9b", "local:hf.co/org/model", "local:llama3", "local:"],
+)
+def test_provider_local_prefix_wins_over_slash_and_colon(name):
+    assert llm.provider(name) == "local"
+
+
+def test_provider_local_must_be_a_prefix():
+    assert llm.provider("openai/local:x") == "openrouter"
+    assert llm.provider("mylocal:x") == "anthropic"
+
+
+@pytest.fixture
+def local_server(monkeypatch):
+    """A stub OpenAI-compatible server on 127.0.0.1; yields (base_url, requests, reply)."""
+    import json as jsonlib
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    requests = []
+    reply = {"status": 200, "body": {"choices": [{"message": {"content": "local answer"}}]}}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            raw = self.rfile.read(int(self.headers["Content-Length"]))
+            requests.append(
+                {"path": self.path, "headers": dict(self.headers), "body": jsonlib.loads(raw)}
+            )
+            out = jsonlib.dumps(reply["body"]).encode()
+            self.send_response(reply["status"])
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_port}/v1"
+    monkeypatch.setenv("PINTXOS_LOCAL_LLM_URL", base + "/")  # trailing slash is stripped
+    monkeypatch.delenv("PINTXOS_LOCAL_LLM_KEY", raising=False)
+    yield base, requests, reply
+    server.shutdown()
+    server.server_close()
+
+
+def test_local_request_shape_no_key(local_server):
+    base, requests, _ = local_server
+    result = llm.complete("sys", "usr", 77, "local:hf.co/org/model:q4")
+    assert result == llm.Completion("local answer", "local:hf.co/org/model:q4")
+    (req,) = requests
+    assert req["path"] == "/v1/chat/completions"
+    assert "Authorization" not in req["headers"]
+    body = req["body"]
+    assert body == {
+        "model": "hf.co/org/model:q4",
+        "max_tokens": 77,
+        "messages": [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "usr"},
+        ],
+    }
+    for openrouter_only in ("reasoning", "models", "provider"):
+        assert openrouter_only not in body
+
+
+def test_local_sends_bearer_when_key_set(local_server, monkeypatch):
+    _, requests, _ = local_server
+    monkeypatch.setenv("PINTXOS_LOCAL_LLM_KEY", "sekret")
+    llm.complete("s", "u", 10, "local:m")
+    assert requests[0]["headers"]["Authorization"] == "Bearer sekret"
+
+
+def test_local_response_format_only_when_json(local_server):
+    _, requests, _ = local_server
+    llm.complete("s", "u", 10, "local:m")
+    llm.complete("s", "u", 10, "local:m", json=True)
+    assert "response_format" not in requests[0]["body"]
+    assert requests[1]["body"]["response_format"] == {"type": "json_object"}
+
+
+def test_local_ignores_fallback_model(local_server, monkeypatch):
+    _, requests, _ = local_server
+    monkeypatch.setenv("PINTXOS_FALLBACK_MODEL", "vendor/cheap")
+    llm.complete("s", "u", 10, "local:m")
+    assert "models" not in requests[0]["body"]
+
+
+def test_local_http_error_names_status_and_body(local_server):
+    _, _, reply = local_server
+    reply.update(status=500, body={"error": "model exploded"})
+    with pytest.raises(llm.LLMError, match="500.*model exploded"):
+        llm.complete("s", "u", 10, "local:m")
+
+
+def test_local_empty_content_raises(local_server):
+    _, _, reply = local_server
+    reply["body"] = {"choices": [{"message": {"content": ""}, "finish_reason": "length"}]}
+    with pytest.raises(llm.LLMError, match="empty response"):
+        llm.complete("s", "u", 10, "local:m")
+
+
+def test_local_unreachable_names_the_url(monkeypatch):
+    monkeypatch.setenv("PINTXOS_LOCAL_LLM_URL", "http://127.0.0.1:1/v1")
+    with pytest.raises(llm.LLMError, match=r"local LLM at http://127\.0\.0\.1:1/v1 unreachable"):
+        llm.complete("s", "u", 10, "local:m")
+
+
+@pytest.mark.parametrize("value, expected", [("12", 12.0), ("junk", 300.0), ("-5", 300.0), (None, 300.0)])
+def test_local_timeout_setting_with_fallback_to_default(monkeypatch, value, expected):
+    if value is None:
+        monkeypatch.delenv("PINTXOS_LOCAL_LLM_TIMEOUT", raising=False)
+    else:
+        monkeypatch.setenv("PINTXOS_LOCAL_LLM_TIMEOUT", value)
+    monkeypatch.delenv("PINTXOS_LOCAL_LLM_URL", raising=False)
+    calls = _patch_post(monkeypatch, _ok_response("hi"))
+    llm.complete("s", "u", 10, "local:m")
+    url, kwargs = calls[0]
+    assert kwargs["timeout"] == expected
+    assert url == "http://127.0.0.1:11434/v1/chat/completions"
+
+
+def test_local_completion_model_is_the_requested_name_even_if_server_echoes_another(local_server):
+    _, _, reply = local_server
+    reply["body"] = {"model": "x", "choices": [{"message": {"content": "hi"}}]}
+    assert llm.complete("s", "u", 10, "local:x").model == "local:x"
+    reply["body"] = {"model": "something-else", "choices": [{"message": {"content": "hi"}}]}
+    assert llm.complete("s", "u", 10, "local:x").model == "local:x"

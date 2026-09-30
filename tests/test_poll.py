@@ -420,6 +420,33 @@ def test_poll_feed_with_null_model_carries_global_model(feed_id, monkeypatch):
     assert rows and all(row["model"] == "global/model" for row in rows)
 
 
+def test_local_model_feed_items_are_not_marked_as_fallback(feed_id, monkeypatch):
+    """The server echoes the stripped model name; the stored model must still equal
+    the feed's configured "local:x", or every item would count as a fallback."""
+    set_feed(feed_id, model="local:x")
+    monkeypatch.setattr(poll, "_get", lambda url: FakeResponse(SAMPLE))
+    monkeypatch.setattr(poll, "fetch_article", lambda link: (None, "error", []))
+
+    class Reply:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {
+                "model": "x",
+                "choices": [{"message": {"content": '{"headline": "H", "summary": "S"}'}}],
+            }
+
+    monkeypatch.setattr("pintxos.llm.httpx.post", lambda url, **kw: Reply())
+
+    poll.poll_feed(feed_id)
+
+    with db() as conn:
+        rows = conn.execute("SELECT model, model_fallback FROM items WHERE summary IS NOT NULL").fetchall()
+    assert rows
+    assert all(r["model"] == "local:x" and r["model_fallback"] == 0 for r in rows)
+
+
 def test_connect_migrates_existing_db_missing_items_model_column(tmp_path, monkeypatch):
     """A DB from before the items.model column gains it on connect(), and only once."""
     monkeypatch.setenv("PINTXOS_DATA_DIR", str(tmp_path))

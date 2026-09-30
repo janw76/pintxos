@@ -16,6 +16,12 @@
     {% if fallback_model_env %}<div class="muted">Set by PINTXOS_FALLBACK_MODEL in the environment.</div>{% endif %}
   </div>
   <div class="field">
+    <label for="local_llm_url">Local LLM URL</label>
+    <input type="text" id="local_llm_url" name="local_llm_url" value="{{ local_llm_url }}" placeholder="http://127.0.0.1:11434/v1" {% if local_llm_url_env %}disabled{% endif %}>
+    <div class="muted">OpenAI-compatible endpoint (e.g. Ollama) used by models named <code>local:&lt;model&gt;</code>; no API key needed. Empty means the default.</div>
+    {% if local_llm_url_env %}<div class="muted">Set by PINTXOS_LOCAL_LLM_URL in the environment.</div>{% endif %}
+  </div>
+  <div class="field">
     <label for="api_key">Anthropic API key</label>
     {% if env_key_set %}
       <input type="password" id="api_key" name="api_key" value="" disabled>
