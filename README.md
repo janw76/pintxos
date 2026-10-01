@@ -348,8 +348,12 @@ Save the model on the Settings page first, then click "Test saved model" to run 
 Any OpenAI-compatible server works, with no API key. With Ollama: `ollama pull <model>`, then set the model to `local:<model>` (e.g. `local:glm4:9b`).
 The `local:` prefix is stripped before the name is sent to the server, and it wins over the slash rule, so names like `local:hf.co/org/model` work.
 The server address is `PINTXOS_LOCAL_LLM_URL` (Settings page: "Local LLM URL"); the fallback model is not used for `local:` models.
-In Docker, `127.0.0.1` is the container itself: use `http://host.docker.internal:11434/v1` (add `extra_hosts: ["host.docker.internal:host-gateway"]` on Linux) or the host's IP, and make Ollama listen on it (`OLLAMA_HOST=0.0.0.0`).
+In Docker, `127.0.0.1` is the container itself: use `http://host.docker.internal:11434/v1` instead.
+On Docker Desktop and Colima (macOS, Windows) this works out of the box: `host.docker.internal` reaches the host's loopback, so a default Ollama needs no changes.
+On native Linux Docker, add `extra_hosts: ["host.docker.internal:host-gateway"]` (or `--add-host`) and start Ollama with `OLLAMA_HOST=0.0.0.0`, because `host-gateway` is the docker0 bridge IP, not loopback.
+`OLLAMA_HOST=0.0.0.0` exposes Ollama on all interfaces: firewall port 11434, or bind to the docker0 IP (e.g. `OLLAMA_HOST=172.17.0.1`) instead.
 The same setup runs on Linux and macOS; expect slow replies on CPU-only machines.
+Some Ollama setups default to a 2k–8k token context and silently cut long inputs (pintxos sends up to ~7.6k prompt tokens), so set `OLLAMA_CONTEXT_LENGTH=16384` or more for long articles.
 
 ## Development
 
