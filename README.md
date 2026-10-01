@@ -353,7 +353,8 @@ On Docker Desktop and Colima (macOS, Windows) this works out of the box: `host.d
 On native Linux Docker, add `extra_hosts: ["host.docker.internal:host-gateway"]` (or `--add-host`) and start Ollama with `OLLAMA_HOST=0.0.0.0`, because `host-gateway` is the docker0 bridge IP, not loopback.
 `OLLAMA_HOST=0.0.0.0` exposes Ollama on all interfaces: firewall port 11434, or bind to the docker0 IP (e.g. `OLLAMA_HOST=172.17.0.1`) instead.
 The same setup runs on Linux and macOS; expect slow replies on CPU-only machines.
-Some Ollama setups default to a 2k–8k token context and silently cut long inputs (pintxos sends up to ~7.6k prompt tokens), so set `OLLAMA_CONTEXT_LENGTH=16384` or more for long articles.
+Long articles make prompts of up to ~7.6k tokens, but Ollama's default context depends on the machine (4k/32k/256k based on VRAM, per `ollama serve --help`), so set `OLLAMA_CONTEXT_LENGTH=16384` or more.
+Current Ollama rejects a prompt that doesn't fit with an error, logged and recorded as the item's summarize error; older versions and some other servers may cut it silently instead, so pintxos logs a warning when the server reports far fewer prompt tokens than it sent.
 
 ## Development
 

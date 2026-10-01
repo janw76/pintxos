@@ -8,6 +8,7 @@ OpenAI-compatible server (Ollama, llama.cpp, vLLM, ...), a slash in it
 
 from __future__ import annotations
 
+import logging
 from typing import NamedTuple
 
 import anthropic
@@ -15,11 +16,26 @@ import httpx
 
 from pintxos.config import get_setting
 
+log = logging.getLogger("pintxos")
+
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 LOCAL_PREFIX = "local:"
 DEFAULT_LOCAL_URL = "http://127.0.0.1:11434/v1"  # Ollama's default
 DEFAULT_LOCAL_TIMEOUT = 300.0  # CPU inference is slow
+
+# Truncation guard for local servers. Some servers (older Ollama, others) cut a
+# prompt that exceeds their context window instead of rejecting it, so the
+# summary comes from the start of the article with no error. The estimate is
+# words x 1.3: English prose runs ~1.3 tokens per word, and pintxos already caps
+# input by words (MAX_INPUT_WORDS). It errs low for languages without spaces,
+# which can only suppress the warning, never cause a false one. Reported tokens
+# below 60% of the estimate leaves room for tokenizer differences; prompts under
+# 1000 estimated tokens are skipped because no real context window is that small.
+_TOKENS_PER_WORD = 1.3
+_TRUNCATION_RATIO = 0.6
+_TRUNCATION_MIN_ESTIMATE = 1000
+_truncation_warned: set[str] = set()
 
 # Generous but finite: a hung provider must not hold a poll worker forever.
 REQUEST_TIMEOUT = 60
@@ -265,6 +281,27 @@ def _complete_local(
         raise _empty_response_error(response) from e
     if not content:
         raise _empty_response_error(response)
+    _warn_if_truncated(model, system, user, payload)
     # The caller's full name, "local:" prefix included: the poller compares it to the
     # configured model to detect fallback use, and a local model has no fallback.
     return Completion(content, model)
+
+
+def _warn_if_truncated(model: str, system: str, user: str, payload: dict) -> None:
+    """Log once per model if the server reports far fewer prompt tokens than were sent."""
+    try:
+        reported = int(payload["usage"]["prompt_tokens"])
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return
+    expected = int((len(system.split()) + len(user.split())) * _TOKENS_PER_WORD)
+    if expected < _TRUNCATION_MIN_ESTIMATE or reported >= expected * _TRUNCATION_RATIO:
+        return
+    if model in _truncation_warned:
+        return
+    _truncation_warned.add(model)
+    log.warning(
+        "%s: server reported %d prompt tokens, expected about %d; it probably cut the "
+        "prompt to fit a small context window, so summaries miss the end of long "
+        "articles. Raise the server's context, e.g. OLLAMA_CONTEXT_LENGTH=16384.",
+        model, reported, expected,
+    )

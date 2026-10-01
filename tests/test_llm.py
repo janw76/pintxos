@@ -667,3 +667,70 @@ def test_local_completion_model_is_the_requested_name_even_if_server_echoes_anot
     assert llm.complete("s", "u", 10, "local:x").model == "local:x"
     reply["body"] = {"model": "something-else", "choices": [{"message": {"content": "hi"}}]}
     assert llm.complete("s", "u", 10, "local:x").model == "local:x"
+
+
+# --- local truncation guard ------------------------------------------------
+
+LONG_USER = "word " * 4000  # estimate: (1 + 4000) * 1.3 = 5201 tokens
+
+
+@pytest.fixture
+def truncation_reply(local_server, monkeypatch):
+    monkeypatch.setattr(llm, "_truncation_warned", set())
+    _, _, reply = local_server
+
+    def set_usage(usage):
+        body = {"choices": [{"message": {"content": "local answer"}}]}
+        if usage is not None:
+            body["usage"] = usage
+        reply["body"] = body
+
+    return set_usage
+
+
+def _truncation_warnings(caplog):
+    return [r for r in caplog.records if r.levelname == "WARNING" and "prompt tokens" in r.message]
+
+
+def test_local_truncation_warns_and_still_returns_summary(truncation_reply, caplog):
+    truncation_reply({"prompt_tokens": 2048})
+    with caplog.at_level("WARNING"):
+        result = llm.complete("sys", LONG_USER, 10, "local:m")
+    assert result == llm.Completion("local answer", "local:m")
+    [warning] = _truncation_warnings(caplog)
+    assert "local:m" in warning.message
+    assert "2048" in warning.message and "5201" in warning.message
+    assert "OLLAMA_CONTEXT_LENGTH=16384" in warning.message
+
+
+def test_local_truncation_silent_when_tokens_close(truncation_reply, caplog):
+    truncation_reply({"prompt_tokens": 4011})  # what Ollama reports for this prompt
+    with caplog.at_level("WARNING"):
+        llm.complete("sys", LONG_USER, 10, "local:m")
+    assert _truncation_warnings(caplog) == []
+
+
+def test_local_truncation_silent_when_usage_missing(truncation_reply, caplog):
+    truncation_reply(None)
+    with caplog.at_level("WARNING"):
+        assert llm.complete("sys", LONG_USER, 10, "local:m").text == "local answer"
+    assert _truncation_warnings(caplog) == []
+
+
+def test_local_truncation_silent_for_short_prompts(truncation_reply, caplog):
+    truncation_reply({"prompt_tokens": 5})
+    with caplog.at_level("WARNING"):
+        llm.complete("sys", "short headline", 10, "local:m")
+    assert _truncation_warnings(caplog) == []
+
+
+def test_local_truncation_warns_once_per_model(truncation_reply, caplog):
+    truncation_reply({"prompt_tokens": 2048})
+    with caplog.at_level("WARNING"):
+        for _ in range(3):
+            llm.complete("sys", LONG_USER, 10, "local:a")
+        llm.complete("sys", LONG_USER, 10, "local:b")
+    assert [w.message.split(":")[0:2] for w in _truncation_warnings(caplog)] == [
+        ["local", "a"],
+        ["local", "b"],
+    ]
