@@ -647,7 +647,10 @@ def test_local_unreachable_names_the_url(monkeypatch):
         llm.complete("s", "u", 10, "local:m")
 
 
-@pytest.mark.parametrize("value, expected", [("12", 12.0), ("junk", 300.0), ("-5", 300.0), (None, 300.0)])
+@pytest.mark.parametrize(
+    "value, expected",
+    [("12", 12.0), ("4", 4.0), ("junk", 300.0), ("-5", 300.0), (None, 300.0)],
+)
 def test_local_timeout_setting_with_fallback_to_default(monkeypatch, value, expected):
     if value is None:
         monkeypatch.delenv("PINTXOS_LOCAL_LLM_TIMEOUT", raising=False)
@@ -657,7 +660,11 @@ def test_local_timeout_setting_with_fallback_to_default(monkeypatch, value, expe
     calls = _patch_post(monkeypatch, _ok_response("hi"))
     llm.complete("s", "u", 10, "local:m")
     url, kwargs = calls[0]
-    assert kwargs["timeout"] == expected
+    timeout = kwargs["timeout"]
+    assert timeout.read == expected
+    # Connecting is capped: a server that drops packets must not hold the poll
+    # for the whole reply wait.
+    assert timeout.connect == min(expected, 10.0)
     assert url == "http://127.0.0.1:11434/v1/chat/completions"
 
 

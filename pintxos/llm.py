@@ -23,6 +23,9 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 LOCAL_PREFIX = "local:"
 DEFAULT_LOCAL_URL = "http://127.0.0.1:11434/v1"  # Ollama's default
 DEFAULT_LOCAL_TIMEOUT = 300.0  # CPU inference is slow
+# Connecting is quick or it is broken: a server that drops packets (a firewalled
+# port) must fail fast instead of holding the poll for the whole reply wait.
+LOCAL_CONNECT_TIMEOUT = 10.0
 
 # Truncation guard for local servers. Some servers (older Ollama, others) cut a
 # prompt that exceeds their context window instead of rejecting it, so the
@@ -266,7 +269,10 @@ def _complete_local(
 
     try:
         response = httpx.post(
-            f"{base}/chat/completions", headers=headers, json=body, timeout=timeout
+            f"{base}/chat/completions",
+            headers=headers,
+            json=body,
+            timeout=httpx.Timeout(timeout, connect=min(timeout, LOCAL_CONNECT_TIMEOUT)),
         )
     except httpx.HTTPError as e:
         raise LLMError(f"local LLM at {base} unreachable: {e}") from e

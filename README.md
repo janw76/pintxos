@@ -144,7 +144,7 @@ to the database. `PINTXOS_BASE_URL`, `PINTXOS_DATA_DIR`, `PINTXOS_HOST`,
 | `OPENROUTER_API_KEY` | *(none)* | OpenRouter API key. Needed for the default model and any model with a slash in the name. |
 | `PINTXOS_LOCAL_LLM_URL` | `http://127.0.0.1:11434/v1` | Base URL of an OpenAI-compatible server (Ollama, llama.cpp, vLLM, LM Studio) used by models named `local:<model>`. See "Local models". |
 | `PINTXOS_LOCAL_LLM_KEY` | *(none)* | Optional bearer token for that server. Most local servers need none. |
-| `PINTXOS_LOCAL_LLM_TIMEOUT` | `300` | Seconds to wait for a local model's reply; CPU inference is slow. Invalid values fall back to 300. No UI field. |
+| `PINTXOS_LOCAL_LLM_TIMEOUT` | `300` | Seconds to wait for a local model's reply; CPU inference is slow. Connecting is capped at 10 s, so an unreachable server fails fast. Invalid values fall back to 300. No UI field. |
 | `PINTXOS_MODEL` | `z-ai/glm-5.3-flash` | Default model. Names with a slash go to OpenRouter, names without go to Anthropic. Feeds can override it. |
 | `PINTXOS_POLL_MINUTES` | `30` | How often feeds are polled, in minutes. |
 | `PINTXOS_ITEMS_PER_FEED` | `50` | Items in each output feed, and the most feed entries considered per poll. |
