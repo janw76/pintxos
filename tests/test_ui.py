@@ -3892,3 +3892,21 @@ def test_feed_edit_status_card_uses_info_component_without_id_collisions(monkeyp
     assert '<span class="info-box" id="fs-1-1" role="note">' in status
     ids = re.findall(r'\bid="([^"]+)"', page)
     assert len(ids) == len(set(ids))
+
+
+def test_phone_wraps_titles_and_status_between_words_but_url_fallback_stays_breakable(monkeypatch):
+    """pintxos-ijh: the <=600px whole-word rule must come after the base th/td anywhere rule,
+    and a URL-only title keeps its own class so it can still break anywhere."""
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        page = c.get("/").text
+
+    base = page.index("th, td { text-align: left;")
+    rule = page.index("td .title, td .fetch-status")
+    assert rule > base
+    assert "overflow-wrap: normal" in page[rule : page.index("}", rule)]
+    assert "td .url-fallback" not in page[rule : page.index("}", rule)]
+    assert "td .fetch-status + a" in page[rule : page.index("}", rule)]
+    row = page[page.index('<tr id="feed-1"') :]
+    assert '<div class="url-fallback">https://example.com/feed.xml</div>' in row
