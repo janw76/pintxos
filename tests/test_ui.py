@@ -2370,6 +2370,13 @@ def test_table_buttons_carry_feather_icons_for_narrow_screens(monkeypatch):
     assert page.index("td.actions .btn-poll { min-width: 5.5rem; }") < label_hidden
     assert page.index("table button { font-size: 0.75rem; padding: 0.2rem 0.45rem; }") < label_hidden
 
+    # The check svg carries both .ico and .ico-done: inside the media block the .ico-done hide must
+    # follow the .ico show (equal specificity, later wins) and precede the .copied show.
+    ico_show = page.index("table button .ico { display: inline-block;")
+    done_hide = page.index("table button .ico-done { display: none; }", label_hidden)
+    copied_show = page.index(".btn-copy.copied .ico-done { display: inline-block; }")
+    assert ico_show < done_hide < copied_show
+
     license_path = Path(__file__).resolve().parents[1] / "docs" / "licenses" / "feather-icons-LICENSE.txt"
     assert license_path.exists()
     license_text = license_path.read_text()
