@@ -53,6 +53,13 @@
     @media (max-width: 720px) { table { table-layout: auto; } td.output { min-width: 5rem; } }
     /* Phone portrait hides Items, Last polled and the source URL; landscape (>=601px) shows them again. */
     @media (max-width: 600px) { .phone-hide, table .url { display: none; } }
+    /* Phone: titles and fetch-status text wrap between words, not mid-word (pintxos-ijh). Must sit after the
+       base th/td overflow-wrap: anywhere. The URL fallback title (.url-fallback) and last_error keep anywhere;
+       the fetch-status link (.fetch-status + a, e.g. "add login") is covered too. */
+    @media (max-width: 600px) {
+      td .title, td .fetch-status, td .fetch-status .muted, td .fetch-status + a { overflow-wrap: normal; }
+      td.output { min-width: 0; }
+    }
     tbody tr:hover { background: var(--surface); }
     tbody tr:last-child td { border-bottom: none; }
     tbody tr:has(+ #feed-no-match) td, tbody tr:has(+ #feed-empty) td { border-bottom: none; }
