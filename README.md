@@ -406,6 +406,12 @@ image build bakes it in as the `PINTXOS_VERSION` environment variable; when
 that variable is absent, for example in a source checkout, the footer shows
 "dev" instead.
 
+`/health` also reports the running version, which the deploy script uses.
+
+On patito the compose file tracks `:latest`. `bin/deploy` (run from a checkout
+on Max or patito) waits for CI and deploys through the patito deploy key. There
+is no rollback: revert the change on main and deploy again.
+
 To pin a deployment to a specific version instead of always tracking
 `:latest`, use an image tag like `ghcr.io/janw76/pintxos:26.09.1` in your
 `docker-compose.yml`.
