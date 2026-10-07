@@ -124,7 +124,7 @@ app = FastAPI(title="Pintxøs", lifespan=lifespan)
 def health() -> dict:
     with db() as conn:
         feeds = conn.execute("SELECT COUNT(*) AS n FROM feeds").fetchone()["n"]
-    return {"ok": True, "feeds": feeds}
+    return {"ok": True, "feeds": feeds, "version": pintxos.__version__}
 
 
 @app.get("/feeds/{feed_id}.xml")

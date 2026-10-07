@@ -1078,7 +1078,7 @@ def test_health_returns_ok_and_feed_count(monkeypatch):
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
         resp = c.get("/health")
     assert resp.status_code == 200
-    assert resp.json() == {"ok": True, "feeds": 1}
+    assert resp.json() == {"ok": True, "feeds": 1, "version": pintxos.__version__}
 
 
 def test_base_shell_has_wordmark_favicon_and_github_link():
