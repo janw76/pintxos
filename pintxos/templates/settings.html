@@ -26,11 +26,17 @@
     #ai td:nth-child(2) { color: var(--text-muted); }
     #ai td:nth-child(2)::after { content: " per 100 articles"; }
   }
+  /* Tabs: only the targeted card shows; the first (#ai) when nothing valid is targeted. */
+  .set-tabs .set-card:not(:target) { display: none; }
+  .set-tabs:not(:has(.set-card:target)) #ai { display: block; }
+  .set-tabs .set-nav a { border-bottom: 2px solid transparent; }
+  .set-tabs .set-nav a[aria-current] { color: var(--accent); font-weight: 600; border-bottom: 2px solid var(--accent); border-radius: 0; background: none; }
   .set-version { margin: 1.5rem 0 0; }
 </style>
 {% endblock %}
 {% block content %}
 <h1>Settings</h1>
+<div class="set-tabs">
 <nav class="set-nav" aria-label="Settings sections">
   <a href="#ai">AI model</a>
   <a href="#keys">API keys</a>
@@ -38,14 +44,17 @@
   <a href="#filters">Filters</a>
   <a href="#paywall">Paywall</a>
 </nav>
-<form method="post" action="/settings" class="settings-form">
+<form method="post" action="/settings" class="settings-form" novalidate>
   <section class="set-card" id="ai" aria-labelledby="ai-h">
     <h2 id="ai-h">AI model</h2>
     <div class="field">
       <label for="model">Model</label>
       <input type="text" id="model" name="model" value="{{ model }}">
     </div>
-    {% include "_model_presets.html" %}
+    <details>
+      <summary>Show presets</summary>
+      {% include "_model_presets.html" %}
+    </details>
     <div class="field">
       <div class="info-anchor">
         <label for="fallback_model">Fallback model</label>
@@ -91,6 +100,7 @@
         {% if openrouter_key_last4 %}<div class="muted">Set (••••{{ openrouter_key_last4 }})</div>{% endif %}
       {% endif %}
     </div>
+    <div class="set-actions"><button type="submit" class="btn-primary">Save</button></div>
   </section>
 
   <section class="set-card" id="polling" aria-labelledby="polling-h">
@@ -132,6 +142,7 @@
       </div>
       {% if respect_language_env %}<div class="muted">Set by PINTXOS_RESPECT_LANGUAGE in the environment.</div>{% endif %}
     </div>
+    <div class="set-actions"><button type="submit" class="btn-primary">Save</button></div>
   </section>
 
   <section class="set-card" id="filters" aria-labelledby="filters-h">
@@ -159,11 +170,9 @@
       <textarea id="ad_keep_patterns" name="ad_keep_patterns" rows="4" class="mono" {% if keep_patterns_env %}disabled{% endif %}>{{ ad_keep_patterns }}</textarea>
       {% if keep_patterns_env %}<div class="muted">Set by PINTXOS_AD_KEEP_PATTERNS in the environment.</div>{% endif %}
     </div>
+    <div class="set-actions"><button type="submit" class="btn-primary">Save</button></div>
   </section>
 
-  <div class="set-actions">
-    <button type="submit" class="btn-primary">Save</button>
-  </div>
 </form>
 
 <section class="set-card" id="paywall" aria-labelledby="paywall-h">
@@ -212,6 +221,7 @@
     <button type="submit" class="btn-primary">Save</button>
   </form>
 </section>
+</div>
 
 <p class="muted set-version">
   {% if version != "dev" %}
@@ -220,4 +230,14 @@
   Pintxos {{ version }}
   {% endif %}
 </p>
+<script>
+(function () {
+  var links = document.querySelectorAll(".set-nav a");
+  function mark() {
+    var h = location.hash, ok = /^#[\w-]+$/.test(h) && document.querySelector(".set-tabs .set-card" + h);
+    links.forEach(function (a) { if (a.getAttribute("href") === (ok ? h : "#ai")) a.setAttribute("aria-current", "true"); else a.removeAttribute("aria-current"); });
+  }
+  addEventListener("hashchange", mark); mark();
+})();
+</script>
 {% endblock %}

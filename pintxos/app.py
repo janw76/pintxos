@@ -231,11 +231,12 @@ def _paused_context(conn: sqlite3.Connection) -> dict | None:
 
 def _redirect(path: str, *, msg: str | None = None, err: str | None = None) -> RedirectResponse:
     # ponytail: flash messages via query params, no session/cookie machinery.
+    path, hash_, frag = path.partition("#")  # the fragment must come after the query
     if err:
         path = f"{path}?err={quote(err)}"
     elif msg:
         path = f"{path}?msg={quote(msg)}"
-    return RedirectResponse(url=path, status_code=303)
+    return RedirectResponse(url=path + hash_ + frag, status_code=303)
 
 
 def _feed_login_context(
@@ -998,9 +999,9 @@ async def upload_cookies(
         data = cookies_text.encode()
     if not data:
         cookie_path().unlink(missing_ok=True)
-        return _redirect("/settings", msg="Cookies removed")
+        return _redirect("/settings#paywall", msg="Cookies removed")
     if len(data) > 1024 * 1024:  # 1 MiB
-        return _redirect("/settings", err="File too large")
+        return _redirect("/settings#paywall", err="File too large")
 
     tmp = tempfile.NamedTemporaryFile(dir=data_dir(), delete=False)  # 0600 by default; os.replace keeps the mode
     tmp_path = Path(tmp.name)
@@ -1012,7 +1013,7 @@ async def upload_cookies(
         # Validate via load_jar() itself so the flash counts match what polling will see.
         jar = load_jar(tmp_path)
         if jar is None:
-            return _redirect("/settings", err="Not a Netscape cookies.txt file")
+            return _redirect("/settings#paywall", err="Not a Netscape cookies.txt file")
 
         os.replace(tmp_path, cookie_path())
         replaced = True
@@ -1023,5 +1024,5 @@ async def upload_cookies(
     domains = summary(jar)
     count = len(jar)
     return _redirect(
-        "/settings", msg=f"Cookies saved: {count} cookies for {len(domains)} domains"
+        "/settings#paywall", msg=f"Cookies saved: {count} cookies for {len(domains)} domains"
     )

@@ -420,9 +420,29 @@ def test_settings_ai_card_has_save_and_test_row_in_one_form():
     assert 'formaction="/settings/test"' in ai
     assert ai.index(">Save</button>") < ai.index('formaction="/settings/test"')
     assert page.count('id="info-test"') == 1 and 'id="info-test"' in ai
-    bottom = page[page.index("</section>", page.index('id="filters"')):page.index("</form>")]
-    assert 'class="set-actions"' in bottom and ">Save</button>" in bottom
-    assert "/settings/test" not in bottom
+    assert page.count("Test saved model") == 1
+    assert "<summary>Show presets</summary>" in ai and "<details open" not in ai
+
+
+def test_settings_main_form_has_all_fields_and_per_card_save():
+    with TestClient(app) as c:
+        page = c.get("/settings").text
+    form = page[page.index('<form method="post" action="/settings"'):]
+    form = form[:form.index("</form>")]
+    for name in (
+        "model", "fallback_model", "local_llm_url", "api_key", "openrouter_api_key",
+        "poll_minutes", "items_per_feed", "warn_at", "warn_hard_at", "full_text",
+        "respect_language", "filter_ads", "ad_title_patterns", "ad_keep_patterns",
+    ):
+        assert f'name="{name}"' in form
+    assert form.count(">Save</button>") == 4
+
+
+def test_settings_cookies_redirects_back_to_paywall_tab():
+    with TestClient(app) as c:
+        resp = c.post("/settings/cookies", data={"cookies_text": ""}, follow_redirects=False)
+    loc = resp.headers["location"]
+    assert loc.endswith("#paywall") and loc.startswith("/settings?")
 
 
 def test_settings_page_has_jump_nav_info_buttons_and_all_fields():
@@ -450,6 +470,7 @@ def test_settings_page_has_jump_nav_info_buttons_and_all_fields():
         "cookies_text", "cookies",
     ):
         assert f'name="{name}"' in page
+    assert 'class="set-tabs"' in page and 'aria-label="Settings sections"' in page
     assert 'action="/settings"' in page
     assert 'action="/settings/cookies"' in page
     assert 'formaction="/settings/test"' in page
