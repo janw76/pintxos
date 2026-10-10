@@ -29,6 +29,7 @@
     <a href="#topics">Topic mute</a>
     <a href="#fetch">Feed fetch</a>
     <a href="#volume">Volume</a>
+    <a href="#paywall">Paywall</a>
     <a href="#filtered">Filtered</a>
     {% if unreadable_items %}<a href="#unreadable">Unreadable</a>{% endif %}
     <a href="#status">Status</a>
@@ -162,6 +163,29 @@
     </div>
   </section>
 </form>
+<section class="set-card" id="paywall" aria-label="Paywall">
+  <h2>Paywall</h2>
+  <p>
+    {% if login_loaded %}Login saved for <strong>{{ login_domain }}</strong>{% if login_expiry %}, expires {{ login_expiry }}{% else %} (session only){% endif %}.{% else %}No login saved for <strong>{{ login_domain or "this site" }}</strong>.{% endif %}
+  </p>
+  <form method="post" action="/feeds/{{ feed.id }}/cookies">
+    <input type="hidden" name="site" value="{{ login_domain }}">
+    <div class="field">
+      <div class="info-anchor">
+        <label for="paywall_cookies">Paste this site's cookies</label>
+        {% call info("info-paywall", "pasting a login") %}Log in to the site in your browser. In Cookie-Editor choose Export, then Netscape, and paste the result here. Saving replaces only this site's cookies; clear the box and save to remove them. New cookies are used from the next poll; use Retry on the Status tab to re-fetch stuck items sooner.{% endcall %}
+      </div>
+      <div class="muted">Cookie-Editor: Export, Netscape, paste here.</div>
+      <textarea id="paywall_cookies" name="cookies_text" rows="10" class="mono">{{ login_text }}</textarea>
+      <div class="muted">Shown in plain text: anyone who can open this page can read these cookies.</div>
+      <div class="muted">Feeds on the same site share one login: saving here changes it for all of them.</div>
+    </div>
+    <div class="set-actions">
+      <button type="submit" class="btn-primary">Save</button>
+      <a href="/" class="cancel">Cancel</a>
+    </div>
+  </form>
+</section>
 <section class="set-card filter-log" id="filtered" aria-label="Filtered at last poll">
   <h2>Filtered at last poll{% if feed.last_polled_at %} <span class="muted" title="{{ feed.last_polled_at }}">({{ feed.last_polled_at | ago }} ago)</span>{% endif %}</h2>
   {% if not feed.last_polled_at %}
