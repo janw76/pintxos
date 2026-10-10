@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."  # the helper and next_version.py both need the repo roo
 
 [ $# -eq 0 ] || { echo "no rollback: revert the change on main and deploy again" >&2; exit 2; }
 
-git fetch -q --tags origin main
+git fetch --force --tags origin main
 sha=$(git rev-parse origin/main)
 version=$(git tag --points-at "$sha" 'v[0-9]*' | sort -V | tail -n1)
 version=${version#v}
@@ -20,4 +20,4 @@ if [ -z "$version" ]; then
   version=$(python3 scripts/next_version.py)
 fi
 
-exec deploy-via-patito pintxos build "${PINTXOS_DEPLOY_URL:-http://patito:8087}/health" 'curl -sf "$1" | jq -r .version' "$version"
+exec deploy-via-patito pintxos build "${PINTXOS_DEPLOY_URL:-https://pintxos.bullhead-matrix.ts.net}/health" 'curl -sf "$1" | jq -r .version' "$version"
