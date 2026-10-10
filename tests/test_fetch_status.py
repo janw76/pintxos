@@ -7,7 +7,7 @@ from pintxos.fetch_status import summarize
 
 
 def _base_kwargs(**overrides):
-    kwargs = dict(total=10, domain="example.com", cookies_loaded=True, cookie_expiry=None)
+    kwargs = dict(total=10, domain="example.com", cookies_loaded=True, cookie_expiry=None, feed_id=7)
     kwargs.update(overrides)
     return kwargs
 
@@ -55,10 +55,10 @@ def test_paywalled_bucket():
             "text": "3 paywalled",
             "tooltip": (
                 "3 of 10 articles came back as a teaser or were blocked and no "
-                "login cookies are saved for ft.com. Add them under Settings, "
-                "Accessing Pay-Walled Content."
+                "login cookies are saved for ft.com. Add them "
+                "on the feed's Paywall tab."
             ),
-            "link": {"href": "/settings#paywall", "label": "add login"},
+            "link": {"href": "/feeds/7#paywall", "label": "add login"},
             "ok": False,
         }
     ]
@@ -78,7 +78,7 @@ def test_login_failed_bucket_with_cookie_expiry():
                 "expiry 2100-01-01) or those articles are not part of your "
                 "subscription."
             ),
-            "link": {"href": "/settings#paywall", "label": "check login"},
+            "link": {"href": "/feeds/7#paywall", "label": "check login"},
             "ok": False,
         }
     ]
