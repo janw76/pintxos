@@ -317,6 +317,7 @@ def feed_edit_page(request: Request, feed_id: int) -> Response:
             domain=domain,
             cookies_loaded=cookies_loaded_for_domain,
             cookie_expiry=domain_expiry,
+            feed_id=feed_id,
         )
     try:
         last_filtered = json.loads(feed["last_filtered"] or "[]")
@@ -608,6 +609,7 @@ def _load_feed_rows(request: Request, feed_id: int | None = None) -> list[dict]:
                 domain=domain,
                 cookies_loaded=cookies_loaded,
                 cookie_expiry=expiry,
+                feed_id=feed["id"],
             )
             feeds.append(feed)
     return feeds
@@ -807,10 +809,10 @@ def settings_page(request: Request) -> Response:
     cookie_domains = summary(jar) if jar else []
     cookie_file = str(cookie_path())
     cookie_file_exists = cookie_path().exists()
-    try:
-        cookies_text = cookie_path().read_text(errors="replace")
-    except OSError:  # removed between exists() and read: show an empty box
-        cookies_text = ""
+    # Same status entries the Feeds page shows: a link means paywalled or login failed.
+    paywall_feeds = [
+        f for f in _load_feed_rows(request) if any(e["link"] for e in f["fetch_status"])
+    ]
     cookie_soon = (datetime.now(UTC) + timedelta(days=7)).date().isoformat()
     return templates.TemplateResponse(
         request,
@@ -844,7 +846,7 @@ def settings_page(request: Request) -> Response:
             "cookie_domains": cookie_domains,
             "cookie_file": cookie_file,
             "cookie_file_exists": cookie_file_exists,
-            "cookies_text": cookies_text,
+            "paywall_feeds": paywall_feeds,
             "cookie_soon": cookie_soon,
             "version": pintxos.__version__,
         },
@@ -1032,16 +1034,14 @@ def test_settings() -> Response:
 @app.post("/settings/cookies")
 async def upload_cookies(
     cookies: UploadFile | None = File(None),
-    cookies_text: str = Form(""),
+    remove_all: str = Form(""),
 ) -> Response:
-    data: bytes = b""
-    if cookies is not None:
-        data = await cookies.read()
-    if not data and cookies_text.strip():
-        data = cookies_text.encode()
-    if not data:
+    if remove_all:
         cookie_path().unlink(missing_ok=True)
         return _redirect("/settings#paywall", msg="Cookies removed")
+    data: bytes = await cookies.read() if cookies is not None else b""
+    if not data:
+        return _redirect("/settings#paywall", err="Choose a cookies.txt file")
     if len(data) > 1024 * 1024:  # 1 MiB
         return _redirect("/settings#paywall", err="File too large")
 

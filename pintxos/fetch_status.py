@@ -6,9 +6,6 @@ for counting items and passing in plain integers.
 
 from __future__ import annotations
 
-_PAYWALL_HREF = "/settings#paywall"
-
-
 def summarize(
     counts: dict,
     *,
@@ -16,6 +13,7 @@ def summarize(
     domain: str,
     cookies_loaded: bool,
     cookie_expiry: str | None,
+    feed_id: int,
 ) -> list[dict]:
     """Build the list of status entries for one feed.
 
@@ -30,8 +28,9 @@ def summarize(
     output here.
 
     Returns a list of {"text", "tooltip", "link", "ok"} dicts. "link" is either
-    None or {"href": "/settings#paywall", "label": ...}.
+    None or {"href": "/feeds/<feed_id>#paywall", "label": ...}.
     """
+    paywall_href = f"/feeds/{feed_id}#paywall"
     if total == 0:
         return [{"text": "-", "tooltip": "No items yet.", "link": None, "ok": True}]
 
@@ -56,9 +55,9 @@ def summarize(
                 "tooltip": (
                     f"{paywalled} of {total} articles came back as a teaser or were "
                     f"blocked and no login cookies are saved for {domain}. Add them "
-                    "under Settings, Accessing Pay-Walled Content."
+                    "on the feed's Paywall tab."
                 ),
-                "link": {"href": _PAYWALL_HREF, "label": "add login"},
+                "link": {"href": paywall_href, "label": "add login"},
                 "ok": False,
             }
         )
@@ -74,7 +73,7 @@ def summarize(
                     f"expired (earliest expiry {expiry}) or those articles are not "
                     "part of your subscription."
                 ),
-                "link": {"href": _PAYWALL_HREF, "label": "check login"},
+                "link": {"href": paywall_href, "label": "check login"},
                 "ok": False,
             }
         )
