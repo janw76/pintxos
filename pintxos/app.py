@@ -17,7 +17,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 import pintxos
-from pintxos import adfilter, dashboard, feed_out, feedstats, llm
+from pintxos import adfilter, dashboard, feed_out, feedstats, llm, openrouter_models
 from pintxos.config import DEFAULTS, data_dir, get_setting, is_truthy
 from pintxos.cookies import (
     cookie_path,
@@ -134,6 +134,11 @@ def health() -> dict:
     with db() as conn:
         feeds = conn.execute("SELECT COUNT(*) AS n FROM feeds").fetchone()["n"]
     return {"ok": True, "feeds": feeds, "version": pintxos.__version__}
+
+
+@app.get("/api/models")
+def api_models(q: str = "") -> dict:
+    return openrouter_models.search(q)
 
 
 @app.get("/feeds/{feed_id}.xml")
