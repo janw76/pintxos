@@ -6,18 +6,23 @@
   .topic-mute:has(input[name=classify_topics][value="0"]:checked) .topic-checkboxes { opacity: 0.45; pointer-events: none; }
   .filter-log-list li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 0.25rem 0.75rem; }
   .filter-log-list li form.filter-log-summarize { margin: 0; flex-shrink: 0; }
+  /* Tabs (same mechanism as settings.html): only the targeted card shows; #model when nothing valid is targeted. */
+  .set-tabs .set-card:not(:target) { display: none; }
+  .set-tabs:not(:has(.set-card:target)) #model { display: block; }
+  .set-tabs .set-nav a { border-bottom: 2px solid transparent; }
+  .set-tabs .set-nav a[aria-current] { color: var(--accent); font-weight: 600; border-bottom: 2px solid var(--accent); border-radius: 0; background: none; }
 </style>
 {% endblock %}
 {% block content %}
-<form class="filters" method="post" action="/feeds/{{ feed.id }}">
-  <div class="title-edit">
+<div class="title-edit">
     <h1 id="feed-title-display">{{ feed.title or feed.url }}</h1>
     <button type="button" id="feed-title-edit-btn" class="btn-tint-neutral" aria-label="Edit title" title="Edit title" onclick="document.getElementById('feed-title-display').hidden = true; this.hidden = true; var i = document.getElementById('feed-title-input'); i.hidden = false; i.focus(); document.getElementById('feed-title-note').hidden = false;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="ico" aria-hidden="true"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>
-    <input type="text" id="feed-title-input" name="title" maxlength="200" value="{{ feed.title or '' }}" placeholder="Feed title" hidden>
-  </div>
-  <div class="muted" id="feed-title-note" hidden>Leave blank to use the feed's own title.</div>
-  <div class="muted url">{{ feed.url }}</div>
-  <nav class="set-nav" aria-label="Feed sections">
+    <input type="text" id="feed-title-input" name="title" maxlength="200" value="{{ feed.title or '' }}" placeholder="Feed title" form="feed-form" hidden>
+</div>
+<div class="muted" id="feed-title-note" hidden>Leave blank to use the feed's own title.</div>
+<div class="muted url">{{ feed.url }}</div>
+<div class="set-tabs">
+<nav class="set-nav" aria-label="Feed sections">
     <a href="#model">Model</a>
     <a href="#language">Language</a>
     <a href="#ads">Ad filter</a>
@@ -27,7 +32,8 @@
     <a href="#filtered">Filtered</a>
     {% if unreadable_items %}<a href="#unreadable">Unreadable</a>{% endif %}
     <a href="#status">Status</a>
-  </nav>
+</nav>
+<form id="feed-form" class="filters" method="post" action="/feeds/{{ feed.id }}" novalidate>
   <section class="set-card" id="model" aria-labelledby="model-h">
     <h2 id="model-h">AI model</h2>
     <div class="field">
@@ -36,6 +42,10 @@
       <div class="muted">Leave blank to use the global model from <a href="/settings">Settings</a>.</div>
     </div>
     <details class="muted"><summary>Model presets</summary>{% with model_input_id="feed_model" %}{% include "_model_presets.html" %}{% endwith %}</details>
+    <div class="set-actions">
+      <button type="submit" class="btn-primary">Save</button>
+      <a href="/" class="cancel">Cancel</a>
+    </div>
   </section>
   <section class="set-card" id="language" aria-labelledby="language-h">
     <div class="info-anchor">
@@ -49,6 +59,10 @@
         <label class="radio"><input type="radio" name="respect_language" value="0" {% if feed.respect_language == 0 %}checked{% endif %}> Off</label>
       </div>
     </fieldset>
+    <div class="set-actions">
+      <button type="submit" class="btn-primary">Save</button>
+      <a href="/" class="cancel">Cancel</a>
+    </div>
   </section>
   <section class="set-card" id="ads" aria-labelledby="ads-h">
     <h2 id="ads-h">Ad filter</h2>
@@ -80,6 +94,10 @@
         <textarea id="ad_title_patterns" name="ad_title_patterns" rows="4" class="mono">{{ ad_title_patterns }}</textarea>
       </div>
     </div>
+    <div class="set-actions">
+      <button type="submit" class="btn-primary">Save</button>
+      <a href="/" class="cancel">Cancel</a>
+    </div>
   </section>
   <section class="set-card" id="topics" aria-labelledby="topics-h">
     <h2 id="topics-h">Topic mute</h2>
@@ -103,6 +121,10 @@
         {% endif %}
       </div>
     </div>
+    <div class="set-actions">
+      <button type="submit" class="btn-primary">Save</button>
+      <a href="/" class="cancel">Cancel</a>
+    </div>
   </section>
   <section class="set-card" id="fetch" aria-label="Feed fetch">
     <h2>Feed fetch</h2>
@@ -113,6 +135,10 @@
         <label class="radio"><input type="radio" name="bypass_cache" value="1" {% if feed.bypass_cache == 1 %}checked{% endif %}> On</label>
       </div>
     </fieldset>
+    <div class="set-actions">
+      <button type="submit" class="btn-primary">Save</button>
+      <a href="/" class="cancel">Cancel</a>
+    </div>
   </section>
   <section class="set-card" id="volume" aria-label="Volume">
     <h2>Volume</h2>
@@ -130,11 +156,11 @@
       </div>
       <input type="number" id="daily_budget" name="daily_budget" min="0" step="1" value="{{ daily_budget if daily_budget is not none else '' }}">
     </div>
+    <div class="set-actions">
+      <button type="submit" class="btn-primary">Save</button>
+      <a href="/" class="cancel">Cancel</a>
+    </div>
   </section>
-  <div class="set-actions">
-    <button type="submit" class="btn-primary">Save</button>
-    <a href="/" class="cancel">Cancel</a>
-  </div>
 </form>
 <section class="set-card filter-log" id="filtered" aria-label="Filtered at last poll">
   <h2>Filtered at last poll{% if feed.last_polled_at %} <span class="muted" title="{{ feed.last_polled_at }}">({{ feed.last_polled_at | ago }} ago)</span>{% endif %}</h2>
@@ -186,4 +212,15 @@
   </form>
   {% endif %}
 </section>
+</div>
+<script>
+(function () {
+  var links = document.querySelectorAll(".set-nav a");
+  function mark() {
+    var h = location.hash, ok = /^#[\w-]+$/.test(h) && document.querySelector(".set-tabs .set-card" + h);
+    links.forEach(function (a) { if (a.getAttribute("href") === (ok ? h : "#model")) a.setAttribute("aria-current", "true"); else a.removeAttribute("aria-current"); });
+  }
+  addEventListener("hashchange", mark); mark();
+})();
+</script>
 {% endblock %}

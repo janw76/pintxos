@@ -519,6 +519,32 @@ def test_feed_edit_page_has_jump_nav_info_buttons_and_all_fields(monkeypatch):
         assert f'id="{target}"' in page
 
 
+def test_feed_edit_page_is_tabbed_with_per_tab_save(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    monkeypatch.setattr(app_module, "filtered_entry", lambda feed_id, guid: {"guid": guid})
+    monkeypatch.setattr(app_module, "summarize_one", lambda feed_id, guid: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        page = c.get("/feeds/1").text
+        resp = c.post("/feeds/1/summarize", data={"guid": "g"}, follow_redirects=False)
+
+    assert 'class="set-tabs"' in page and 'aria-label="Feed sections"' in page
+    assert re.search(r'<form id="feed-form"[^>]*\bnovalidate\b', page)
+    assert 'name="title"' in page and 'form="feed-form"' in page
+
+    def card(sid):
+        return re.search(rf'<section class="set-card[^"]*" id="{sid}".*?</section>', page, re.S).group(0)
+
+    for sid in ("model", "language", "ads", "topics", "fetch", "volume"):
+        assert '<button type="submit" class="btn-primary">Save</button>' in card(sid)
+    for sid in ("filtered", "status"):
+        assert "btn-primary" not in card(sid)
+    # the wrapper encloses the cards outside the form too
+    assert page.index('class="set-tabs"') < page.index('id="filtered"') < page.index("</script>")
+
+    assert resp.status_code == 303 and resp.headers["location"].endswith("#filtered")
+
+
 def test_settings_page_shows_version_with_release_link(monkeypatch):
     monkeypatch.setattr(pintxos, "__version__", "26.09.1")
     with TestClient(app) as c:
