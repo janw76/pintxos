@@ -650,7 +650,7 @@ def retry_fallback_route(feed_id: int) -> Response:
             (feed_id,),
         ).fetchone()[0]
         if n == 0:
-            return _redirect(f"/feeds/{feed_id}", msg="Nothing to retry")
+            return _redirect(f"/feeds/{feed_id}#status", msg="Nothing to retry")
     until = paused_until()
     if until is not None and until > datetime.now(UTC):
         shown = feed_out.paused_since_display(until.astimezone(UTC).isoformat())
@@ -669,9 +669,9 @@ def summarize_route(feed_id: int, guid: str = Form(...)) -> Response:
         if feed is None:
             raise HTTPException(status_code=404, detail="feed not found")
     if filtered_entry(feed_id, guid) is None:
-        return _redirect(f"/feeds/{feed_id}", err="Item not found")
+        return _redirect(f"/feeds/{feed_id}#filtered", err="Item not found")
     summarize_one(feed_id, guid)
-    return _redirect(f"/feeds/{feed_id}", msg="Summarizing…")
+    return _redirect(f"/feeds/{feed_id}#filtered", msg="Summarizing…")
 
 
 def env_pinned(key: str) -> bool:
