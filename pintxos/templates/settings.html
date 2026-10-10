@@ -49,7 +49,7 @@
     <h2 id="ai-h">AI model</h2>
     <div class="field">
       <label for="model">Model</label>
-      <input type="text" id="model" name="model" value="{{ model }}">
+      <input type="text" id="model" name="model" value="{{ model }}" data-model-search role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="model-list" autocomplete="off">
     </div>
     <details>
       <summary>Show presets</summary>
@@ -60,7 +60,7 @@
         <label for="fallback_model">Fallback model</label>
         {% call info("info-fallback", "the fallback model") %}Used automatically when the default model fails; empty means the built-in default.{% endcall %}
       </div>
-      <input type="text" id="fallback_model" name="fallback_model" value="{{ fallback_model }}" {% if fallback_model_env %}disabled{% endif %}>
+      <input type="text" id="fallback_model" name="fallback_model" value="{{ fallback_model }}" {% if fallback_model_env %}disabled{% else %}data-model-search role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="fallback_model-list" autocomplete="off"{% endif %}>
       {% if fallback_model_env %}<div class="muted">Set by PINTXOS_FALLBACK_MODEL in the environment.</div>{% endif %}
     </div>
     <div class="field">
@@ -247,4 +247,5 @@
   addEventListener("hashchange", mark); mark();
 })();
 </script>
+{% include "_model_search.html" %}
 {% endblock %}
