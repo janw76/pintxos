@@ -811,11 +811,11 @@ def settings_page(request: Request) -> Response:
 
 @app.post("/settings")
 def save_settings(
-    model: str = Form(...),
+    model: str = Form(""),
     fallback_model: str = Form(""),
     local_llm_url: str = Form(""),
-    poll_minutes: str = Form(...),
-    items_per_feed: str = Form(...),
+    poll_minutes: str = Form(""),
+    items_per_feed: str = Form(""),
     api_key: str = Form(""),
     openrouter_api_key: str = Form(""),
     filter_ads: str = Form(""),

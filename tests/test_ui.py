@@ -402,6 +402,26 @@ def test_settings_post_invalid_interval_rejected():
     assert get_setting("PINTXOS_POLL_MINUTES") == "30"
 
 
+@pytest.mark.parametrize(
+    "data, msg",
+    [
+        ({"model": "m", "poll_minutes": "", "items_per_feed": "10"}, "numbers"),
+        ({"model": "m", "poll_minutes": "15", "items_per_feed": ""}, "numbers"),
+        ({"model": "m", "poll_minutes": "  ", "items_per_feed": "10"}, "numbers"),
+        ({"model": "m", "poll_minutes": "abc", "items_per_feed": "10"}, "numbers"),
+        ({"model": "m"}, "numbers"),  # fields missing entirely
+        ({"model": "", "poll_minutes": "15", "items_per_feed": "10"}, "Model"),
+        ({"poll_minutes": "15", "items_per_feed": "10"}, "Model"),
+    ],
+)
+def test_settings_post_blank_required_field_redirects_with_error(data, msg):
+    with TestClient(app) as c:
+        resp = c.post("/settings", data=data, follow_redirects=False)
+    assert resp.status_code == 303
+    loc = resp.headers["location"]
+    assert loc.startswith("/settings?") and "err=" in loc and msg in loc
+
+
 def test_settings_page_shows_warn_defaults():
     with TestClient(app) as c:
         page = c.get("/settings").text
