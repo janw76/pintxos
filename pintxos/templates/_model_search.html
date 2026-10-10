@@ -14,7 +14,7 @@
 (function () {
   document.querySelectorAll("input[data-model-search]:not(:disabled)").forEach(function (inp) {
     var wrap = document.createElement("span"), list = document.createElement("ul"), note = document.createElement("div");
-    var seq = 0, timer = 0, active = -1;
+    var seq = 0, timer = 0, closer = 0, fetching = false, active = -1;
     wrap.className = "ms-wrap";
     list.className = "ms-list"; list.id = inp.id + "-list"; list.hidden = true; list.setAttribute("role", "listbox");
     note.className = "muted"; note.hidden = true;
@@ -32,7 +32,7 @@
       list.hidden = true; list.textContent = ""; setActive(-1);
       inp.setAttribute("aria-expanded", "false");
     }
-    function stop() { clearTimeout(timer); seq++; }
+    function stop() { clearTimeout(timer); clearTimeout(closer); timer = 0; fetching = false; seq++; }
     function say(text) { note.textContent = text || ""; note.hidden = !text; }
     function pick(id) { stop(); inp.value = id; close(); say(""); }
     function render(models, more) {
@@ -55,15 +55,17 @@
     function load() {
       var q = inp.value.trim(), n = ++seq;
       if (!q) { close(); say(""); return; }
+      fetching = true;
       fetch("/api/models?q=" + encodeURIComponent(q))
         .then(function (r) { if (!r.ok) throw new Error("status"); return r.json(); })
         .then(function (d) {
           if (n !== seq) return;
+          fetching = false;
           var models = Array.isArray(d.models) ? d.models : [];
           if (!models.length) { close(); say(d.error || ""); return; }
           say(""); render(models, !!d.more);
         })
-        .catch(function () { if (n === seq) { close(); say("Model list unavailable"); } });
+        .catch(function () { if (n === seq) { fetching = false; close(); say("Model list unavailable"); } });
     }
     function move(step) {
       var n = list.querySelectorAll("[role=option]").length;
@@ -79,12 +81,15 @@
       if (e.key === "ArrowDown") { e.preventDefault(); if (open) move(1); else { stop(); load(); } }
       else if (e.key === "ArrowUp" && open) { e.preventDefault(); move(-1); }
       else if (e.key === "Enter" && open && active >= 0) { e.preventDefault(); pick(list.querySelectorAll("[role=option]")[active].dataset.id); }
-      else if (e.key === "Escape" && open) { e.preventDefault(); stop(); close(); }
+      else if (e.key === "Escape" && (open || timer || fetching)) { e.preventDefault(); stop(); close(); }
     });
-    inp.addEventListener("blur", function () { stop(); close(); });
-    list.addEventListener("mousedown", function (e) {
+    // A tap on a row may blur the input before its click lands (iOS/Android order varies), so the close is
+    // deferred; pick, focus, input and Escape cancel it via stop(). The pending fetch is cancelled at once.
+    inp.addEventListener("blur", function () { stop(); closer = setTimeout(close, 300); });
+    inp.addEventListener("focus", stop);
+    list.addEventListener("mousedown", function (e) { e.preventDefault(); });
+    list.addEventListener("click", function (e) {
       var li = e.target.closest("[role=option]");
-      e.preventDefault();
       if (li) pick(li.dataset.id);
     });
   });
