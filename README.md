@@ -180,9 +180,15 @@ back to that same site.
 2. Open the website you want full articles from and log in.
 3. Click the Cookie-Editor icon, choose **Export**, then **Netscape**. The
    cookies are now on your clipboard.
-4. Paste them at the end of the box on the Settings page and click
-   **Save**. Repeat for each site. You can also upload a cookies.txt file
-   there, or copy it to `<PINTXOS_DATA_DIR>/cookies.txt` by hand.
+4. Open the feed from the Feeds page, go to its **Paywall** tab, paste the
+   cookies and click **Save**. Only that site's login is replaced; clear the
+   box and save to remove it. Repeat for each site.
+
+The Paywall section on the Settings page is an overview: the sites with a
+saved login and the feeds that currently have a paywall, each linking to
+its Paywall tab. It also takes a whole cookies.txt file for all sites at
+once (replacing every saved login), or you can copy the file to
+`<PINTXOS_DATA_DIR>/cookies.txt` by hand.
 
 Pintxøs uses the new cookies on the next poll. On a feed's Edit page, "Retry
 N items" re-reads articles that could not be read in full (teasers, blocked pages, failed fetches) and summarizes
@@ -295,7 +301,8 @@ proxy that handles authentication for you. **Do not expose it directly to the
 public internet**. If you use the paywalled-feeds feature above, the cookies
 file is equivalent to being logged in to those sites and is stored
 unencrypted in the data directory, so keep it on a private machine and
-remove it from Settings once you stop using it; it's meant for reading with
+remove it once you stop using it (a site's login on the feed's Paywall tab,
+all of them with "Remove all saved logins" on Settings); it's meant for reading with
 your own account, so check the publisher's terms.
 
 ## API keys

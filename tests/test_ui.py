@@ -460,7 +460,7 @@ def test_settings_main_form_has_all_fields_and_per_card_save():
 
 def test_settings_cookies_redirects_back_to_paywall_tab():
     with TestClient(app) as c:
-        resp = c.post("/settings/cookies", data={"cookies_text": ""}, follow_redirects=False)
+        resp = c.post("/settings/cookies", data={"remove_all": "1"}, follow_redirects=False)
     loc = resp.headers["location"]
     assert loc.endswith("#paywall") and loc.startswith("/settings?")
 
@@ -487,12 +487,13 @@ def test_settings_page_has_jump_nav_info_buttons_and_all_fields():
         "model", "fallback_model", "local_llm_url", "api_key", "openrouter_api_key",
         "poll_minutes", "items_per_feed", "warn_at", "warn_hard_at", "full_text",
         "respect_language", "filter_ads", "ad_title_patterns", "ad_keep_patterns",
-        "cookies_text", "cookies",
+        "remove_all", "cookies",
     ):
         assert f'name="{name}"' in page
     assert 'class="set-tabs"' in page and 'aria-label="Settings sections"' in page
     assert 'action="/settings"' in page
     assert 'action="/settings/cookies"' in page
+    assert 'name="cookies_text"' not in page
     assert 'formaction="/settings/test"' in page
     assert "Accessing Pay-Walled Content" in page
 
@@ -2640,19 +2641,15 @@ def test_feed_edit_page_malformed_last_filtered_does_not_500(monkeypatch):
     assert "Nothing filtered at last poll" in resp.text
 
 
-def _cookies_textarea_content(page: str) -> str:
-    start = page.index('id="cookies_text"')
-    open_end = page.index(">", start) + 1
-    close = page.index("</textarea>", open_end)
-    return page[open_end:close]
-
-
 def test_settings_page_no_cookies_file_shows_placeholder():
     with TestClient(app) as c:
         page = c.get("/settings").text
 
     assert "No login saved yet." in page
-    assert _cookies_textarea_content(page) == ""
+    assert "No feeds with a paywall right now." in page
+    assert 'name="cookies_text"' not in page
+    assert 'type="file"' in page
+    assert 'name="remove_all"' in page
 
 
 def test_settings_page_links_cookie_editor():
@@ -2681,7 +2678,7 @@ def test_settings_page_lists_cookie_domains_expiry_and_expiring_soon():
     assert "expires soon" in page  # only .economist.com's near-term expiry trips this
 
 
-def test_settings_expired_cookies_have_no_remove_button_and_empty_save_clears_them():
+def test_settings_expired_cookies_have_no_remove_button_and_remove_all_clears_them():
     past_expiry = int((datetime.now(UTC) - timedelta(days=1)).timestamp())
     write_cookies(f".ft.com\tTRUE\t/\tFALSE\t{past_expiry}\tsid\tabc\n")
     with TestClient(app) as c:
@@ -2689,9 +2686,7 @@ def test_settings_expired_cookies_have_no_remove_button_and_empty_save_clears_th
         assert "all expired" in page
         assert 'action="/settings/cookies/delete"' not in page
 
-        resp = c.post(
-            "/settings/cookies", data={"cookies_text": ""}, follow_redirects=False
-        )
+        resp = c.post("/settings/cookies", data={"remove_all": "1"}, follow_redirects=False)
         assert resp.status_code in (302, 303, 307, 308)
         location = resp.headers["location"]
         assert "Cookies+removed" in location or "Cookies%20removed" in location
@@ -2740,7 +2735,7 @@ def test_cookies_upload_file_stores_with_0600_and_lists_domain():
     assert ".ft.com" in page
 
 
-def test_cookies_upload_pasted_text_works_and_flash_count_reflects_load_jar_rules():
+def test_cookies_upload_file_flash_count_and_flash_count_reflects_load_jar_rules():
     # Future, session (0-expiry), and past-dated cookies: the flash count must
     # reflect load_jar()'s rules (past-dated dropped), not a raw parse of all three.
     past_expiry = 946684800  # 2000-01-01T00:00:00Z
@@ -2752,7 +2747,9 @@ def test_cookies_upload_pasted_text_works_and_flash_count_reflects_load_jar_rule
     )
     with TestClient(app) as c:
         resp = c.post(
-            "/settings/cookies", data={"cookies_text": text}, follow_redirects=False
+            "/settings/cookies",
+            files={"cookies": ("cookies.txt", text.encode(), "text/plain")},
+            follow_redirects=False,
         )
         assert resp.status_code == 303
         location = resp.headers["location"]
@@ -2802,27 +2799,40 @@ def test_cookies_upload_bad_payload_rejected_and_existing_kept(payload):
     assert leftover == []
 
 
-def test_cookies_empty_post_with_no_existing_file_redirects_removed():
+def test_cookies_post_without_file_or_remove_all_keeps_file_and_errors():
+    text = _netscape_cookies_text()
+    cookie_path().write_text(text)
     with TestClient(app) as c:
         resp = c.post("/settings/cookies", data={}, follow_redirects=False)
         assert resp.status_code == 303
         location = resp.headers["location"]
-        assert "err=" not in location
-        assert "Cookies+removed" in location or "Cookies%20removed" in location
+        assert "Choose+a+cookies.txt+file" in location or "Choose%20a%20cookies.txt%20file" in location
+        assert location.endswith("#paywall")
 
-    assert not cookie_path().exists()
-
-
-def test_cookies_empty_save_removes_existing_file():
-    text = _netscape_cookies_text()
-    with TestClient(app) as c:
-        c.post("/settings/cookies", data={"cookies_text": text}, follow_redirects=False)
-
+        # an empty file input is not "remove everything" either
         resp = c.post(
-            "/settings/cookies", data={"cookies_text": ""}, follow_redirects=False
+            "/settings/cookies",
+            files={"cookies": ("", b"", "application/octet-stream")},
+            follow_redirects=False,
         )
+        assert "err=" in resp.headers["location"]
+
+    assert cookie_path().read_text() == text
+
+
+def test_cookies_remove_all_deletes_existing_file():
+    with TestClient(app) as c:
+        c.post(
+            "/settings/cookies",
+            files={"cookies": ("cookies.txt", _netscape_cookies_text().encode(), "text/plain")},
+            follow_redirects=False,
+        )
+        assert cookie_path().exists()
+
+        resp = c.post("/settings/cookies", data={"remove_all": "1"}, follow_redirects=False)
         assert resp.status_code == 303
         location = resp.headers["location"]
+        assert "err=" not in location
         assert "Cookies+removed" in location or "Cookies%20removed" in location
 
         page = c.get("/settings").text
@@ -2831,33 +2841,30 @@ def test_cookies_empty_save_removes_existing_file():
     assert "No login saved yet." in page
 
 
-def test_settings_page_textarea_shows_current_cookies():
-    text = _netscape_cookies_text()
-    with TestClient(app) as c:
-        resp = c.post(
-            "/settings/cookies", data={"cookies_text": text}, follow_redirects=False
-        )
-        assert "UPLOADSECRET42" not in resp.headers["location"]
-
-        page = c.get("/settings").text
-
-    assert "UPLOADSECRET42" in _cookies_textarea_content(page)
-
-
-def test_settings_page_escapes_cookie_text():
-    # Not valid Netscape-format lines, so load_jar() fails to parse it (returns
-    # None); the raw text must still be shown, HTML-escaped, in the textarea.
-    text = "# Netscape HTTP Cookie File\nnot a valid cookie line <b>&\n"
-    (data_dir() / "cookies.txt").write_text(text)
-    assert load_jar() is None
-
+def test_settings_page_never_prints_raw_cookie_values():
+    write_cookies(f".ft.com\tTRUE\t/\tFALSE\t{FUTURE_EXPIRY}\tsid\tUPLOADSECRET42\n")
     with TestClient(app) as c:
         page = c.get("/settings").text
 
-    assert "&lt;b&gt;&amp;" in page
-    textarea_content = _cookies_textarea_content(page)
-    assert "&lt;b&gt;&amp;" in textarea_content
-    assert "<b>&" not in textarea_content
+    assert ".ft.com" in page
+    assert "UPLOADSECRET42" not in page
+    assert "<textarea" not in page[page.index('id="paywall"'):]
+
+
+def test_settings_paywall_lists_only_feeds_with_a_paywall(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/a.xml"}, follow_redirects=False)
+        c.post("/feeds", data={"url": "https://example.org/b.xml"}, follow_redirects=False)
+        _insert_item(1, "g1", auth="missing", fetch_status="teaser")
+        _insert_item(2, "g2", auth="used", fetch_status="ok")
+
+        page = c.get("/settings").text
+
+    paywall = page[page.index('id="paywall"'):]
+    assert 'href="/feeds/1#paywall"' in paywall
+    assert 'href="/feeds/2#paywall"' not in paywall
+    assert "No feeds with a paywall right now." not in paywall
 
 
 def _insert_item(
@@ -2937,7 +2944,7 @@ def test_status_cell_shows_paywalled_with_tooltip_and_settings_link(monkeypatch)
     assert "3 paywalled" in page
     assert 'aria-controls="fs-1-1"' in page
     assert "no login cookies are saved for" in page
-    assert 'href="/settings#paywall"' in page
+    assert 'href="/feeds/1#paywall"' in page
     assert "add login" in page
 
 
@@ -3061,7 +3068,7 @@ def test_feed_edit_page_status_shows_paywalled_with_tooltip_and_settings_link(mo
     assert "3 paywalled" in page
     assert 'aria-controls="fs-1-1"' in page
     assert "no login cookies are saved for" in page
-    assert 'href="/settings#paywall"' in page
+    assert 'href="/feeds/1#paywall"' in page
     assert "add login" in page
 
 

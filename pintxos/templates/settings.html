@@ -185,7 +185,7 @@
       <li>Install the free, open-source <a href="https://cookie-editor.com" target="_blank" rel="noopener">Cookie-Editor</a> browser extension (Safari, Chrome, Firefox).</li>
       <li>Open the website you want full articles from and log in.</li>
       <li>Click the Cookie-Editor icon, choose <b>Export</b>, then <b>Netscape</b>. The cookies are now on your clipboard.</li>
-      <li>Paste them at the end of the box below and click <b>Save</b>. Repeat for each site.</li>
+      <li>Open the feed from the Feeds page, go to its <b>Paywall</b> tab, paste the cookies and click <b>Save</b>. Repeat for each site.</li>
     </ol>
     <p class="muted">Pintxøs uses the new cookies on the next poll. On a feed's Edit page, "Retry N items" re-reads articles that could not be read in full (teasers, blocked pages, failed fetches) and summarizes items that have no summary. When the Feeds page shows "unreadable with login", it means either your cookies expired or those articles are outside your subscription; cookies only need re-exporting in the first case.</p>
   </details>
@@ -204,21 +204,28 @@
   </div>
   {% endif %}
 
+  <p class="muted" style="margin-bottom:.25rem">Feeds with a paywall:</p>
+  {% if paywall_feeds %}
+  <div class="set-domains">
+  {% for f in paywall_feeds %}
+  <div class="muted"><a href="/feeds/{{ f.id }}#paywall">{{ f.title or f.url }}</a> — {% for e in f.fetch_status if e.link %}{{ e.text }}{{ ", " if not loop.last }}{% endfor %}</div>
+  {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted">No feeds with a paywall right now.</p>
+  {% endif %}
+
   <form method="post" action="/settings/cookies" enctype="multipart/form-data" class="settings-form">
     <div class="field">
-      <div class="info-anchor">
-        <label for="cookies_text">Saved cookies</label>
-        {% call info("info-cookies-text", "removing saved cookies") %}Clear the box and save to remove them.{% endcall %}
-      </div>
-      <textarea id="cookies_text" name="cookies_text" rows="12" class="mono">{{ cookies_text }}</textarea>
-      <div class="muted">Shown in plain text: anyone who can open this page can read these cookies.</div>
-    </div>
-    <div class="field">
-      <label for="cookies">…or upload a cookies.txt file</label>
+      <label for="cookies">Upload a cookies.txt file (all sites at once)</label>
       <input type="file" id="cookies" name="cookies">
-      <div class="muted">Stored as <code>{{ cookie_file }}</code>.</div>
+      <div class="muted">Replaces all saved logins. Stored as <code>{{ cookie_file }}</code>.</div>
     </div>
-    <button type="submit" class="btn-primary">Save</button>
+    <button type="submit" class="btn-primary">Upload</button>
+  </form>
+  <form method="post" action="/settings/cookies" class="settings-form" onsubmit="return confirm('Remove all saved logins?')">
+    <input type="hidden" name="remove_all" value="1">
+    <button type="submit" class="btn-danger">Remove all saved logins</button>
   </form>
 </section>
 </div>
