@@ -4141,3 +4141,39 @@ def test_feed_paywall_corrupt_existing_file_gets_its_own_error(monkeypatch):
     resp = _post_paywall(paste)
     assert "err=The%20saved%20cookies%20file%20could%20not%20be%20read" in resp.headers["location"]
     assert cookie_path().read_bytes() == before
+
+
+def _input_tag(page: str, input_id: str) -> str:
+    return re.search(r'<input[^>]*\bid="%s"[^>]*>' % input_id, page).group(0)
+
+
+def test_settings_model_fields_render_dropdown_wiring():
+    with TestClient(app) as c:
+        page = c.get("/settings").text
+    for field in ("model", "fallback_model"):
+        tag = _input_tag(page, field)
+        for attr in ("data-model-search", 'role="combobox"', 'aria-autocomplete="list"',
+                     'aria-expanded="false"', f'aria-controls="{field}-list"', 'autocomplete="off"'):
+            assert attr in tag
+    assert page.count("/api/models?q=") == 1  # the shared script, once
+
+
+def test_settings_env_pinned_fallback_model_has_no_dropdown(monkeypatch):
+    monkeypatch.setenv("PINTXOS_FALLBACK_MODEL", "vendor/cheap")
+    with TestClient(app) as c:
+        page = c.get("/settings").text
+    tag = _input_tag(page, "fallback_model")
+    assert "disabled" in tag
+    assert "data-model-search" not in tag and "combobox" not in tag
+    assert "data-model-search" in _input_tag(page, "model")
+
+
+def test_feed_edit_model_field_renders_dropdown_wiring(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        page = c.get("/feeds/1").text
+    tag = _input_tag(page, "feed_model")
+    for attr in ("data-model-search", 'role="combobox"', 'aria-controls="feed_model-list"', 'autocomplete="off"', "placeholder="):
+        assert attr in tag
+    assert page.count("/api/models?q=") == 1

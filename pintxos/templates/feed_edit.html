@@ -39,7 +39,7 @@
     <h2 id="model-h">AI model</h2>
     <div class="field">
       <label for="feed_model">Model</label>
-      <input type="text" id="feed_model" name="model" value="{{ feed.model or '' }}" placeholder="Global default ({{ global_model }})">
+      <input type="text" id="feed_model" name="model" value="{{ feed.model or '' }}" placeholder="Global default ({{ global_model }})" data-model-search role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="feed_model-list" autocomplete="off">
       <div class="muted">Leave blank to use the global model from <a href="/settings">Settings</a>.</div>
     </div>
     <details class="muted"><summary>Model presets</summary>{% with model_input_id="feed_model" %}{% include "_model_presets.html" %}{% endwith %}</details>
@@ -247,4 +247,5 @@
   addEventListener("hashchange", mark); mark();
 })();
 </script>
+{% include "_model_search.html" %}
 {% endblock %}
