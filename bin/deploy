@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."  # the helper and next_version.py both need the repo roo
 
 [ $# -eq 0 ] || { echo "no rollback: revert the change on main and deploy again" >&2; exit 2; }
 
-git fetch --force --tags origin main
+git fetch --force --tags --quiet origin main  # quiet: line 1 of output must be the helper's version; errors still print
 sha=$(git rev-parse origin/main)
 version=$(git tag --points-at "$sha" 'v[0-9]*' | sort -V | tail -n1)
 version=${version#v}
