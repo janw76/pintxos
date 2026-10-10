@@ -505,7 +505,7 @@ def test_feed_edit_page_has_jump_nav_info_buttons_and_all_fields(monkeypatch):
 
     nav = re.search(r'<nav class="set-nav"[^>]*>(.*?)</nav>', page, re.S).group(1)
     links = re.findall(r'href="#([^"]+)"', nav)
-    assert links == ["model", "language", "ads", "topics", "fetch", "volume", "filtered", "status"]
+    assert links == ["model", "language", "ads", "topics", "fetch", "volume", "paywall", "filtered", "status"]
     for target in links:
         assert re.search(rf'<section class="set-card[^"]*" id="{target}"', page)
     assert "unreadable" not in links
@@ -3984,3 +3984,153 @@ def test_phone_wraps_titles_and_status_between_words_but_url_fallback_stays_brea
     assert "td .fetch-status + a" in page[rule : page.index("}", rule)]
     row = page[page.index('<tr id="feed-1"') :]
     assert '<div class="url-fallback">https://example.com/feed.xml</div>' in row
+
+
+def _cookie_rows(path=None):
+    jar = load_jar(path or cookie_path())
+    return sorted((c.name, c.value, c.domain, c.path, c.expires) for c in jar) if jar else []
+
+
+def _paywall_setup(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    write_cookies(
+        f".ft.com\tTRUE\t/\tFALSE\t{FUTURE_EXPIRY}\tsid\tOLDFT\n"
+        f"www.ft.com\tFALSE\t/\tFALSE\t{FUTURE_EXPIRY}\tother\tOLDWWW\n"
+        f".other.org\tTRUE\t/\tFALSE\t{FUTURE_EXPIRY}\tkeep\tKEEPME\n"
+        "news.example\tFALSE\t/x\tTRUE\t0\tsess\tSESS\n"
+    )
+
+
+def test_feed_page_has_paywall_tab_with_prefilled_textarea_and_own_form(monkeypatch):
+    _paywall_setup(monkeypatch)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://www.ft.com/rss"}, follow_redirects=False)
+        page = c.get("/feeds/1").text
+    assert '<a href="#paywall">Paywall</a>' in page
+    tabs = page[page.index('class="set-tabs"') :]
+    card = tabs[tabs.index('id="paywall"') :]
+    card = card[: card.index("</section>")]
+    assert page.index("</form>", page.index('id="feed-form"')) < page.index('id="paywall"')
+    assert 'action="/feeds/1/cookies"' in card
+    assert "<textarea" in card and "OLDFT" in card and "OLDWWW" in card
+    assert "KEEPME" not in card
+    assert "Shown in plain text" in card
+
+
+def test_feed_paywall_save_replaces_only_that_site(monkeypatch):
+    _paywall_setup(monkeypatch)
+    before = _cookie_rows()
+    keep = [r for r in before if r[2] in (".other.org", "news.example")]
+    paste = f"# Netscape HTTP Cookie File\r\n.ft.com\tTRUE\t/\tFALSE\t{FUTURE_EXPIRY}\tsid\tNEW\r\n"
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://www.ft.com/rss"}, follow_redirects=False)
+        resp = c.post("/feeds/1/cookies", data={"cookies_text": paste, "site": "www.ft.com"}, follow_redirects=False)
+        assert resp.status_code == 303
+        assert resp.headers["location"].startswith("/feeds/1?msg=Login%20saved")
+        assert resp.headers["location"].endswith("#paywall")
+        page = c.get("/feeds/1").text
+    rows = _cookie_rows()
+    assert [r for r in rows if r[2] in (".other.org", "news.example")] == keep
+    ft = [r for r in rows if "ft.com" in r[2]]
+    assert [(r[0], r[1]) for r in ft] == [("sid", "NEW")]
+    assert stat.S_IMODE(os.stat(cookie_path()).st_mode) == 0o600
+    assert "NEW" in page and "OLDFT" not in page
+
+
+def test_feed_paywall_save_without_header_creates_file(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    paste = f".ft.com\tTRUE\t/\tFALSE\t{FUTURE_EXPIRY}\tsid\tNEW\n"
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://www.ft.com/rss"}, follow_redirects=False)
+        resp = c.post("/feeds/1/cookies", data={"cookies_text": paste, "site": "www.ft.com"}, follow_redirects=False)
+    assert "Login%20saved%3A%201%20cookies" in resp.headers["location"]
+    assert [(r[0], r[1]) for r in _cookie_rows()] == [("sid", "NEW")]
+
+
+def test_feed_paywall_empty_paste_removes_only_that_site(monkeypatch):
+    _paywall_setup(monkeypatch)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://www.ft.com/rss"}, follow_redirects=False)
+        resp = c.post("/feeds/1/cookies", data={"cookies_text": "", "site": "www.ft.com"}, follow_redirects=False)
+    assert "msg=Login%20removed" in resp.headers["location"]
+    assert sorted({r[2] for r in _cookie_rows()}) == [".other.org", "news.example"]
+
+
+def test_feed_paywall_empty_paste_last_site_removes_file(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    write_cookies(f".ft.com\tTRUE\t/\tFALSE\t{FUTURE_EXPIRY}\tsid\tOLD\n")
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://www.ft.com/rss"}, follow_redirects=False)
+        c.post("/feeds/1/cookies", data={"cookies_text": "", "site": "www.ft.com"}, follow_redirects=False)
+    assert not cookie_path().exists()
+
+
+@pytest.mark.parametrize("paste", ["this is not a cookie file\n", "x" * (1024 * 1024 + 1)])
+def test_feed_paywall_bad_or_huge_paste_errors_and_leaves_file_unchanged(monkeypatch, paste):
+    _paywall_setup(monkeypatch)
+    before = cookie_path().read_bytes()
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://www.ft.com/rss"}, follow_redirects=False)
+        resp = c.post("/feeds/1/cookies", data={"cookies_text": paste, "site": "www.ft.com"}, follow_redirects=False)
+    assert resp.headers["location"].startswith("/feeds/1?err=")
+    assert resp.headers["location"].endswith("#paywall")
+    assert cookie_path().read_bytes() == before
+
+
+def test_feed_paywall_unknown_feed_is_404():
+    with TestClient(app) as c:
+        assert c.post("/feeds/99/cookies", data={"cookies_text": "", "site": "x"}).status_code == 404
+
+
+def _post_paywall(paste, site="www.ft.com"):
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://www.ft.com/rss"}, follow_redirects=False)
+        return c.post(
+            "/feeds/1/cookies", data={"cookies_text": paste, "site": site}, follow_redirects=False
+        )
+
+
+def test_feed_paywall_form_posts_the_shown_site(monkeypatch):
+    _paywall_setup(monkeypatch)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://www.ft.com/rss"}, follow_redirects=False)
+        page = c.get("/feeds/1").text
+    assert '<input type="hidden" name="site" value="www.ft.com">' in page
+
+
+@pytest.mark.parametrize(
+    "paste",
+    [
+        "# Netscape HTTP Cookie File\n",
+        "# just a comment\n",
+        ".ft.com\tTRUE\t/\tFALSE\t1000\tsid\tEXPIRED\n",
+    ],
+)
+def test_feed_paywall_paste_without_live_cookies_errors_and_keeps_login(monkeypatch, paste):
+    _paywall_setup(monkeypatch)
+    before = cookie_path().read_bytes()
+    resp = _post_paywall(paste)
+    assert resp.headers["location"].startswith("/feeds/1?err=No%20valid%20cookies")
+    assert cookie_path().read_bytes() == before
+
+
+def test_feed_paywall_site_changed_since_page_was_shown_is_refused(monkeypatch):
+    _paywall_setup(monkeypatch)
+    before = cookie_path().read_bytes()
+    resp = _post_paywall("", site="other.org")
+    assert "err=This%20feed%27s%20site%20changed" in resp.headers["location"]
+    assert cookie_path().read_bytes() == before
+    with TestClient(app) as c:  # missing field is refused too
+        r = c.post("/feeds/1/cookies", data={"cookies_text": ""}, follow_redirects=False)
+    assert "site%20changed" in r.headers["location"]
+    assert cookie_path().read_bytes() == before
+
+
+def test_feed_paywall_corrupt_existing_file_gets_its_own_error(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    cookie_path().write_text("garbage, not cookies\n")
+    before = cookie_path().read_bytes()
+    paste = f".ft.com\tTRUE\t/\tFALSE\t{FUTURE_EXPIRY}\tsid\tNEW\n"
+    resp = _post_paywall(paste)
+    assert "err=The%20saved%20cookies%20file%20could%20not%20be%20read" in resp.headers["location"]
+    assert cookie_path().read_bytes() == before

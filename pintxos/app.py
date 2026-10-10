@@ -19,7 +19,16 @@ from fastapi.templating import Jinja2Templates
 import pintxos
 from pintxos import adfilter, dashboard, feed_out, feedstats, llm
 from pintxos.config import DEFAULTS, data_dir, get_setting, is_truthy
-from pintxos.cookies import cookie_path, expiry_for, get_jar, has_cookies_for, load_jar, summary
+from pintxos.cookies import (
+    cookie_path,
+    expiry_for,
+    get_jar,
+    has_cookies_for,
+    load_jar,
+    replace_site_cookies,
+    site_cookies_text,
+    summary,
+)
 from pintxos.db import db, init_db, now
 from pintxos.feed_out import render_rss
 from pintxos.fetch_status import summarize
@@ -372,8 +381,41 @@ def feed_edit_page(request: Request, feed_id: int) -> Response:
             "item_stats": item_stats,
             "global_model": global_model,
             "warn_at": warn_at,
+            "login_domain": domain,
+            "login_loaded": cookies_loaded_for_domain,
+            "login_expiry": domain_expiry,
+            "login_text": site_cookies_text(jar, domain),
         },
     )
+
+
+@app.post("/feeds/{feed_id}/cookies")
+async def feed_cookies_save(request: Request, feed_id: int) -> Response:
+    with db() as conn:
+        feed = conn.execute("SELECT url FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        if feed is None:
+            raise HTTPException(status_code=404, detail="feed not found")
+        domain = _feed_login_context(conn, feed_id, feed["url"], None)[0]
+    back = f"/feeds/{feed_id}#paywall"
+    # Starlette's default 1 MiB form-field cap would answer 400; raise it so we can flash.
+    form = await request.form(max_part_size=4 * 1024 * 1024)
+    cookies_text = str(form.get("cookies_text", ""))
+    if len(cookies_text.encode()) > 1024 * 1024:  # 1 MiB
+        return _redirect(back, err="Too large")
+    if not domain:
+        return _redirect(back, err="No site known for this feed")
+    # The site shown on the page must still be the feed's site, or we'd edit another login.
+    if form.get("site") != domain:
+        return _redirect(back, err="This feed's site changed; reload the page and try again")
+    try:
+        count = replace_site_cookies(domain, cookies_text)
+    except ValueError as e:
+        return _redirect(back, err=str(e))
+    except OSError:
+        return _redirect(back, err="Could not save the cookies")
+    if count == 0:
+        return _redirect(back, msg="Login removed")
+    return _redirect(back, msg=f"Login saved: {count} cookies")
 
 
 @app.post("/feeds/{feed_id}")
