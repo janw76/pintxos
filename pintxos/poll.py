@@ -71,6 +71,9 @@ _status: dict[int, str] = {}
 # Sentinel written by retry_one/summarize_one/poll_one while a manual job is queued
 # but hasn't started running yet.
 _QUEUED = "Queued"
+# ponytail: these become settings if Jan wants to tune the OPML import spread.
+IMPORT_IMMEDIATE = 5
+IMPORT_SPACING = timedelta(minutes=2)
 
 # ponytail: per-feed offset into the id-DESC candidate list for retry_fallback's
 # only_blocked rotation, so each poll advances past the rows it already retried
@@ -1444,16 +1447,43 @@ def retry_one(feed_id: int) -> None:
     )
 
 
-def poll_one(feed_id: int) -> None:
-    """Queue a manual poll; a second click before it runs is a no-op."""
+def poll_one(feed_id: int, delay: timedelta = timedelta(0)) -> None:
+    """Queue a poll (after `delay` if positive); a second click before it runs replaces it."""
     _status.setdefault(feed_id, _QUEUED)
+    when = {"trigger": "date", "run_date": datetime.now(UTC) + delay} if delay > timedelta(0) else {}
     scheduler.add_job(
         poll_feed,
         args=[feed_id],
+        **when,
         id=f"feed-{feed_id}",
         replace_existing=True,
         misfire_grace_time=None,
     )
+
+
+def poll_spread(feed_ids: list[int]) -> timedelta:
+    """First-poll `feed_ids`: IMPORT_IMMEDIATE right away, then one per IMPORT_SPACING.
+
+    Returns the largest delay. ponytail: dated jobs are in memory, so a restart drops them;
+    those feeds reappear as waiting (see waiting_feed_ids) and Start queues them again.
+    """
+    last = timedelta(0)
+    for i, feed_id in enumerate(feed_ids):
+        last = IMPORT_SPACING * max(0, i - IMPORT_IMMEDIATE + 1)
+        poll_one(feed_id, delay=last)
+    return last
+
+
+def waiting_feed_ids() -> list[int]:
+    """Feeds never polled and not queued or running, i.e. waiting for a go-ahead.
+
+    A first poll that fails on a missing API key or a paused account (see the pause
+    early-return in poll_feed) leaves last_polled_at NULL, so the feed returns here once its
+    status entry clears; Start queues it again.
+    """
+    with db() as conn:
+        rows = conn.execute("SELECT id FROM feeds WHERE last_polled_at IS NULL ORDER BY id")
+        return [r["id"] for r in rows if r["id"] not in _status]
 
 
 def poll_all() -> None:
@@ -1464,8 +1494,16 @@ def poll_all() -> None:
         return
 
     # ponytail: sequential and global; switch to per-feed threads if >20 feeds.
+    # A feed's first poll belongs to the add-feed job, the import's Start button or the Poll
+    # button. Skipping never-polled feeds here keeps a big import from being bulk-polled
+    # behind the user's back, across restarts too (last_polled_at is in the DB, not _status).
     with db() as conn:
-        feed_ids = [row["id"] for row in conn.execute("SELECT id FROM feeds ORDER BY id")]
+        feed_ids = [
+            row["id"]
+            for row in conn.execute(
+                "SELECT id FROM feeds WHERE last_polled_at IS NOT NULL ORDER BY id"
+            )
+        ]
     for feed_id in feed_ids:
         try:
             if not poll_feed(feed_id):
