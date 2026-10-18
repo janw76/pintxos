@@ -49,7 +49,11 @@ class FakeResponse:
 @pytest.fixture
 def feed_id():
     with db() as conn:
-        cur = conn.execute("INSERT INTO feeds(url, created_at) VALUES (?, ?)", (FEED_URL, now()))
+        # last_polled_at set: poll_all skips never-polled feeds (their first poll is explicit)
+        cur = conn.execute(
+            "INSERT INTO feeds(url, created_at, last_polled_at) VALUES (?, ?, ?)",
+            (FEED_URL, now(), now()),
+        )
         return cur.lastrowid
 
 
@@ -156,6 +160,8 @@ def set_feed(feed_id, **columns):
 
 
 def test_first_poll_inserts_items(feed_id, calls):
+    with db() as conn:
+        conn.execute("UPDATE feeds SET last_polled_at = '2000-01-01T00:00:00+00:00' WHERE id = ?", (feed_id,))
     poll.poll_all()
     rows = items()
     assert len(rows) == 3
@@ -166,7 +172,7 @@ def test_first_poll_inserts_items(feed_id, calls):
     with db() as conn:
         feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
     assert feed["title"] == "Sample Feed"
-    assert feed["last_polled_at"]
+    assert feed["last_polled_at"] > "2000-01-02"
     assert feed["last_error"] is None
 
 
@@ -2523,7 +2529,7 @@ def test_seen_entries_are_never_reclassified(feed_id, calls, monkeypatch):
 
 
 def test_missing_api_key_from_classify_stops_the_poll(feed_id, calls, monkeypatch):
-    set_feed(feed_id, classify_topics=1)
+    set_feed(feed_id, classify_topics=1, last_polled_at=None)  # the failed poll must leave it NULL
 
     def boom(title, labels, lead, model=None):
         raise MissingApiKey("ANTHROPIC_API_KEY not set")
@@ -4341,3 +4347,29 @@ def test_poll_without_bypass_cache_requests_exact_url(feed_id, calls, value):
     # the `calls` fixture's fake _get raises on any URL other than FEED_URL
     poll.poll_feed(feed_id)
     assert len(calls) > 0
+
+
+def test_poll_one_delay_schedules_dated_job():
+    try:
+        poll.poll_one(901, delay=timedelta(minutes=2))
+        job = poll.scheduler.get_job("feed-901")
+        ahead = (job.trigger.run_date - datetime.now(UTC)).total_seconds()
+        assert 110 < ahead <= 120
+        assert poll._status[901] == "Queued"
+    finally:
+        if poll.scheduler.get_job("feed-901"):
+            poll.scheduler.remove_job("feed-901")
+        poll._status.pop(901, None)
+
+
+def test_poll_all_skips_never_polled_feeds(monkeypatch):
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO feeds(url, created_at, last_polled_at) VALUES ('https://a.example/f', ?, ?)",
+            (now(), now()),
+        )
+        conn.execute("INSERT INTO feeds(url, created_at) VALUES ('https://b.example/f', ?)", (now(),))
+    polled = []
+    monkeypatch.setattr(poll, "poll_feed", lambda fid: polled.append(fid) or True)
+    poll.poll_all()
+    assert polled == [1]

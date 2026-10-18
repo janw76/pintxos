@@ -33,18 +33,22 @@ from pintxos.cookies import (
 from pintxos.db import db, init_db, now
 from pintxos.feed_out import render_rss
 from pintxos.fetch_status import summarize
-from pintxos.poll import _status as poll_status
 from pintxos.poll import (
+    IMPORT_IMMEDIATE,
+    IMPORT_SPACING,
     filtered_entry,
     is_retry_skipped_note,
     paused_until,
     poll_one,
+    poll_spread,
     reschedule,
     retry_one,
     scheduler,
     start_scheduler,
     summarize_one,
+    waiting_feed_ids,
 )
+from pintxos.poll import _status as poll_status
 from pintxos.topics import TOPICS
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -191,13 +195,30 @@ async def import_opml(opml: UploadFile | None = File(None)) -> Response:
                 existing += 1
                 continue
             new_ids.append(cur.lastrowid)
-    for new_id in new_ids:
-        poll_one(new_id)
-    return _redirect(
-        "/",
-        msg=f"Imported {len(new_ids)} feeds, {existing} already subscribed, "
-        f"{skipped} skipped (not http/https)",
+    msg = (
+        f"Imported {len(new_ids)} feeds, {existing} already subscribed, "
+        f"{skipped} skipped (not http/https)"
     )
+    if len(new_ids) <= IMPORT_IMMEDIATE:
+        for new_id in new_ids:
+            poll_one(new_id)
+    else:  # a big import costs money in bulk: wait for the go-ahead banner on the Feeds page
+        msg += "; their first polls wait for your go-ahead below"
+    return _redirect("/", msg=msg)
+
+
+@app.post("/feeds/poll-new")
+def poll_new() -> Response:
+    ids = waiting_feed_ids()
+    if not ids:
+        return _redirect("/", msg="No feeds are waiting for a first poll")
+    minutes = int(poll_spread(ids).total_seconds() // 60)
+    msg = f"Started first polls for {len(ids)} feeds"
+    if len(ids) == 1:
+        msg = "Started the first poll for 1 feed"
+    return _redirect("/", msg=msg + (f", spread over the next {minutes} minutes" if minutes else ""))
+
+
 @app.get("/api/models")
 def api_models(q: str = "") -> dict:
     return openrouter_models.search(q)
@@ -686,10 +707,22 @@ def _load_feed_rows(request: Request, feed_id: int | None = None) -> list[dict]:
 def index(request: Request) -> Response:
     with db() as conn:
         paused = _paused_context(conn)
+        cap = int(get_setting("PINTXOS_ITEMS_PER_FEED", conn))
+    n = len(waiting_feed_ids())
+    waiting = None
+    if n:
+        spread = IMPORT_SPACING * max(0, n - IMPORT_IMMEDIATE)
+        minutes = int(spread.total_seconds() // 60)
+        waiting = {"n": n, "cap": cap, "total": n * cap, "minutes": minutes}
     return templates.TemplateResponse(
         request,
         "index.html",
-        {"feeds": _load_feed_rows(request), "status": dict(poll_status), "paused": paused},
+        {
+            "feeds": _load_feed_rows(request),
+            "status": dict(poll_status),
+            "paused": paused,
+            "waiting": waiting,
+        },
     )
 
 
