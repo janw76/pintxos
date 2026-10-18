@@ -6,6 +6,7 @@ import json
 import os
 import sqlite3
 import tempfile
+import xml.etree.ElementTree as ET
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -125,6 +126,69 @@ def health() -> dict:
     with db() as conn:
         feeds = conn.execute("SELECT COUNT(*) AS n FROM feeds").fetchone()["n"]
     return {"ok": True, "feeds": feeds, "version": pintxos.__version__}
+
+
+@app.get("/feeds.opml")
+def feeds_opml(request: Request, output: int = 0) -> Response:
+    with db() as conn:
+        feeds = conn.execute("SELECT id, url, title FROM feeds ORDER BY id").fetchall()
+        base_url = get_setting("PINTXOS_BASE_URL", conn) or str(request.base_url).rstrip("/")
+    root = ET.Element("opml", version="2.0")
+    ET.SubElement(ET.SubElement(root, "head"), "title").text = "Pintx\u00f8s feeds"
+    body = ET.SubElement(root, "body")
+    for f in feeds:
+        text = f["title"] or f["url"]
+        xml_url = f"{base_url}/feeds/{f['id']}.xml" if output else f["url"]
+        ET.SubElement(body, "outline", type="rss", text=text, title=text, xmlUrl=xml_url)
+    xml = ET.tostring(root, encoding="unicode", xml_declaration=True)
+    name = "pintxos-output.opml" if output else "pintxos.opml"
+    return Response(
+        content=xml,
+        media_type="text/x-opml; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={name}"},
+    )
+
+
+@app.post("/feeds/import")
+async def import_opml(opml: UploadFile | None = File(None)) -> Response:
+    data = await opml.read() if opml is not None else b""
+    if not data:
+        return _redirect("/", err="Not an OPML file")
+    if len(data) > 1024 * 1024:  # 1 MiB
+        return _redirect("/", err="File too large")
+    try:
+        root = ET.fromstring(data)
+    except (ET.ParseError, LookupError, ValueError):
+        return _redirect("/", err="Not an OPML file")
+    if root.tag.rsplit("}", 1)[-1] != "opml":
+        return _redirect("/", err="Not an OPML file")
+    new_ids: list[int] = []
+    existing = skipped = 0
+    with db() as conn:
+        for outline in root.iter("outline"):
+            url = (outline.get("xmlUrl") or "").strip()
+            if not url:
+                continue
+            if not (url.startswith("http://") or url.startswith("https://")):
+                skipped += 1
+                continue
+            title = (outline.get("text") or "").strip() or (outline.get("title") or "").strip() or None
+            try:
+                cur = conn.execute(
+                    "INSERT INTO feeds(url, title, created_at) VALUES (?, ?, ?)",
+                    (url, title, now()),
+                )
+            except sqlite3.IntegrityError:
+                existing += 1
+                continue
+            new_ids.append(cur.lastrowid)
+    for new_id in new_ids:
+        poll_one(new_id)
+    return _redirect(
+        "/",
+        msg=f"Imported {len(new_ids)} feeds, {existing} already subscribed, "
+        f"{skipped} skipped (not http/https)",
+    )
 
 
 @app.get("/feeds/{feed_id}.xml")

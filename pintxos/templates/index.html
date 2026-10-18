@@ -14,6 +14,11 @@
   <input type="text" name="url" id="feed-search" placeholder="Search feeds or paste a feed URL">
   <button type="submit" class="btn-primary" disabled>Add</button>
 </form>
+<form method="post" action="/feeds/import" enctype="multipart/form-data" class="opml-form muted">
+  <input type="file" name="opml" accept=".opml,.xml,text/xml,text/x-opml">
+  <button type="submit">Import OPML</button>
+  Export OPML: <a href="/feeds.opml">source list</a> &middot; <a href="/feeds.opml?output=1">output list</a>
+</form>
 
 <div class="table-wrap">
   <table>

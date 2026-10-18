@@ -29,6 +29,7 @@ Same story, no guessing games. Sanity restored. Point Pintxøs at a feed once, a
 
 ### Additional features
 
+- **OPML import and export.** Load a feed list from any reader in one go, and download your list back out, either the original source feeds or the Pintxøs output feeds.
 - **Model choice.** Use Anthropic's Haiku or other suitable models through OpenRouter. Each feed can use a different model, to balance quality and cost.
 - **Ad filtering.** Skip deal posts, coupons and sponsored entries before they reach your feed. Built-in rules cover the usual "60% off" and promo-code posts. Each feed's Edit page shows what the last poll dropped and why.
 - **Keyword filtering.** Block or keep entries by title, globally or per feed, e.g. drop everything mentioning `cricket` or `horoscope`. Supports regular expressions.
