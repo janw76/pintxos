@@ -141,6 +141,12 @@ def summary(jar: http.cookiejar.MozillaCookieJar | None) -> list[dict]:
     return result
 
 
+def domain_covers(cookie_domain: str, host: str) -> bool:
+    """Whether a cookie for `cookie_domain` (leading dot ignored) applies to `host`."""
+    cookie_domain = cookie_domain.lstrip(".")
+    return host == cookie_domain or host.endswith("." + cookie_domain)
+
+
 def expiry_for(jar: http.cookiejar.MozillaCookieJar | None, host: str) -> str | None:
     """Earliest expiry (or None for session-only) among the cookies covering `host`."""
     if jar is None or not host:
@@ -149,7 +155,7 @@ def expiry_for(jar: http.cookiejar.MozillaCookieJar | None, host: str) -> str | 
     expiry = None
     for entry in summary(jar):
         cookie_domain = entry["domain"].lstrip(".")
-        if host == cookie_domain or host.endswith("." + cookie_domain):
+        if domain_covers(cookie_domain, host):
             if len(cookie_domain) > best_match_len:
                 best_match_len = len(cookie_domain)
                 expiry = entry["expires"]
@@ -165,3 +171,61 @@ def has_cookies_for(jar: http.cookiejar.MozillaCookieJar | None, url: str) -> bo
     req = urllib.request.Request(url)
     jar.add_cookie_header(req)
     return req.has_header("Cookie")
+
+
+def site_cookies_text(jar: http.cookiejar.MozillaCookieJar | None, host: str) -> str:
+    """The cookies covering `host` as Netscape cookies.txt lines (no header)."""
+    if jar is None or not host:
+        return ""
+    sub = http.cookiejar.MozillaCookieJar()
+    for cookie in jar:
+        if domain_covers(cookie.domain, host):
+            sub.set_cookie(cookie)
+    if not len(sub):
+        return ""
+    with tempfile.TemporaryDirectory() as d:
+        sub.save(str(Path(d) / "c.txt"), ignore_discard=True, ignore_expires=True)
+        lines = (Path(d) / "c.txt").read_text().splitlines()
+    # Keep "#HttpOnly_" cookie lines; drop the header comments.
+    return "\n".join(ln for ln in lines if ln and not ln.startswith("# ")) + "\n"
+
+
+def replace_site_cookies(host: str, text: str) -> int:
+    """Replace the cookies covering `host` in cookies.txt with those parsed from `text`.
+
+    Other sites' cookies are kept. Returns the number of cookies saved from the paste
+    (0 = site removed by a blank `text`). Raises ValueError with a user-facing message
+    (file left unchanged) if the existing file or `text` cannot be parsed, or `text` holds
+    no live cookie; OSError if the file cannot be written.
+    """
+    path = cookie_path()
+    jar = load_jar(path) if path.exists() else http.cookiejar.MozillaCookieJar(str(path))
+    if jar is None:
+        raise ValueError("The saved cookies file could not be read; nothing changed")
+    pasted: list = []
+    if text.strip():
+        # Browsers send CRLF; Cookie-Editor may omit the header MozillaCookieJar requires.
+        text = "\n".join(text.splitlines()) + "\n"
+        if "HTTP Cookie File" not in text:
+            text = "# Netscape HTTP Cookie File\n" + text
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d) / "paste.txt"
+            tmp.write_text(text)
+            new = load_jar(tmp)
+        if new is None:
+            raise ValueError("Not a Netscape cookies.txt file")
+        pasted = list(new)
+        if not pasted:
+            raise ValueError(
+                "No valid cookies in the pasted text (expired or empty export); nothing changed"
+            )
+    for cookie in list(jar):
+        if domain_covers(cookie.domain, host):
+            jar.clear(cookie.domain, cookie.path, cookie.name)
+    for cookie in pasted:
+        jar.set_cookie(cookie)
+    if len(jar) == 0:
+        path.unlink(missing_ok=True)
+    elif not save_jar(jar, path):
+        raise OSError("could not write cookies.txt")
+    return len(pasted)

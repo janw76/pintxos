@@ -18,9 +18,18 @@ from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 import pintxos
-from pintxos import adfilter, dashboard, feed_out, feedstats, llm
+from pintxos import adfilter, dashboard, feed_out, feedstats, llm, openrouter_models
 from pintxos.config import DEFAULTS, data_dir, get_setting, is_truthy
-from pintxos.cookies import cookie_path, expiry_for, get_jar, has_cookies_for, load_jar, summary
+from pintxos.cookies import (
+    cookie_path,
+    expiry_for,
+    get_jar,
+    has_cookies_for,
+    load_jar,
+    replace_site_cookies,
+    site_cookies_text,
+    summary,
+)
 from pintxos.db import db, init_db, now
 from pintxos.feed_out import render_rss
 from pintxos.fetch_status import summarize
@@ -189,6 +198,9 @@ async def import_opml(opml: UploadFile | None = File(None)) -> Response:
         msg=f"Imported {len(new_ids)} feeds, {existing} already subscribed, "
         f"{skipped} skipped (not http/https)",
     )
+@app.get("/api/models")
+def api_models(q: str = "") -> dict:
+    return openrouter_models.search(q)
 
 
 @app.get("/feeds/{feed_id}.xml")
@@ -295,11 +307,12 @@ def _paused_context(conn: sqlite3.Connection) -> dict | None:
 
 def _redirect(path: str, *, msg: str | None = None, err: str | None = None) -> RedirectResponse:
     # ponytail: flash messages via query params, no session/cookie machinery.
+    path, hash_, frag = path.partition("#")  # the fragment must come after the query
     if err:
         path = f"{path}?err={quote(err)}"
     elif msg:
         path = f"{path}?msg={quote(msg)}"
-    return RedirectResponse(url=path, status_code=303)
+    return RedirectResponse(url=path + hash_ + frag, status_code=303)
 
 
 def _feed_login_context(
@@ -371,6 +384,7 @@ def feed_edit_page(request: Request, feed_id: int) -> Response:
             domain=domain,
             cookies_loaded=cookies_loaded_for_domain,
             cookie_expiry=domain_expiry,
+            feed_id=feed_id,
         )
     try:
         last_filtered = json.loads(feed["last_filtered"] or "[]")
@@ -435,8 +449,41 @@ def feed_edit_page(request: Request, feed_id: int) -> Response:
             "item_stats": item_stats,
             "global_model": global_model,
             "warn_at": warn_at,
+            "login_domain": domain,
+            "login_loaded": cookies_loaded_for_domain,
+            "login_expiry": domain_expiry,
+            "login_text": site_cookies_text(jar, domain),
         },
     )
+
+
+@app.post("/feeds/{feed_id}/cookies")
+async def feed_cookies_save(request: Request, feed_id: int) -> Response:
+    with db() as conn:
+        feed = conn.execute("SELECT url FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        if feed is None:
+            raise HTTPException(status_code=404, detail="feed not found")
+        domain = _feed_login_context(conn, feed_id, feed["url"], None)[0]
+    back = f"/feeds/{feed_id}#paywall"
+    # Starlette's default 1 MiB form-field cap would answer 400; raise it so we can flash.
+    form = await request.form(max_part_size=4 * 1024 * 1024)
+    cookies_text = str(form.get("cookies_text", ""))
+    if len(cookies_text.encode()) > 1024 * 1024:  # 1 MiB
+        return _redirect(back, err="Too large")
+    if not domain:
+        return _redirect(back, err="No site known for this feed")
+    # The site shown on the page must still be the feed's site, or we'd edit another login.
+    if form.get("site") != domain:
+        return _redirect(back, err="This feed's site changed; reload the page and try again")
+    try:
+        count = replace_site_cookies(domain, cookies_text)
+    except ValueError as e:
+        return _redirect(back, err=str(e))
+    except OSError:
+        return _redirect(back, err="Could not save the cookies")
+    if count == 0:
+        return _redirect(back, msg="Login removed")
+    return _redirect(back, msg=f"Login saved: {count} cookies")
 
 
 @app.post("/feeds/{feed_id}")
@@ -629,6 +676,7 @@ def _load_feed_rows(request: Request, feed_id: int | None = None) -> list[dict]:
                 domain=domain,
                 cookies_loaded=cookies_loaded,
                 cookie_expiry=expiry,
+                feed_id=feed["id"],
             )
             feeds.append(feed)
     return feeds
@@ -713,7 +761,7 @@ def retry_fallback_route(feed_id: int) -> Response:
             (feed_id,),
         ).fetchone()[0]
         if n == 0:
-            return _redirect(f"/feeds/{feed_id}", msg="Nothing to retry")
+            return _redirect(f"/feeds/{feed_id}#status", msg="Nothing to retry")
     until = paused_until()
     if until is not None and until > datetime.now(UTC):
         shown = feed_out.paused_since_display(until.astimezone(UTC).isoformat())
@@ -732,9 +780,9 @@ def summarize_route(feed_id: int, guid: str = Form(...)) -> Response:
         if feed is None:
             raise HTTPException(status_code=404, detail="feed not found")
     if filtered_entry(feed_id, guid) is None:
-        return _redirect(f"/feeds/{feed_id}", err="Item not found")
+        return _redirect(f"/feeds/{feed_id}#filtered", err="Item not found")
     summarize_one(feed_id, guid)
-    return _redirect(f"/feeds/{feed_id}", msg="Summarizing…")
+    return _redirect(f"/feeds/{feed_id}#filtered", msg="Summarizing…")
 
 
 def env_pinned(key: str) -> bool:
@@ -828,10 +876,10 @@ def settings_page(request: Request) -> Response:
     cookie_domains = summary(jar) if jar else []
     cookie_file = str(cookie_path())
     cookie_file_exists = cookie_path().exists()
-    try:
-        cookies_text = cookie_path().read_text(errors="replace")
-    except OSError:  # removed between exists() and read: show an empty box
-        cookies_text = ""
+    # Same status entries the Feeds page shows: a link means paywalled or login failed.
+    paywall_feeds = [
+        f for f in _load_feed_rows(request) if any(e["link"] for e in f["fetch_status"])
+    ]
     cookie_soon = (datetime.now(UTC) + timedelta(days=7)).date().isoformat()
     return templates.TemplateResponse(
         request,
@@ -865,7 +913,7 @@ def settings_page(request: Request) -> Response:
             "cookie_domains": cookie_domains,
             "cookie_file": cookie_file,
             "cookie_file_exists": cookie_file_exists,
-            "cookies_text": cookies_text,
+            "paywall_feeds": paywall_feeds,
             "cookie_soon": cookie_soon,
             "version": pintxos.__version__,
         },
@@ -874,11 +922,11 @@ def settings_page(request: Request) -> Response:
 
 @app.post("/settings")
 def save_settings(
-    model: str = Form(...),
+    model: str = Form(""),
     fallback_model: str = Form(""),
     local_llm_url: str = Form(""),
-    poll_minutes: str = Form(...),
-    items_per_feed: str = Form(...),
+    poll_minutes: str = Form(""),
+    items_per_feed: str = Form(""),
     api_key: str = Form(""),
     openrouter_api_key: str = Form(""),
     filter_ads: str = Form(""),
@@ -1053,18 +1101,16 @@ def test_settings() -> Response:
 @app.post("/settings/cookies")
 async def upload_cookies(
     cookies: UploadFile | None = File(None),
-    cookies_text: str = Form(""),
+    remove_all: str = Form(""),
 ) -> Response:
-    data: bytes = b""
-    if cookies is not None:
-        data = await cookies.read()
-    if not data and cookies_text.strip():
-        data = cookies_text.encode()
-    if not data:
+    if remove_all:
         cookie_path().unlink(missing_ok=True)
-        return _redirect("/settings", msg="Cookies removed")
+        return _redirect("/settings#paywall", msg="Cookies removed")
+    data: bytes = await cookies.read() if cookies is not None else b""
+    if not data:
+        return _redirect("/settings#paywall", err="Choose a cookies.txt file")
     if len(data) > 1024 * 1024:  # 1 MiB
-        return _redirect("/settings", err="File too large")
+        return _redirect("/settings#paywall", err="File too large")
 
     tmp = tempfile.NamedTemporaryFile(dir=data_dir(), delete=False)  # 0600 by default; os.replace keeps the mode
     tmp_path = Path(tmp.name)
@@ -1076,7 +1122,7 @@ async def upload_cookies(
         # Validate via load_jar() itself so the flash counts match what polling will see.
         jar = load_jar(tmp_path)
         if jar is None:
-            return _redirect("/settings", err="Not a Netscape cookies.txt file")
+            return _redirect("/settings#paywall", err="Not a Netscape cookies.txt file")
 
         os.replace(tmp_path, cookie_path())
         replaced = True
@@ -1087,5 +1133,5 @@ async def upload_cookies(
     domains = summary(jar)
     count = len(jar)
     return _redirect(
-        "/settings", msg=f"Cookies saved: {count} cookies for {len(domains)} domains"
+        "/settings#paywall", msg=f"Cookies saved: {count} cookies for {len(domains)} domains"
     )

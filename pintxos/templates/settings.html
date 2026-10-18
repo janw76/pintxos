@@ -26,11 +26,17 @@
     #ai td:nth-child(2) { color: var(--text-muted); }
     #ai td:nth-child(2)::after { content: " per 100 articles"; }
   }
+  /* Tabs: only the targeted card shows; the first (#ai) when nothing valid is targeted. */
+  .set-tabs .set-card:not(:target) { display: none; }
+  .set-tabs:not(:has(.set-card:target)) #ai { display: block; }
+  .set-tabs .set-nav a { border-bottom: 2px solid transparent; }
+  .set-tabs .set-nav a[aria-current] { color: var(--accent); font-weight: 600; border-bottom: 2px solid var(--accent); border-radius: 0; background: none; }
   .set-version { margin: 1.5rem 0 0; }
 </style>
 {% endblock %}
 {% block content %}
 <h1>Settings</h1>
+<div class="set-tabs">
 <nav class="set-nav" aria-label="Settings sections">
   <a href="#ai">AI model</a>
   <a href="#keys">API keys</a>
@@ -38,20 +44,23 @@
   <a href="#filters">Filters</a>
   <a href="#paywall">Paywall</a>
 </nav>
-<form method="post" action="/settings" class="settings-form">
+<form method="post" action="/settings" class="settings-form" novalidate>
   <section class="set-card" id="ai" aria-labelledby="ai-h">
     <h2 id="ai-h">AI model</h2>
     <div class="field">
       <label for="model">Model</label>
-      <input type="text" id="model" name="model" value="{{ model }}">
+      <input type="text" id="model" name="model" value="{{ model }}" data-model-search role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="model-list" autocomplete="off">
     </div>
-    {% include "_model_presets.html" %}
+    <details>
+      <summary>Show presets</summary>
+      {% include "_model_presets.html" %}
+    </details>
     <div class="field">
       <div class="info-anchor">
         <label for="fallback_model">Fallback model</label>
         {% call info("info-fallback", "the fallback model") %}Used automatically when the default model fails; empty means the built-in default.{% endcall %}
       </div>
-      <input type="text" id="fallback_model" name="fallback_model" value="{{ fallback_model }}" {% if fallback_model_env %}disabled{% endif %}>
+      <input type="text" id="fallback_model" name="fallback_model" value="{{ fallback_model }}" {% if fallback_model_env %}disabled{% else %}data-model-search role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="fallback_model-list" autocomplete="off"{% endif %}>
       {% if fallback_model_env %}<div class="muted">Set by PINTXOS_FALLBACK_MODEL in the environment.</div>{% endif %}
     </div>
     <div class="field">
@@ -91,6 +100,7 @@
         {% if openrouter_key_last4 %}<div class="muted">Set (••••{{ openrouter_key_last4 }})</div>{% endif %}
       {% endif %}
     </div>
+    <div class="set-actions"><button type="submit" class="btn-primary">Save</button></div>
   </section>
 
   <section class="set-card" id="polling" aria-labelledby="polling-h">
@@ -132,6 +142,7 @@
       </div>
       {% if respect_language_env %}<div class="muted">Set by PINTXOS_RESPECT_LANGUAGE in the environment.</div>{% endif %}
     </div>
+    <div class="set-actions"><button type="submit" class="btn-primary">Save</button></div>
   </section>
 
   <section class="set-card" id="filters" aria-labelledby="filters-h">
@@ -159,11 +170,9 @@
       <textarea id="ad_keep_patterns" name="ad_keep_patterns" rows="4" class="mono" {% if keep_patterns_env %}disabled{% endif %}>{{ ad_keep_patterns }}</textarea>
       {% if keep_patterns_env %}<div class="muted">Set by PINTXOS_AD_KEEP_PATTERNS in the environment.</div>{% endif %}
     </div>
+    <div class="set-actions"><button type="submit" class="btn-primary">Save</button></div>
   </section>
 
-  <div class="set-actions">
-    <button type="submit" class="btn-primary">Save</button>
-  </div>
 </form>
 
 <section class="set-card" id="paywall" aria-labelledby="paywall-h">
@@ -176,7 +185,7 @@
       <li>Install the free, open-source <a href="https://cookie-editor.com" target="_blank" rel="noopener">Cookie-Editor</a> browser extension (Safari, Chrome, Firefox).</li>
       <li>Open the website you want full articles from and log in.</li>
       <li>Click the Cookie-Editor icon, choose <b>Export</b>, then <b>Netscape</b>. The cookies are now on your clipboard.</li>
-      <li>Paste them at the end of the box below and click <b>Save</b>. Repeat for each site.</li>
+      <li>Open the feed from the Feeds page, go to its <b>Paywall</b> tab, paste the cookies and click <b>Save</b>. Repeat for each site.</li>
     </ol>
     <p class="muted">Pintxøs uses the new cookies on the next poll. On a feed's Edit page, "Retry N items" re-reads articles that could not be read in full (teasers, blocked pages, failed fetches) and summarizes items that have no summary. When the Feeds page shows "unreadable with login", it means either your cookies expired or those articles are outside your subscription; cookies only need re-exporting in the first case.</p>
   </details>
@@ -195,23 +204,31 @@
   </div>
   {% endif %}
 
+  <p class="muted" style="margin-bottom:.25rem">Feeds with a paywall:</p>
+  {% if paywall_feeds %}
+  <div class="set-domains">
+  {% for f in paywall_feeds %}
+  <div class="muted"><a href="/feeds/{{ f.id }}#paywall">{{ f.title or f.url }}</a> — {% for e in f.fetch_status if e.link %}{{ e.text }}{{ ", " if not loop.last }}{% endfor %}</div>
+  {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted">No feeds with a paywall right now.</p>
+  {% endif %}
+
   <form method="post" action="/settings/cookies" enctype="multipart/form-data" class="settings-form">
     <div class="field">
-      <div class="info-anchor">
-        <label for="cookies_text">Saved cookies</label>
-        {% call info("info-cookies-text", "removing saved cookies") %}Clear the box and save to remove them.{% endcall %}
-      </div>
-      <textarea id="cookies_text" name="cookies_text" rows="12" class="mono">{{ cookies_text }}</textarea>
-      <div class="muted">Shown in plain text: anyone who can open this page can read these cookies.</div>
-    </div>
-    <div class="field">
-      <label for="cookies">…or upload a cookies.txt file</label>
+      <label for="cookies">Upload a cookies.txt file (all sites at once)</label>
       <input type="file" id="cookies" name="cookies">
-      <div class="muted">Stored as <code>{{ cookie_file }}</code>.</div>
+      <div class="muted">Replaces all saved logins. Stored as <code>{{ cookie_file }}</code>.</div>
     </div>
-    <button type="submit" class="btn-primary">Save</button>
+    <button type="submit" class="btn-primary">Upload</button>
+  </form>
+  <form method="post" action="/settings/cookies" class="settings-form" onsubmit="return confirm('Remove all saved logins?')">
+    <input type="hidden" name="remove_all" value="1">
+    <button type="submit" class="btn-danger">Remove all saved logins</button>
   </form>
 </section>
+</div>
 
 <p class="muted set-version">
   {% if version != "dev" %}
@@ -220,4 +237,15 @@
   Pintxos {{ version }}
   {% endif %}
 </p>
+<script>
+(function () {
+  var links = document.querySelectorAll(".set-nav a");
+  function mark() {
+    var h = location.hash, ok = /^#[\w-]+$/.test(h) && document.querySelector(".set-tabs .set-card" + h);
+    links.forEach(function (a) { if (a.getAttribute("href") === (ok ? h : "#ai")) a.setAttribute("aria-current", "true"); else a.removeAttribute("aria-current"); });
+  }
+  addEventListener("hashchange", mark); mark();
+})();
+</script>
+{% include "_model_search.html" %}
 {% endblock %}

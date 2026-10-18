@@ -20,3 +20,9 @@ __pycache__/
 .codex/
 AGENTS.md
 CLAUDE.md
+
+# Beads / Dolt files (added by bd init)
+*.gate.lock*
+
+# bd 1.3.x per-machine files
+.beads/machine-id
