@@ -247,7 +247,9 @@ def test_400_with_unrelated_body_raises_without_retry_or_learning(monkeypatch):
 
 
 class _FakeMessages:
-    def __init__(self, text=None, error=None, model=None):
+    def __init__(self, text=None, error=None, model=None, content=None, stop_reason="end_turn"):
+        self._content = content
+        self._stop_reason = stop_reason
         self._text = text
         self._error = error
         self._model = model
@@ -260,12 +262,18 @@ class _FakeMessages:
         return type(
             "R",
             (),
-            {"content": [type("C", (), {"text": self._text})()], "model": self._model},
+            {
+                "content": self._content
+                if self._content is not None
+                else [type("C", (), {"type": "text", "text": self._text})()],
+                "model": self._model,
+                "stop_reason": self._stop_reason,
+            },
         )()
 
 
-def _patch_anthropic(monkeypatch, text=None, error=None, model=None):
-    messages = _FakeMessages(text, error, model)
+def _patch_anthropic(monkeypatch, text=None, error=None, model=None, content=None, stop_reason="end_turn"):
+    messages = _FakeMessages(text, error, model, content, stop_reason)
     init_kwargs = {}
 
     class FakeAnthropic:
@@ -275,6 +283,26 @@ def _patch_anthropic(monkeypatch, text=None, error=None, model=None):
 
     monkeypatch.setattr("pintxos.llm.anthropic.Anthropic", FakeAnthropic)
     return messages, init_kwargs
+
+
+_THINKING = type("T", (), {"type": "thinking", "thinking": "hmm"})()
+
+
+def test_anthropic_skips_thinking_block(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "an-key")
+    text_block = type("C", (), {"type": "text", "text": "sport"})()
+    _patch_anthropic(monkeypatch, content=[_THINKING, text_block])
+
+    assert llm.complete("sys", "user", 55, "claude-haiku-5-5").text == "sport"
+
+
+def test_anthropic_no_text_block_raises(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "an-key")
+    _patch_anthropic(monkeypatch, content=[_THINKING], stop_reason="max_tokens")
+
+    with pytest.raises(llm.LLMError, match="max_tokens") as exc:
+        llm.complete("sys", "user", 55, "claude-haiku-5-5")
+    assert not isinstance(exc.value, llm.MissingApiKey)
 
 
 def test_anthropic_request_shape_and_text(monkeypatch):

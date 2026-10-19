@@ -370,7 +370,7 @@ def test_settings_post_persists():
         resp = c.post(
             "/settings",
             data={
-                "model": "claude-haiku-4-5-20251001",
+                "model": "claude-haiku-5-5",
                 "poll_minutes": "15",
                 "items_per_feed": "10",
                 "api_key": "sk-test-1234",
@@ -867,7 +867,7 @@ def test_settings_page_shows_model_presets_and_key_fields():
 
     assert "z-ai/glm-5.3-flash" in page
     assert "deepseek/deepseek-v4.1-flash" in page
-    assert "claude-haiku-4-5-20251001" in page
+    assert "claude-haiku-5-5" in page
     assert "google/gemini-2.5-flash-lite" in page
     assert "deepseek/deepseek-v4-flash-0731" in page
     assert "anthropic/claude-haiku-4.5" not in page
@@ -1044,7 +1044,7 @@ def test_settings_post_anthropic_model_without_key_rejected():
         resp = c.post(
             "/settings",
             data={
-                "model": "claude-haiku-4-5-20251001",
+                "model": "claude-haiku-5-5",
                 "poll_minutes": "30",
                 "items_per_feed": "50",
                 "api_key": "",
@@ -1842,7 +1842,7 @@ def test_feed_edit_page_shows_model_field_and_presets(monkeypatch):
     assert 'name="model"' in page
     assert "z-ai/glm-5.3-flash" in page
     assert "deepseek/deepseek-v4.1-flash" in page
-    assert "claude-haiku-4-5-20251001" in page
+    assert "claude-haiku-5-5" in page
     assert "google/gemini-2.5-flash-lite" in page
     assert "deepseek/deepseek-v4-flash-0731" in page
     assert "anthropic/claude-haiku-4.5" not in page
