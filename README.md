@@ -30,8 +30,11 @@ Same story, no guessing games. Sanity restored. Point Pintxøs at a feed once, a
 ### Additional features
 
 - **OPML import and export.** Load a feed list from any reader in one go, and download your list back out, either the original source feeds or the Pintxøs output feeds. An import of more than five feeds waits for your go-ahead on the Feeds page, which says how many summaries it may cost; starting the polls does five feeds right away, then one every two minutes.
-- **Model choice.** Use Anthropic's Haiku or other suitable models through OpenRouter. Each feed can use a different model, to balance quality and cost.
-- **Ad filtering.** Skip deal posts, coupons and sponsored entries before they reach your feed. Built-in rules cover the usual "60% off" and promo-code posts. Each feed's Edit page shows what the last poll dropped and why.
+- **Model choice.** Use Anthropic's Haiku directly, any model on OpenRouter, or a model on your own machine. Each feed can use a different model, to balance quality and cost.
+- **Model search.** Type in the Model field (Settings, "Fallback model" there too, and each feed's Model tab) and pick from a dropdown over OpenRouter's model list instead of copying names.
+- **Local models.** Run a `local:` model on Ollama, llama.cpp, vLLM or LM Studio with no API key; see [Local models](#local-models).
+- **Stats page.** A 7-day dashboard of what Pintxøs read, filtered and saved, including a topic count for the week.
+- **Ad filtering.** Skip deal posts, coupons and sponsored entries before they reach your feed. Built-in rules cover the usual "60% off" and promo-code posts. Each feed's Filtered tab shows what the last poll dropped and why.
 - **Keyword filtering.** Block or keep entries by title, globally or per feed, e.g. drop everything mentioning `cricket` or `horoscope`. Supports regular expressions.
 - **Full text inline.** The whole article is appended below the summary, so you can read it in your feed reader without opening the site.
 - **English summaries of foreign-language feeds.** By default headlines and summaries stay in the article's language. Turn that off, globally or per feed, to always get English.
@@ -39,7 +42,7 @@ Same story, no guessing games. Sanity restored. Point Pintxøs at a feed once, a
 - **Word count and reading time** on every item, so you know what you are clicking into.
 - **Topic mute.** Tick any of 17 media categories (arts, sport, health, weather, ...) to mute them entirely.
 - **Volume warning and daily budget.** A feed that produces an unusually high number of summaries gets a warning article in its output feed, once per day. Set a per-feed daily limit if you want a hard cap.
-- **Bypass feed cache.** Some publishers' CDNs keep serving a stale feed: the London Review of Books caches its RSS for 14 days but publishes fortnightly, so new issues arrive late or not at all. Switch this on from the feed's Edit page and each poll adds `_pintxos=<unix time>` to the feed URL, keeping any query parameters it already has. Off by default; article fetches are unaffected.
+- **Bypass feed cache.** Some publishers' CDNs keep serving a stale feed: the London Review of Books caches its RSS for 14 days but publishes fortnightly, so new issues arrive late or not at all. Switch this on from the Feed fetch tab on the feed's page and each poll adds `_pintxos=<unix time>` to the feed URL, keeping any query parameters it already has. Off by default; article fetches are unaffected.
 - **Copy and share.** Every feed item links to a page with one-tap Copy (rich text: bold headline, italic stats, small model name; plain text for iMessage/WhatsApp) and Share buttons, so you can pass an article on from a mobile feed reader.
 
 ## How to use it
@@ -61,7 +64,7 @@ services:
       - ./data:/data
     environment:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
-      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}  # only needed for models without a slash (Anthropic direct)
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}  # for models without a slash (Anthropic direct)
       # PINTXOS_MODEL: z-ai/glm-5.3-flash
       # PINTXOS_POLL_MINUTES: 30
       # PINTXOS_ITEMS_PER_FEED: 50
@@ -69,9 +72,13 @@ services:
     restart: unless-stopped
 ```
 
-Put your `OPENROUTER_API_KEY` in a `.env` file next to `docker-compose.yml`
-(see `.env.example`) — `ANTHROPIC_API_KEY` instead if you use a model without
-a slash — then:
+Put the API key for your model's provider in a `.env` file next to
+`docker-compose.yml` (see `.env.example`). The default model
+`z-ai/glm-5.3-flash` runs on OpenRouter, so set `OPENROUTER_API_KEY`. To use
+Anthropic directly instead, set `ANTHROPIC_API_KEY` and
+`PINTXOS_MODEL=claude-haiku-4-5-20251001` (no OpenRouter key needed). Setting
+both keys is fine; `local:` models need no key (see [API keys](#api-keys)).
+Then:
 
 ```bash
 docker compose up -d
@@ -118,8 +125,9 @@ Then run it:
 ```
 
 Copy `.env.example` to `.env` in the directory you run `pintxos` from, and
-fill in `OPENROUTER_API_KEY` (or `ANTHROPIC_API_KEY` for a model without a
-slash, plus any other overrides), or export the
+fill in the key for your model's provider (`OPENROUTER_API_KEY` for the default
+model, or `ANTHROPIC_API_KEY` with `PINTXOS_MODEL=claude-haiku-4-5-20251001`;
+see [API keys](#api-keys)) plus any other overrides, or export the
 variables directly — real environment variables always win over `.env`. The
 SQLite database lives in `./data` relative to that directory unless you set
 `PINTXOS_DATA_DIR`, so run `pintxos` from a stable directory.
@@ -135,28 +143,33 @@ macOS), see [docs/deploy-native.md](docs/deploy-native.md).
 
 ## Configuration
 
-Model, poll interval, items per feed and the API keys can be set via environment
-variables, or (if unset) via the Settings page in the web UI, which persists them
-to the database. `PINTXOS_BASE_URL`, `PINTXOS_DATA_DIR`, `PINTXOS_HOST`,
-`PINTXOS_PORT` and `PINTXOS_IMPERSONATE` are environment-only.
+The model, fallback model, local server URL, API keys, poll interval, items per
+feed, volume-warning thresholds, full text, language and ad-filter settings can be
+set via environment variables, or (if unset) via the Settings page in the web UI,
+which persists them to the database. `PINTXOS_BASE_URL`, `PINTXOS_DATA_DIR`,
+`PINTXOS_HOST`, `PINTXOS_PORT` and `PINTXOS_IMPERSONATE` are environment-only;
+`PINTXOS_KEEP_PER_FEED`, `PINTXOS_DAILY_BUDGET`, `PINTXOS_LOCAL_LLM_KEY` and
+`PINTXOS_LOCAL_LLM_TIMEOUT` have no Settings field (the daily budget can also be
+set per feed).
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | *(none)* | Anthropic API key. Needed only for models without a slash in the name (Anthropic direct). See note below. |
-| `OPENROUTER_API_KEY` | *(none)* | OpenRouter API key. Needed for the default model and any model with a slash in the name. |
+| `ANTHROPIC_API_KEY` | *(none)* | Anthropic API key. Set it to use a model without a slash in the name (Anthropic direct), e.g. `claude-haiku-4-5-20251001`. Not needed for OpenRouter or `local:` models. See "API keys". |
+| `OPENROUTER_API_KEY` | *(none)* | OpenRouter API key. Set it to use the default model or any model with a slash in the name. Not needed if you only use Anthropic-direct or `local:` models. See "API keys". |
 | `PINTXOS_LOCAL_LLM_URL` | `http://127.0.0.1:11434/v1` | Base URL of an OpenAI-compatible server (Ollama, llama.cpp, vLLM, LM Studio) used by models named `local:<model>`. See "Local models". |
 | `PINTXOS_LOCAL_LLM_KEY` | *(none)* | Optional bearer token for that server. Most local servers need none. |
 | `PINTXOS_LOCAL_LLM_TIMEOUT` | `300` | Seconds to wait for a local model's reply; CPU inference is slow. Connecting is capped at 10 s, so an unreachable server fails fast. Invalid values fall back to 300. No UI field. |
 | `PINTXOS_MODEL` | `z-ai/glm-5.3-flash` | Default model. Names with a slash go to OpenRouter, names without go to Anthropic, names starting with `local:` go to your own OpenAI-compatible server (see "Local models"). Feeds can override it. |
+| `PINTXOS_FALLBACK_MODEL` | `deepseek/deepseek-v4-flash` | Sent to OpenRouter as the fallback when the primary model fails. Only applies to OpenRouter models: Anthropic-direct and `local:` models get no fallback. Also on the Settings page ("Fallback model"). |
 | `PINTXOS_POLL_MINUTES` | `30` | How often feeds are polled, in minutes. |
 | `PINTXOS_ITEMS_PER_FEED` | `50` | Items in each output feed, and the most feed entries considered per poll. |
 | `PINTXOS_KEEP_PER_FEED` | `1000` | Rows stored per feed; the oldest-inserted are pruned first. Keeps history well beyond the output feed so an entry that leaves and re-enters a publisher's feed is never summarized again. Roughly 5 KB per row with full text. `-1` keeps every row forever (no pruning); the database then grows without bound. No UI field. |
 | `PINTXOS_DAILY_BUDGET` | `200` | Default "Max summaries per day" for feeds whose own budget is blank. A per-feed value always wins; set it very high to effectively remove the cap. |
-| `PINTXOS_WARN_AT` | `100` | Summaries per feed per day after which the output feed carries a warning item. Per-feed "Warn on volume" turns the warning off for that feed. |
+| `PINTXOS_WARN_AT` | `100` | Summaries per feed per day after which the output feed carries a warning item. Per-feed "Volume warning" turns the warning off for that feed. |
 | `PINTXOS_WARN_HARD_AT` | `180` | From this many summaries the warning uses stronger wording. Must be at least `PINTXOS_WARN_AT`. |
 | `PINTXOS_FILTER_ADS` | `0` | Skip ad/coupon entries before fetch/summarize. Set to `1` to turn this on. |
 | `PINTXOS_FULL_TEXT` | `1` | Append the extracted article text after each summary in the output feed, below the Original line. Set to `0` to turn this off. |
-| `PINTXOS_RESPECT_LANGUAGE` | `1` | Write headline and summary in the article's language. Set to `0` to always summarize in English. Appended full text is never translated. Each feed can override this on its Edit page. |
+| `PINTXOS_RESPECT_LANGUAGE` | `1` | Write headline and summary in the article's language. Set to `0` to always summarize in English. Appended full text is never translated. Each feed can override this on its Language tab. |
 | `PINTXOS_AD_TITLE_PATTERNS` | *(empty)* | Extra title regexes, one per line, matched case-insensitively, in addition to the built-in ad rules. |
 | `PINTXOS_AD_KEEP_PATTERNS` | *(empty)* | Title regexes, one per line, matched case-insensitively; a match overrides every block rule, built-ins included, and the entry is kept. |
 | `PINTXOS_BASE_URL` | *(none, inferred from the request)* | Base URL used to build output feed links, e.g. `https://pintxos.example.com`. |
@@ -191,7 +204,7 @@ its Paywall tab. It also takes a whole cookies.txt file for all sites at
 once (replacing every saved login), or you can copy the file to
 `<PINTXOS_DATA_DIR>/cookies.txt` by hand.
 
-Pintxøs uses the new cookies on the next poll. On a feed's Edit page, "Retry
+Pintxøs uses the new cookies on the next poll. On a feed's Status tab, "Retry
 N items" re-reads articles that could not be read in full (teasers, blocked pages, failed fetches) and summarizes
 items that have no summary. When the
 Feeds page shows "unreadable with login", it means either your cookies
@@ -230,7 +243,7 @@ rules above; `PINTXOS_AD_KEEP_PATTERNS` adds to them. The filter only applies to
 seen after it is turned on — it never touches items already stored. The Feeds page shows "N
 filtered" under a feed's item count for its last poll. Each feed can also
 override the global switch and choose whether it inherits, extends, or
-ignores the global patterns from its Edit page. The feed's Edit page also
+ignores the global patterns from its Ad filter tab. The feed's page also
 lets you override its title; leave the field blank to fall back to the
 feed's own title.
 
@@ -250,7 +263,7 @@ The filter was contributed by Eric Bowman (@ebowman) — see
 The ad filter is free and catches deal posts; topic mute is for muting whole
 subjects (sport, weather, arts, ...) that you never want in your feed, at
 the cost of one small AI call per new item. It's off by default, per feed:
-turn on "Classify topics" on the feed's Edit page and each new item is
+set the feed's Topic mute tab to On and each new item is
 classified into one of the 17 IPTC Media Topics top-level topics, then
 matched against the topics you've ticked to mute.
 
@@ -260,7 +273,7 @@ matched against the topics you've ticked to mute.
   far that fell into it — shown once at least one item fell into that topic.
 - Keyword title patterns (above) are free and run first; reach for topic
   mute only for what they can't catch.
-- The "Filtered at last poll" list shows every item dropped by either
+- The feed's Filtered tab ("Filtered at last poll") shows every item dropped by either
   mechanism and why. Ad-filtered and muted-topic rows carry a Summarize
   button to release that one item into the output feed anyway.
 
@@ -273,21 +286,21 @@ worth a second look — it may be an oversized feed, a misconfigured URL, or
 just a very busy news day. Once a feed reaches `PINTXOS_WARN_AT` summaries
 on a given day (default 100), Pintxøs prepends a warning article to that
 feed's output — a stronger one at `PINTXOS_WARN_HARD_AT` (default 180) —
-that explains what happened and links straight to the feed's Edit page.
+that explains what happened and links to the feed's page, where the setting lives on the Volume tab.
 Both thresholds can be changed on the Settings page unless the
 corresponding environment variable is set. Each level fires once per day;
 the warning never touches the feed's own items.
 
-- The warning is per feed, On by default; flip it Off in the "Volume"
-  fieldset on the feed's Edit page if you'd rather not see it.
+- The warning is per feed, On by default; flip it Off on the "Volume"
+  tab of the feed's page if you'd rather not see it.
 - "Max summaries per day" sets a hard budget for the feed; blank falls back
   to the default `PINTXOS_DAILY_BUDGET` (200), not unlimited — set it very
   high on a feed if you want to effectively remove its cap. Once the budget
   is reached, further entries are skipped before any fetch or summary call,
   so they cost nothing.
-- Skipped entries show up in the "Filtered at last poll" list like any other
+- Skipped entries show up in the feed's Filtered tab like any other
   filtered item, with a Summarize button to release one anyway.
-- The feed's Edit page always shows "Summaries: N paid today, K new items
+- The feed's Status tab always shows "Summaries: N paid today, K new items
   kept, M total". Paid vs. kept tells you whether summaries are being paid
   for and then discarded; the warning article itself states both numbers and
   calls out a likely re-summarize loop when fewer than half were kept.
@@ -308,11 +321,21 @@ your own account, so check the publisher's terms.
 
 ## API keys
 
-There are two API keys: `ANTHROPIC_API_KEY` and `OPENROUTER_API_KEY`. Which
-one you need depends on the model name — a name with a slash uses OpenRouter,
-a name without one uses Anthropic (see
-[Choosing a model](#choosing-a-model) below) — so you only need the key(s)
-for the provider(s) you actually use. For both keys, the primary way to
+There are two API keys: `ANTHROPIC_API_KEY` and `OPENROUTER_API_KEY`. Set the
+key for your model's provider:
+
+- a model name with a slash (the default `z-ai/glm-5.3-flash` is one) goes to
+  OpenRouter and needs `OPENROUTER_API_KEY`;
+- a model name without a slash (e.g. `claude-haiku-4-5-20251001`) goes to
+  Anthropic and needs `ANTHROPIC_API_KEY`;
+- a `local:` model needs no key (see [Local models](#local-models)).
+
+You need only the key for the provider you use; setting both is fine. For an
+Anthropic-only setup, set `ANTHROPIC_API_KEY` and
+`PINTXOS_MODEL=claude-haiku-4-5-20251001`. With only `OPENROUTER_API_KEY` set,
+a `claude-*` model fails, and with only `ANTHROPIC_API_KEY` set the default
+model fails until you change it. See
+[Choosing a model](#choosing-a-model) below. For both keys, the primary way to
 configure them is the environment variable (shown in the Quickstart above);
 if — and only if — the environment variable is not set, the Settings page
 lets you store that key in the database instead.
@@ -339,14 +362,14 @@ its original title with a note and is not retried by the automatic retries.
 The one exception: if its article was blocked and your cookies later let the
 fetch through, it is re-read and summarized once, within the daily budget (the
 cookie re-read stops for the day once the feed's daily budget is reached). The
-"Retry N items" button on the feed's Edit page re-summarizes it, one call per
+"Retry N items" button on the feed's Status tab re-summarizes it, one call per
 item.
 * The database grows to about 5 MB per feed at the default retention.
 Pintxøs never runs `VACUUM`, so deleting a feed shrinks the file only after
 running `sqlite3 pintxos.db 'VACUUM'` by hand.
-* Feeds with "Classify topics" turned on add one more small call per new item —
+* Feeds with Topic mute set to On add one more small call per new item —
 the topic classification call is roughly 15% of the cost of a summary call,
-and only runs on feeds with the switch on. As a rule of thumb, topic mute pays for itself once the muted topics make up more than about 15% of a feed's items (the feed's Edit page shows the share of items in each topic).
+and only runs on feeds with the switch on. As a rule of thumb, topic mute pays for itself once the muted topics make up more than about 15% of a feed's items (the feed's Topic mute tab shows the share of items in each topic).
 * A per-feed "Max summaries per day" budget caps the number of summary calls that feed can make in a day,
 regardless of how much it polls.
 * Pintxøs avoids re-polling and re-summarizing, but I still recommend watching cost — on [Claude Console](https://platform.claude.com/) for Anthropic models, and on [OpenRouter's activity page](https://openrouter.ai/activity) for models with a slash. Cost scales with the number of feeds you poll and how many articles they publish.
@@ -365,7 +388,7 @@ A model name with a slash (e.g. `google/gemini-2.5-flash-lite`) is sent to OpenR
 
 Prices are OpenRouter's as of September 2026 and drift; see the full list at [openrouter.ai/models](https://openrouter.ai/models). The same five presets are clickable on the Settings page.
 
-Each feed can override the model on its Edit page — e.g., a premium model for one feed, the cheapest for another; leaving it blank uses the global default.
+Each feed can override the model on its Model tab — e.g., a premium model for one feed, the cheapest for another; leaving it blank uses the global default.
 
 Save the model on the Settings page first, then click "Test saved model" to run a tiny completion with it and the saved key.
 
@@ -382,7 +405,7 @@ The same setup runs on Linux and macOS; expect slow replies on CPU-only machines
 Long articles make prompts of up to ~7.6k tokens, but Ollama's default context depends on the machine (4k/32k/256k based on VRAM, per `ollama serve --help`), so set `OLLAMA_CONTEXT_LENGTH=16384` or more.
 Current Ollama rejects a prompt that doesn't fit with an error, logged and recorded as the item's summarize error; older versions and some other servers may cut it silently instead, so pintxos logs a warning when the server reports far fewer prompt tokens than it sent.
 If the local server is unreachable, an item is tried three times over at least 90 minutes at the default 30 minute poll interval (the wait doubles per attempt).
-After that the item appears in the feed with its original title and a note that no summary could be made, and it is not retried automatically. Once the server is back, the "Retry N items" button on the feed's Edit page re-summarizes them.
+After that the item appears in the feed with its original title and a note that no summary could be made, and it is not retried automatically. Once the server is back, the "Retry N items" button on the feed's Status tab re-summarizes them.
 
 ## Development
 
@@ -415,10 +438,6 @@ that variable is absent, for example in a source checkout, the footer shows
 "dev" instead.
 
 `/health` also reports the running version, which the deploy script uses.
-
-On patito the compose file tracks `:latest`. `bin/deploy` (run from a checkout
-on Max or patito) waits for CI and deploys through the patito deploy key. There
-is no rollback: revert the change on main and deploy again.
 
 To pin a deployment to a specific version instead of always tracking
 `:latest`, use an image tag like `ghcr.io/janw76/pintxos:26.09.1` in your
