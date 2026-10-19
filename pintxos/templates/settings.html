@@ -31,6 +31,8 @@
   .set-tabs:not(:has(.set-card:target)) #ai { display: block; }
   .set-tabs .set-nav a { border-bottom: 2px solid transparent; }
   .set-tabs .set-nav a[aria-current] { color: var(--accent); font-weight: 600; border-bottom: 2px solid var(--accent); border-radius: 0; background: none; }
+  #import .set-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
+  #import .set-actions .btn-primary { flex: 0 0 11rem; text-align: center; }
   .set-version { margin: 1.5rem 0 0; }
 </style>
 {% endblock %}
@@ -43,6 +45,7 @@
   <a href="#polling">Polling</a>
   <a href="#filters">Filters</a>
   <a href="#paywall">Paywall</a>
+  <a href="#import">Import &amp; export</a>
 </nav>
 <form method="post" action="/settings" class="settings-form" novalidate>
   <section class="set-card" id="ai" aria-labelledby="ai-h">
@@ -226,6 +229,22 @@
   <form method="post" action="/settings/cookies" class="settings-form" onsubmit="return confirm('Remove all saved logins?')">
     <input type="hidden" name="remove_all" value="1">
     <button type="submit" class="btn-danger">Remove all saved logins</button>
+  </form>
+</section>
+<section class="set-card" id="import" aria-labelledby="import-h">
+  <h2 id="import-h">Import and export feeds</h2>
+  <p class="muted">OPML is the standard feed-list format. Export gives you a file of your feeds to take to another reader or keep as a backup: the source list is the feeds as you subscribed, the output list is the filtered output feeds.</p>
+  <p class="muted">Import reads an OPML file from another reader and adds its feeds. Feeds you already follow are left alone, entries that are not http(s) are skipped, and files over 1 MiB are refused. After a big import (more than five feeds), the first polls wait for your go-ahead on the Feeds page.</p>
+  <form method="post" action="/feeds/import" enctype="multipart/form-data" class="settings-form">
+    <div class="field">
+      <label for="opml">OPML file to import</label>
+      <input type="file" id="opml" name="opml" accept=".opml,.xml,text/xml,text/x-opml">
+    </div>
+    <div class="set-actions">
+      <button type="submit" class="btn-primary">Import OPML</button>
+      <a class="btn-primary" href="/feeds.opml" download>Export source list</a>
+      <a class="btn-primary" href="/feeds.opml?output=1" download>Export output list</a>
+    </div>
   </form>
 </section>
 </div>

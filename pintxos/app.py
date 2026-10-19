@@ -166,15 +166,15 @@ def feeds_opml(request: Request, output: int = 0) -> Response:
 async def import_opml(opml: UploadFile | None = File(None)) -> Response:
     data = await opml.read() if opml is not None else b""
     if not data:
-        return _redirect("/", err="Not an OPML file")
+        return _redirect("/settings#import", err="Not an OPML file")
     if len(data) > 1024 * 1024:  # 1 MiB
-        return _redirect("/", err="File too large")
+        return _redirect("/settings#import", err="File too large")
     try:
         root = ET.fromstring(data)
     except (ET.ParseError, LookupError, ValueError):
-        return _redirect("/", err="Not an OPML file")
+        return _redirect("/settings#import", err="Not an OPML file")
     if root.tag.rsplit("}", 1)[-1] != "opml":
-        return _redirect("/", err="Not an OPML file")
+        return _redirect("/settings#import", err="Not an OPML file")
     new_ids: list[int] = []
     existing = skipped = 0
     with db() as conn:

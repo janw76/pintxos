@@ -48,9 +48,12 @@ def _outlines(text):
     return ET.fromstring(text).findall("./body/outline")
 
 
-def _flash(resp, key):
+def _flash(resp, key, path="/"):
     loc = unquote(resp.headers["location"])
-    assert loc.startswith(f"/?{key}=")
+    assert loc.startswith(f"{path}?{key}=")
+    if path == "/settings":
+        assert loc.endswith("#import")
+        loc = loc.removesuffix("#import")
     return loc.split("=", 1)[1]
 
 
@@ -140,34 +143,42 @@ def test_import_duplicate_in_file_and_empty(polled):
 def test_import_invalid(polled):
     with TestClient(app) as c:
         resp = _import(c, b"not xml")
-        assert _flash(resp, "err") == "Not an OPML file"
+        assert _flash(resp, "err", "/settings") == "Not an OPML file"
         resp = c.post("/feeds/import", follow_redirects=False)
-        assert _flash(resp, "err") == "Not an OPML file"
+        assert _flash(resp, "err", "/settings") == "Not an OPML file"
         resp = _import(c, b"x" * (1024 * 1024 + 1))
-        assert _flash(resp, "err") == "File too large"
+        assert _flash(resp, "err", "/settings") == "File too large"
     assert _rows() == []
 
 
-def test_index_links(polled):
+def test_settings_tab_has_opml_controls(polled):
     with TestClient(app) as c:
-        page = c.get("/").text
-    assert 'action="/feeds/import"' in page
-    assert 'href="/feeds.opml"' in page
-    assert 'href="/feeds.opml?output=1"' in page
+        page = c.get("/settings").text
+        index = c.get("/").text
+    for needle in ('action="/feeds/import"', 'href="/feeds.opml"', 'href="/feeds.opml?output=1"'):
+        assert needle in page
+        assert needle not in index
+    assert 'id="import"' in page
+
+
+def test_import_error_returns_to_settings_tab(polled):
+    with TestClient(app) as c:
+        loc = _import(c, b"not xml").headers["location"]
+    assert loc.startswith("/settings?") and "err=" in loc and loc.endswith("#import")
 
 
 def test_import_bogus_encoding(polled):
     with TestClient(app) as c:
         for enc in ("bogus", "utf-7"):
             resp = _import(c, f'<?xml version="1.0" encoding="{enc}"?><opml/>'.encode())
-            assert _flash(resp, "err") == "Not an OPML file"
+            assert _flash(resp, "err", "/settings") == "Not an OPML file"
     assert _rows() == []
 
 
 def test_import_not_opml_root(polled):
     with TestClient(app) as c:
         resp = _import(c, b"<rss><channel/></rss>")
-        assert _flash(resp, "err") == "Not an OPML file"
+        assert _flash(resp, "err", "/settings") == "Not an OPML file"
     assert _rows() == []
 
 

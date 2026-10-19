@@ -36,11 +36,14 @@ def _fetch() -> list[dict]:
         raise RuntimeError("OpenRouter sent an unreadable answer") from None
     if not isinstance(data, list):
         raise RuntimeError("OpenRouter sent an unreadable answer")
-    return [
+    models = [
         {"id": m["id"], "name": m.get("name") or m["id"]}
         for m in data
         if isinstance(m, dict) and isinstance(m.get("id"), str) and m["id"]
     ]
+    if not models:
+        raise RuntimeError("OpenRouter sent an empty model list")
+    return models
 
 
 def get_models() -> tuple[list[dict], str | None]:
