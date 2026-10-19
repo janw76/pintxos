@@ -8,6 +8,12 @@
   <p>Pintxøs checks again every 30 minutes and resumes by itself. Top up or fix the key in <a href="/settings">Settings</a>.</p>
 </div>
 {% endif %}
+{% if waiting %}
+<div class="msg" role="status">
+  <p>{{ waiting.n }} feed{{ ' has' if waiting.n == 1 else 's have' }} not been polled yet. Their first polls fetch and summarize up to {{ waiting.cap }} items each, up to {{ waiting.total }} summaries in total: that takes a while ({% if waiting.minutes %}five feeds right away, then one every two minutes, about {{ waiting.minutes }} minutes{% else %}all right away{% endif %}) and costs money in bulk.</p>
+  <form method="post" action="/feeds/poll-new"><button type="submit" class="btn-primary">Start first polls</button></form>
+</div>
+{% endif %}
 <h1>Feeds (<span id="feed-count">{{ feeds|length }}</span>)</h1>
 
 <form class="add-form" method="post" action="/feeds">
