@@ -3,7 +3,7 @@
 The model name is the router: a "local:" prefix ("local:glm4:9b") means any
 OpenAI-compatible server (Ollama, llama.cpp, vLLM, ...), a slash in it
 ("openai/gpt-5", "anthropic/claude-...") means OpenRouter, a bare name
-("claude-haiku-4-5-20251001") means the Anthropic SDK.
+("claude-haiku-5-5") means the Anthropic SDK.
 """
 
 from __future__ import annotations
@@ -144,7 +144,10 @@ def _complete_anthropic(
         if _ANTHROPIC_CREDIT_MARKER in str(e).lower():
             raise AccountError(str(e), kind="credit") from e
         raise LLMError(str(e)) from e
-    return Completion(response.content[0].text, getattr(response, "model", None) or model)
+    text = next((b.text for b in response.content if getattr(b, "type", None) == "text"), None)
+    if text is None:
+        raise LLMError(f"Anthropic returned no text (stop_reason={getattr(response, 'stop_reason', None)!r})")
+    return Completion(text, getattr(response, "model", None) or model)
 
 
 def _one_line(text: str, limit: int) -> str:
