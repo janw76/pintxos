@@ -52,8 +52,10 @@ sudo chown root:root /etc/pintxos/env
 sudo chown -R pintxos:pintxos /var/lib/pintxos
 ```
 
-Use `ANTHROPIC_API_KEY` instead if you set `PINTXOS_MODEL` to a model without
-a slash (Anthropic direct).
+Set the key for your model's provider: `OPENROUTER_API_KEY` for the default
+model (`z-ai/glm-5.3-flash`) and any model with a slash, `ANTHROPIC_API_KEY` for
+a model without a slash, none for `local:` models; both together is fine. For
+Anthropic only, set `ANTHROPIC_API_KEY` and `PINTXOS_MODEL=claude-haiku-4-5-20251001`.
 
 Then create `/etc/systemd/system/pintxos.service`:
 
@@ -152,8 +154,10 @@ mkdir -p ~/Library/Logs/pintxos
 </plist>
 ```
 
-Use `ANTHROPIC_API_KEY` instead if you set `PINTXOS_MODEL` to a model without
-a slash (Anthropic direct).
+Set the key for your model's provider: `OPENROUTER_API_KEY` for the default
+model (`z-ai/glm-5.3-flash`) and any model with a slash, `ANTHROPIC_API_KEY` for
+a model without a slash, none for `local:` models; both together is fine. For
+Anthropic only, set `ANTHROPIC_API_KEY` and `PINTXOS_MODEL=claude-haiku-4-5-20251001`.
 
 Load and manage it:
 
