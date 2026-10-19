@@ -23,24 +23,28 @@
 
 <div class="table-wrap">
   <table>
-    <!-- Six columns: Feed / Output URL / Items / Last polled / Status / actions. Widths are
+    <!-- Six columns: Feed / Output / Items / Last polled / Status / actions. Widths are
          budgeted against a 968px table (1000px viewport - 2rem body padding); the actions
          column holds Edit / Poll now / Delete on one line. Copy has no column of its
-         own: the Output URL column carries the URL and the Copy button on one line, the URL
-         ellipsising to fit. See pintxos-gno.9, pintxos-gno.11 and pintxos-vxg.1.
-         Actions at 968px: 72 + 88 (poll min-width) + 52 + gaps ≈18 + padding 12 ≈ 242 ≤ 26% = 252. -->
+         own: the Output column holds just the Copy button (hover shows the output URL), and the
+         source URL sits in an info box behind the feed name. See pintxos-gno.9, pintxos-gno.11,
+         pintxos-vxg.1 and pintxos-wu8.
+         Actions at 968px: 72 + 88 (poll min-width) + 52 + gaps ≈18 + padding 12 ≈ 242 ≤ 26% = 252.
+         Output at 968px: 11% = 106px - 24 padding (0.75rem each side) = 82px >= 64px Copy button (min-width
+         4rem). At a 721px viewport (table ~689px, the narrowest text-button case) 11% ~ 76px - 24 = 52px: the
+         button spills ~12px into the cell's own right padding and stops at the cell border, clear of Items. -->
     <colgroup>
-      <col style="width: 17%">
-      <col style="width: 27%">
+      <col style="width: 23%">
+      <col style="width: 11%">
       <col style="width: 9%">
       <col style="width: 11%">
-      <col style="width: 10%">
+      <col style="width: 20%">
       <col style="width: 26%">
     </colgroup>
     <thead>
       <tr>
         <th>Feed</th>
-        <th>Output URL</th>
+        <th>Output</th>
         <th class="phone-hide">Items</th>
         <th class="phone-hide">Last polled</th>
         <th>Status</th>
