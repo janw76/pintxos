@@ -53,6 +53,7 @@
       list.hidden = false; inp.setAttribute("aria-expanded", "true"); setActive(-1);
     }
     function load() {
+      timer = 0;
       var q = inp.value.trim(), n = ++seq;
       if (!q) { close(); say(""); return; }
       fetching = true;
@@ -80,7 +81,7 @@
       var open = !list.hidden;
       if (e.key === "ArrowDown") { e.preventDefault(); if (open) move(1); else { stop(); load(); } }
       else if (e.key === "ArrowUp" && open) { e.preventDefault(); move(-1); }
-      else if (e.key === "Enter" && open && active >= 0) { e.preventDefault(); pick(list.querySelectorAll("[role=option]")[active].dataset.id); }
+      else if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229 && open && active >= 0) { e.preventDefault(); pick(list.querySelectorAll("[role=option]")[active].dataset.id); }
       else if (e.key === "Escape" && (open || timer || fetching)) { e.preventDefault(); stop(); close(); }
     });
     // A tap on a row may blur the input before its click lands (iOS/Android order varies), so the close is

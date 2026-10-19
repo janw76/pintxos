@@ -181,3 +181,24 @@ def test_entries_missing_name_or_id(monkeypatch):
     _stub(monkeypatch, _ok([{"id": "a/noname"}, {"name": "No id"}, "junk", {"id": "b/ok", "name": "Ok"}]))
     assert _get("a/")["models"] == [{"id": "a/noname", "name": "a/noname"}]
     assert _ids(_get("no id")) == []
+
+
+def test_empty_upstream_list_is_not_cached(monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(om.time, "monotonic", lambda: now[0])
+    state = {"r": _ok([])}
+    calls = _stub(monkeypatch, lambda: state["r"])
+    for _ in range(2):
+        body = _get("gemini")
+        assert body["models"] == [] and body["error"] == "OpenRouter sent an empty model list"
+    assert len(calls) == 2
+    # a good list cached earlier survives an empty refetch; recovery clears the error
+    state["r"] = _ok()
+    assert _ids(_get("gemini fl")) == ["google/gemini-2.5-flash"]
+    now[0] += 24 * 3600 + 1
+    state["r"] = _ok([])
+    body = _get("gemini fl")
+    assert _ids(body) == ["google/gemini-2.5-flash"]
+    assert body["error"] == "OpenRouter sent an empty model list"
+    state["r"] = _ok()
+    assert _get("gemini fl")["error"] is None
