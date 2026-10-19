@@ -4,5 +4,5 @@
 {%- from "_info.html" import info -%}
 {%- for entry in fetch_status -%}
 {%- if not loop.first %} · {% endif -%}
-<span class="fetch-status"><span{% if entry.ok %} class="muted"{% endif %}>{{ entry.text }}</span>{% if entry.tooltip %} <span class="info-anchor">{% call info((info_prefix|default("fs")) ~ "-" ~ loop.index, entry.text) %}{{ entry.tooltip }}{% endcall %}</span>{% endif %}</span>{% if entry.link %} <a href="{{ entry.link.href }}">{{ entry.link.label }}</a>{% endif -%}
+<span class="fetch-status"><span{% if entry.ok %} class="muted"{% endif %}>{{ entry.text }}</span>{% if entry.tooltip %} <span class="info-anchor">{% call info((info_prefix|default("fs")) ~ "-" ~ loop.index, entry.text, icon="info") %}{{ entry.tooltip }}{% endcall %}</span>{% endif %}</span>{% if entry.link %} <a href="{{ entry.link.href }}">{{ entry.link.label }}</a>{% endif -%}
 {%- endfor -%}
