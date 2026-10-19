@@ -119,6 +119,18 @@
     if (searchInput) { searchInput.addEventListener("input", pintxosApplyFilter); }
   })();
 
+  // Delegated: rows are swapped wholesale by pintxosRefreshRow, so a per-row handler would vanish.
+  function pintxosOpenFeedRow(event) {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.defaultPrevented) { return; }
+    var t = event.target;
+    if (t.closest && t.closest("a, button, form, input, label, .info-box, .info-btn")) { return; }
+    var row = t.closest ? t.closest("tr[data-feed-id]") : null;
+    if (!row) { return; }
+    if (window.getSelection && String(window.getSelection())) { return; }
+    window.location.href = "/feeds/" + row.getAttribute("data-feed-id");
+  }
+  document.addEventListener("click", pintxosOpenFeedRow);
+
   document.addEventListener("submit", function (event) {
     var form = event.target;
     if (!form || form.tagName !== "FORM" || form.action.slice(-5) !== "/poll") { return; }
