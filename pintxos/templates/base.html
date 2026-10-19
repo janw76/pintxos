@@ -77,7 +77,6 @@
     form { display: inline; }
     .add-form { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; }
     .add-form input { flex: 1; min-width: 0; }
-    .opml-form { display: block; margin: .5rem 0; }
 
     input[type=url], input[type=text], input[type=number], input[type=password], textarea {
       font: inherit;
@@ -126,8 +125,9 @@
       .btn-copy.copied .ico-done { display: inline-block; }
     }
     button:hover { border-color: #cdd2d9; background: var(--surface); }
-    button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    button:focus-visible, a.btn-primary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     button:disabled { opacity: .7; cursor: default; }
+    a.btn-primary { display: inline-block; font: inherit; font-size: 0.875rem; padding: 0.35rem 0.7rem; border-width: 1px; border-style: solid; border-radius: 6px; text-decoration: none; cursor: pointer; box-sizing: border-box; }
     .btn-primary { color: #ffffff; background: #3f5fd8; border-color: #3f5fd8; }
     .btn-primary:hover { background: #3151c9; border-color: #3151c9; }
     .btn-primary:disabled { background: #b8c0d6; border-color: #b8c0d6; }
