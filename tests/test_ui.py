@@ -48,6 +48,17 @@ def test_index_shows_feed_count_in_heading(monkeypatch):
         assert '<h1>Feeds (<span id="feed-count">1</span>)</h1>' in page
 
 
+def test_index_rows_open_feed_on_click(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        page = c.get("/").text
+    assert "pintxosOpenFeedRow" in page
+    assert 'document.addEventListener("click", pintxosOpenFeedRow)' in page
+    row = page[page.index('<tr id="feed-1"'):]
+    assert 'data-feed-id="1"' in row[: row.index(">")]
+
+
 def test_index_pause_banner_absent_when_not_paused(monkeypatch):
     monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
     with TestClient(app) as c:
@@ -370,7 +381,7 @@ def test_settings_post_persists():
         resp = c.post(
             "/settings",
             data={
-                "model": "claude-haiku-4-5-20251001",
+                "model": "claude-haiku-5-5",
                 "poll_minutes": "15",
                 "items_per_feed": "10",
                 "api_key": "sk-test-1234",
@@ -482,6 +493,9 @@ def test_settings_page_has_jump_nav_info_buttons_and_all_fields():
         target = re.search(r'aria-controls="([^"]+)"', tag).group(1)
         assert f'id="{target}"' in page
     assert "Leave a field blank to go back to the default (100 / 180)" in page
+    fb = page[page.index('aria-controls="info-fallback"') :]
+    assert "M9.09 9a3 3" in fb[: fb.index("</button>")]  # Lucide circle-help "?"
+    assert "ℹ" not in page
 
     for name in (
         "model", "fallback_model", "local_llm_url", "api_key", "openrouter_api_key",
@@ -867,7 +881,7 @@ def test_settings_page_shows_model_presets_and_key_fields():
 
     assert "z-ai/glm-5.3-flash" in page
     assert "deepseek/deepseek-v4.1-flash" in page
-    assert "claude-haiku-4-5-20251001" in page
+    assert "claude-haiku-5-5" in page
     assert "google/gemini-2.5-flash-lite" in page
     assert "deepseek/deepseek-v4-flash-0731" in page
     assert "anthropic/claude-haiku-4.5" not in page
@@ -1044,7 +1058,7 @@ def test_settings_post_anthropic_model_without_key_rejected():
         resp = c.post(
             "/settings",
             data={
-                "model": "claude-haiku-4-5-20251001",
+                "model": "claude-haiku-5-5",
                 "poll_minutes": "30",
                 "items_per_feed": "50",
                 "api_key": "",
@@ -1842,7 +1856,7 @@ def test_feed_edit_page_shows_model_field_and_presets(monkeypatch):
     assert 'name="model"' in page
     assert "z-ai/glm-5.3-flash" in page
     assert "deepseek/deepseek-v4.1-flash" in page
-    assert "claude-haiku-4-5-20251001" in page
+    assert "claude-haiku-5-5" in page
     assert "google/gemini-2.5-flash-lite" in page
     assert "deepseek/deepseek-v4-flash-0731" in page
     assert "anthropic/claude-haiku-4.5" not in page
@@ -2405,7 +2419,7 @@ def test_table_buttons_carry_feather_icons_for_narrow_screens(monkeypatch):
     row_end = page.index("</tr>", row_start) + len("</tr>")
     row = page[row_start:row_end]
 
-    assert row.count("<svg") == 5
+    assert row.count("<svg") == 7  # 5 button icons + 2 info-button icons
     for svg_start in (m.start() for m in re.finditer("<svg", row)):
         svg_tag_end = row.index(">", svg_start)
         svg_tag = row[svg_start:svg_tag_end]
@@ -2501,6 +2515,9 @@ def test_phone_layout_hides_items_and_last_polled_source_url_in_info_box(monkeyp
     assert row.count("phone-hide") == 2
     assert 'class="muted url"' not in row
     assert 'aria-controls="src-1"' in row and 'class="info-btn"' in row
+    src_btn = row[row.index('aria-controls="src-1"') :]
+    assert "M12 16v-4" in src_btn[: src_btn.index("</button>")]  # Lucide info "i"
+    assert "ℹ" not in page
     box = row[row.index('id="src-1"') :]
     assert "https://example.com/feed.xml" in box[: box.index("</span></span>")]
     # the search filter reads the first cell's textContent, hidden info box included
