@@ -2359,33 +2359,25 @@ def test_feed_edit_post_unknown_choice_rejected(monkeypatch):
             assert conn.execute("SELECT filter_ads FROM feeds WHERE id = 1").fetchone()[0] is None
 
 
-def test_index_copy_sits_inside_output_url_cell_and_actions_stay_on_one_line(monkeypatch):
-    """Copy shares the Output URL cell, right after the URL; the actions cell holds exactly
+def test_index_copy_button_alone_in_output_cell_and_actions_stay_on_one_line(monkeypatch):
+    """Copy is alone in the Output cell and its title is the output URL; the actions cell holds exactly
     Edit, Poll now, Delete in that order and is styled never to wrap."""
     monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
     with TestClient(app) as c:
         c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
         page = c.get("/").text
 
-    # One cell holds the URL span (with the full URL in its tooltip) and then the Copy button.
+    # One cell holds only the Copy button; hovering it shows the output URL.
     cell_start = page.index('<td class="output">')
     cell = page[cell_start : page.index("</td>", cell_start)]
-    assert 'class="output-url"' in cell
     assert 'title="http://testserver/feeds/1.xml"' in cell
     assert "pintxosCopy(this, " in cell
     assert _label("Copy") in cell
-    assert cell.index('class="output-url"') < cell.index("pintxosCopy(this, ")
+    assert "output-url" not in page and "output-wrap" not in page
     # One cell, one line: no break and no second cell opens before this one closes.
     assert "<br" not in cell
     assert "<td" not in cell[len('<td class="output">') :]
     assert '<td class="copy">' not in page
-
-    # String guards: the URL ellipsises instead of wrapping, and disappears when too narrow.
-    rule_start = page.index("\n    .output-url {")
-    rule = page[rule_start : page.index("}", rule_start)]
-    assert "white-space: nowrap;" in rule
-    assert "text-overflow: ellipsis;" in rule
-    assert "@container (max-width: 10rem) { .output-url { display: none; } }" in page
 
     # Actions cell: exactly the three buttons, in order, no Copy, no wrapping container.
     start = page.index('<td class="actions">')
@@ -2489,8 +2481,8 @@ def test_index_empty_row_present_but_hidden_when_feeds_exist(monkeypatch):
         assert "No feeds yet" in page
 
 
-def test_phone_layout_hides_items_last_polled_and_source_url(monkeypatch):
-    """At <=600px, Items, Last polled and the source URL collapse; the table still has
+def test_phone_layout_hides_items_and_last_polled_source_url_in_info_box(monkeypatch):
+    """At <=600px, Items and Last polled collapse; the source URL lives in the info box behind the name and stays reachable; the table still has
     6 <th> and the fixed-layout escape hatch drops its old 640px min-width floor."""
     monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
     with TestClient(app) as c:
@@ -2507,11 +2499,15 @@ def test_phone_layout_hides_items_last_polled_and_source_url(monkeypatch):
     row_end = page.index("</tr>", row_start)
     row = page[row_start:row_end]
     assert row.count("phone-hide") == 2
-    assert 'class="muted url"' in row
+    assert 'class="muted url"' not in row
+    assert 'aria-controls="src-1"' in row and 'class="info-btn"' in row
+    box = row[row.index('id="src-1"') :]
+    assert "https://example.com/feed.xml" in box[: box.index("</span></span>")]
+    # the search filter reads the first cell's textContent, hidden info box included
+    first_td = row[: row.index("</td>")]
+    assert "https://example.com/feed.xml" in first_td
 
-    assert (
-        '@media (max-width: 600px) { .phone-hide, table .url { display: none; } }' in page
-    )
+    assert '@media (max-width: 600px) { .phone-hide { display: none; } }' in page
     assert "table-layout: auto;" in page
     assert "td.output { min-width: 5rem; }" in page
     assert "min-width: 640px" not in page
@@ -3990,7 +3986,7 @@ def test_phone_wraps_titles_and_status_between_words_but_url_fallback_stays_brea
     assert "td .url-fallback" not in page[rule : page.index("}", rule)]
     assert "td .fetch-status + a" in page[rule : page.index("}", rule)]
     row = page[page.index('<tr id="feed-1"') :]
-    assert '<div class="url-fallback">https://example.com/feed.xml</div>' in row
+    assert '<span class="url-fallback">https://example.com/feed.xml</span>' in row
 
 
 def _cookie_rows(path=None):
