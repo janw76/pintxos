@@ -76,7 +76,7 @@ Put the API key for your model's provider in a `.env` file next to
 `docker-compose.yml` (see `.env.example`). The default model
 `z-ai/glm-5.3-flash` runs on OpenRouter, so set `OPENROUTER_API_KEY`. To use
 Anthropic directly instead, set `ANTHROPIC_API_KEY` and
-`PINTXOS_MODEL=claude-haiku-4-5-20251001` (no OpenRouter key needed). Setting
+`PINTXOS_MODEL=claude-haiku-5-5` (no OpenRouter key needed). Setting
 both keys is fine; `local:` models need no key (see [API keys](#api-keys)).
 Then:
 
@@ -126,7 +126,7 @@ Then run it:
 
 Copy `.env.example` to `.env` in the directory you run `pintxos` from, and
 fill in the key for your model's provider (`OPENROUTER_API_KEY` for the default
-model, or `ANTHROPIC_API_KEY` with `PINTXOS_MODEL=claude-haiku-4-5-20251001`;
+model, or `ANTHROPIC_API_KEY` with `PINTXOS_MODEL=claude-haiku-5-5`;
 see [API keys](#api-keys)) plus any other overrides, or export the
 variables directly — real environment variables always win over `.env`. The
 SQLite database lives in `./data` relative to that directory unless you set
@@ -154,7 +154,7 @@ set per feed).
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | *(none)* | Anthropic API key. Set it to use a model without a slash in the name (Anthropic direct), e.g. `claude-haiku-4-5-20251001`. Not needed for OpenRouter or `local:` models. See "API keys". |
+| `ANTHROPIC_API_KEY` | *(none)* | Anthropic API key. Set it to use a model without a slash in the name (Anthropic direct), e.g. `claude-haiku-5-5`. Not needed for OpenRouter or `local:` models. See "API keys". |
 | `OPENROUTER_API_KEY` | *(none)* | OpenRouter API key. Set it to use the default model or any model with a slash in the name. Not needed if you only use Anthropic-direct or `local:` models. See "API keys". |
 | `PINTXOS_LOCAL_LLM_URL` | `http://127.0.0.1:11434/v1` | Base URL of an OpenAI-compatible server (Ollama, llama.cpp, vLLM, LM Studio) used by models named `local:<model>`. See "Local models". |
 | `PINTXOS_LOCAL_LLM_KEY` | *(none)* | Optional bearer token for that server. Most local servers need none. |
@@ -326,13 +326,13 @@ key for your model's provider:
 
 - a model name with a slash (the default `z-ai/glm-5.3-flash` is one) goes to
   OpenRouter and needs `OPENROUTER_API_KEY`;
-- a model name without a slash (e.g. `claude-haiku-4-5-20251001`) goes to
+- a model name without a slash (e.g. `claude-haiku-5-5`) goes to
   Anthropic and needs `ANTHROPIC_API_KEY`;
 - a `local:` model needs no key (see [Local models](#local-models)).
 
 You need only the key for the provider you use; setting both is fine. For an
 Anthropic-only setup, set `ANTHROPIC_API_KEY` and
-`PINTXOS_MODEL=claude-haiku-4-5-20251001`. With only `OPENROUTER_API_KEY` set,
+`PINTXOS_MODEL=claude-haiku-5-5`. With only `OPENROUTER_API_KEY` set,
 a `claude-*` model fails, and with only `ANTHROPIC_API_KEY` set the default
 model fails until you change it. See
 [Choosing a model](#choosing-a-model) below. For both keys, the primary way to
@@ -376,17 +376,17 @@ regardless of how much it polls.
 
 ## Choosing a model
 
-A model name with a slash (e.g. `google/gemini-2.5-flash-lite`) is sent to OpenRouter using `OPENROUTER_API_KEY`; a name without a slash (e.g. `claude-haiku-4-5-20251001`) is sent to Anthropic using `ANTHROPIC_API_KEY`. Both providers bill per token through API keys — a ChatGPT or Claude chat subscription cannot be used.
+A model name with a slash (e.g. `google/gemini-2.5-flash-lite`) is sent to OpenRouter using `OPENROUTER_API_KEY`; a name without a slash (e.g. `claude-haiku-5-5`) is sent to Anthropic using `ANTHROPIC_API_KEY`. Both providers bill per token through API keys — a ChatGPT or Claude chat subscription cannot be used.
 
 | Model | Approx. cost per 100 articles | Notes |
 |---|---|---|
-| `z-ai/glm-5.3-flash` | ~$0.04 | Default. Via OpenRouter; fast, large context, good summaries at a fraction of Haiku's price. |
-| `claude-haiku-4-5-20251001` | ~$0.28 | Anthropic direct. Strongest multilingual output. |
-| `deepseek/deepseek-v4.1-flash` | ~$0.04 | Newer DeepSeek flash model. Large context, solid summaries. |
-| `google/gemini-2.5-flash-lite` | ~$0.03 | Fast, reliable JSON, good in European languages. |
-| `deepseek/deepseek-v4-flash-0731` | ~$0.01 | Cheapest of the set. Large context, solid summaries; newer and less proven than the others. |
+| `z-ai/glm-5.3-flash` | ~$0.02 | Default. Via OpenRouter; fast, large context, good summaries. |
+| `claude-haiku-5-5` | ~$0.04 | Anthropic direct. Strongest multilingual output. |
+| `deepseek/deepseek-v4.1-flash` | ~$0.01 | Cheapest of the set. Large context, solid summaries. |
+| `google/gemini-2.5-flash-lite` | ~$0.04 | Fast, reliable JSON, good in European languages. |
+| `deepseek/deepseek-v4-flash-0731` | ~$0.04 | Older DeepSeek flash snapshot. Large context, solid summaries. |
 
-Prices are OpenRouter's as of September 2026 and drift; see the full list at [openrouter.ai/models](https://openrouter.ai/models). The same five presets are clickable on the Settings page.
+Prices are from OpenRouter and Anthropic as of October 2026, assuming about 2,500 input and 300 output tokens per article, and drift; see the full list at [openrouter.ai/models](https://openrouter.ai/models). The same five presets are clickable on the Settings page.
 
 Each feed can override the model on its Model tab — e.g., a premium model for one feed, the cheapest for another; leaving it blank uses the global default.
 
