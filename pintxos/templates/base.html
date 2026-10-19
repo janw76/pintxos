@@ -197,7 +197,8 @@
        overflow a narrow screen. Opens on click/tap, and on hover where a real pointer exists.
        Placed last so it beats the generic button rules above. */
     .info-anchor { position: relative; display: flex; align-items: center; gap: 0.4rem; }
-    .info-btn { flex: none; font-size: 0.8125rem; line-height: 1; padding: 0.2rem 0.3rem; border-color: transparent; background: transparent; border-radius: 999px; }
+    .info-btn { flex: none; font-size: 0.8125rem; line-height: 1; padding: 0.2rem 0.3rem; border-color: transparent; background: transparent; border-radius: 999px; color: var(--text-muted); }
+    .info-btn .ico { display: inline-block; width: 1em; height: 1em; vertical-align: -0.15em; }
     .info-btn:hover, .info-btn[aria-expanded="true"] { background: #eef2ff; border-color: #d6ddfb; }
     .info-box {
       display: none; position: absolute; z-index: 20; left: 0; top: 100%;
@@ -234,11 +235,11 @@
     .set-card .set-actions { margin-bottom: 0; }
     .set-card .info-anchor > h2 { margin: 0; }
     .set-card > .info-anchor { margin-bottom: 1rem; }
-    /* A legend shrinks to its text; stretch it so the ℹ️ box below it gets the field width. */
+    /* A legend shrinks to its text; stretch it so the info box below it gets the field width. */
     .set-card legend.info-anchor { width: 100%; }
     .set-card details { margin: 0 0 1rem; }
     .set-card summary { cursor: pointer; font-size: 0.875rem; color: var(--accent); margin-bottom: 0.5rem; }
-    /* Info boxes in table cells (Feed source URL, Fetch-status help): a floating box like Settings, sized to its text; in the Status cell it grows leftwards from the ℹ️ so it never passes the right edge; the Feed cell is the leftmost column, so its box keeps the default left edge and grows rightwards. On phones the Status cell is a few characters wide and the viewport edges are close, so the box is a fixed sheet at the bottom of the screen instead (fixed boxes escape .table-wrap's overflow clip). */
+    /* Info boxes in table cells (Feed source URL, Fetch-status help): a floating box like Settings, sized to its text; in the Status cell it grows leftwards from the info icon so it never passes the right edge; the Feed cell is the leftmost column, so its box keeps the default left edge and grows rightwards. On phones the Status cell is a few characters wide and the viewport edges are close, so the box is a fixed sheet at the bottom of the screen instead (fixed boxes escape .table-wrap's overflow clip). */
     .fetch-status .info-anchor { display: inline-flex; }
     td .info-box { width: max-content; max-width: min(26rem, 90vw); }
     @media (min-width: 760px) { .table-wrap { overflow: visible; } td .fetch-status .info-box { left: auto; right: 0; } }

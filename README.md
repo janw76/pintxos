@@ -278,6 +278,7 @@ matched against the topics you've ticked to mute.
   button to release that one item into the output feed anyway.
 
 IPTC Media Topics vocabulary © IPTC (https://iptc.org/), used under CC BY 4.0.
+Icons from Lucide (https://lucide.dev/), used under the ISC license.
 
 ### Volume warning and daily budget
 
