@@ -48,6 +48,17 @@ def test_index_shows_feed_count_in_heading(monkeypatch):
         assert '<h1>Feeds (<span id="feed-count">1</span>)</h1>' in page
 
 
+def test_index_rows_open_feed_on_click(monkeypatch):
+    monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
+    with TestClient(app) as c:
+        c.post("/feeds", data={"url": "https://example.com/feed.xml"}, follow_redirects=False)
+        page = c.get("/").text
+    assert "pintxosOpenFeedRow" in page
+    assert 'document.addEventListener("click", pintxosOpenFeedRow)' in page
+    row = page[page.index('<tr id="feed-1"'):]
+    assert 'data-feed-id="1"' in row[: row.index(">")]
+
+
 def test_index_pause_banner_absent_when_not_paused(monkeypatch):
     monkeypatch.setattr(app_module, "poll_one", lambda feed_id: None)
     with TestClient(app) as c:
