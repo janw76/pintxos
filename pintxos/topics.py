@@ -171,9 +171,12 @@ def classify_topic(
 
     model = model or get_setting("PINTXOS_MODEL")
     try:
-        # 200 is a cap, not a spend: the answer is one slug, but a reasoning model
-        # needs room to think before it emits that slug or it returns nothing.
-        raw = llm.complete(system, user_message, 200, model).text
+        # Thinking counts against max_tokens, so 200 starved a thinking model (no text
+        # block). Effort/thinking knobs are model-specific (effort: rejected by Haiku 4.5;
+        # thinking off: rejected by Opus 5.5 and Sonnet 5.5), so the bare request with a
+        # larger ceiling is the one shape every Anthropic model accepts (OpenRouter has its
+        # own reasoning switch in llm.py). 1024 is a cap, not a spend.
+        raw = llm.complete(system, user_message, 1024, model).text
     except llm.MissingApiKey:
         raise
     # Failing open on an account error would silently drop the topic of every item
