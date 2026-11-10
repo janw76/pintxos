@@ -1,7 +1,12 @@
+import os
+
 import pytest
 
 from pintxos import llm
 from pintxos.topics import TOPICS, build_prompt, classify_topic, parse_topic
+
+# conftest deletes the key for every test, so capture it at import time.
+_LIVE_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
 EXPECTED_SLUGS = [
     "arts",
@@ -130,8 +135,8 @@ def test_classify_topic_returns_slug(monkeypatch):
     fake = _patch_complete(monkeypatch, text="sport")
     assert classify_topic("Big match", ["football"], "Lead") == "sport"
     call = _one_call(fake)
-    # A cap, not a spend: reasoning models need room before emitting the slug.
-    assert call["max_tokens"] == 200
+    # A ceiling, not a spend: thinking counts against it, so 200 starved thinking models.
+    assert call["max_tokens"] == 1024
     assert call["model"] == "claude-test-model"
     system, user = build_prompt("Big match", ["football"], "Lead")
     assert call["system"] == system
@@ -183,3 +188,22 @@ def test_classify_topic_propagates_account_error(monkeypatch):
     # Failing open here would hide an account outage from the poll.
     with pytest.raises(llm.AccountError):
         classify_topic("Big match", [], "")
+
+
+@pytest.mark.skipif(not _LIVE_KEY, reason="set ANTHROPIC_API_KEY to run the live Haiku check")
+def test_classify_topic_live_haiku_returns_a_slug_on_10_items(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", _LIVE_KEY)
+    items = [
+        ("Local side wins the cup final in extra time", ["football"], "A late goal settled the final after 120 minutes."),
+        ("Parliament passes the new budget bill", ["politics"], "The vote went through 301 to 280 after a long debate."),
+        ("Astronomers spot a new exoplanet in the habitable zone", [], "The planet orbits a small red star 40 light years away."),
+        ("Central bank holds interest rates steady", ["economy"], "Inflation fell to 2.4 percent last month."),
+        ("Museum opens a major retrospective of a Dutch painter", ["art"], "The show gathers over 100 works from private collections."),
+        ("New study links daily walking to lower heart disease risk", ["health"], "Researchers followed 50,000 adults for ten years."),
+        ("Heavy storms expected across the north this weekend", ["weather"], "Forecasters warn of flooding and strong winds."),
+        ("Police arrest suspect in city centre robbery", ["crime"], "The man was detained a day after the jewellery shop raid."),
+        ("Schools to introduce a new reading programme", ["education"], "Pupils aged 6 to 8 will get daily guided reading."),
+        ("Chipmaker unveils a faster processor for laptops", ["technology"], "The chip promises twice the battery life."),
+    ]
+    failed = [t for t, labels, lead in items if classify_topic(t, labels, lead, model="claude-haiku-5-5") is None]
+    assert not failed, f"no topic for: {failed}"
